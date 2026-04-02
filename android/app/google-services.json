@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1062436758460",
+    "project_id": "la-familia-5d9f5",
+    "storage_bucket": "la-familia-5d9f5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1062436758460:android:d753e6aee97cca85bb81b9",
+        "android_client_info": {
+          "package_name": "com.example.myapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDJlzJW_SZyDY_JTJd3BzPauqhVR_B4FaM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
