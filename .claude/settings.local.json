@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter build:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(npx firebase:*)",
+      "Bash(where firebase:*)",
+      "Bash(cmd /c \"where firebase\")",
+      "Bash(cmd /c \"C:\\\\\\\\Users\\\\\\\\Shadow\\\\\\\\AppData\\\\\\\\Roaming\\\\\\\\npm\\\\\\\\firebase.cmd deploy --only hosting\")",
+      "Bash(cmd /c \"firebase deploy --only hosting\")",
+      "Bash(powershell -Command \"& firebase deploy --only hosting\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\\\\\Users\\\\\\\\Shadow\\\\\\\\AppData\\\\\\\\Roaming\\\\\\\\npm' -ErrorAction SilentlyContinue\")",
+      "Bash(npm --version)",
+      "Bash(npm root:*)",
+      "Read(//c/mina_appar/Privat/la_familia/**)",
+      "Bash(npm config:*)",
+      "Bash(npm install:*)",
+      "Bash(firebase login:*)",
+      "Bash(npx repomix:*)"
+    ]
+  }
+}

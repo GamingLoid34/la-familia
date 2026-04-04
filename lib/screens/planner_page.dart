@@ -249,6 +249,7 @@ class _PlannerPageState extends State<PlannerPage>
       child: TableCalendar(
         firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
+        availableGestures: AvailableGestures.horizontalSwipe, // <-- Detta tillåter vertikal scroll!
         selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
         calendarFormat: CalendarFormat.month,
         availableCalendarFormats: const {CalendarFormat.month: 'Månad'},

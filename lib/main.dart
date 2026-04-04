@@ -156,6 +156,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
+  late PageController _pageController;
 
   // Listan över sidor
   final List<Widget> _pages = [
@@ -165,11 +166,28 @@ class _MainPageState extends State<MainPage> {
     const SettingsPage(), // Index 3: Inställningar
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
   // När man klickar i menyn
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
@@ -180,9 +198,14 @@ class _MainPageState extends State<MainPage> {
     final width = MediaQuery.of(context).size.width;
     final isWide = width > 600;
 
-    Widget bodyContent = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      child: _pages[_selectedIndex],
+    Widget bodyContent = PageView(
+      controller: _pageController,
+      onPageChanged: (index) {
+        setState(() {
+          _selectedIndex = index;
+        });
+      },
+      children: _pages,
     );
 
     Widget bottomNav = Container(
