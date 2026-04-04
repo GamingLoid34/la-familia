@@ -1,12 +1,18 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:intl/date_symbol_data_local.dart';
-
 import '../app_theme.dart';
-import 'personal_countdown_screen.dart';
-import 'screen_rules_page.dart'; // <--- VIKTIGT: Se till att du skapat denna fil!
+import '../models/user_model.dart';
+import '../services/family_service.dart';
+import '../services/user_service.dart';
+import '../widgets/shimmer_list_placeholder.dart';
+import '../widgets/activity_detail_sheet.dart';
+import 'timer_page.dart';
+import 'shopping_list_page.dart';
+import 'screen_rules_page.dart';
+import 'family_status_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -15,734 +21,1122 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
-  bool _showOnlyMine = false;
-  String? _currentUserName;
-  String? _currentUserEmail;
+class _DashboardPageState extends State<DashboardPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  UserModel? _currentUser;
+  List<UserModel> _familyMembers = [];
+  bool _loading = true;
+
+  late final Stream<UserModel?> _userStream;
+  late final Stream<List<UserModel>> _familyStream;
+  late final Stream<QuerySnapshot> _eventsStream;
 
   @override
   void initState() {
     super.initState();
-    initializeDateFormatting('sv', null);
-    _loadCurrentUser();
+    _userStream = UserService.getCurrentUserStream();
+    _familyStream = FamilyService.getCurrentFamilyStream();
+    _eventsStream = _buildEventsStream();
+    _loadData();
   }
 
-  Future<void> _loadCurrentUser() async {
-    User? user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      setState(() => _currentUserEmail = user.email);
-      var snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: user.email)
-          .limit(1)
-          .get();
-      if (snapshot.docs.isNotEmpty && mounted) {
-        setState(() => _currentUserName = snapshot.docs.first['name']);
-      }
-    }
+  Stream<QuerySnapshot> _buildEventsStream() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    return FirebaseFirestore.instance
+        .collection('planner_events')
+        .where('date',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(today))
+        .where('date', isLessThan: Timestamp.fromDate(tomorrow))
+        .orderBy('date')
+        .snapshots();
   }
 
-  String _getDateKey(DateTime date) => "${date.year}-${date.month}-${date.day}";
-
-  Color _getEventColor(String title, String type) {
-    String t = title.toLowerCase();
-    if (t.contains('läkare') ||
-        t.contains('tand') ||
-        t.contains('bup') ||
-        t.contains('sjukhus'))
-      return Colors.redAccent;
-    if (t.contains('skola') || t.contains('läxa') || t.contains('prov'))
-      return Colors.purpleAccent;
-    if (type == 'work' || t.contains('jobb')) return Colors.blue;
-    if (type == 'food') return Colors.orange;
-    return Colors.pinkAccent;
+  Future<void> _loadData() async {
+    final user = await FamilyService.getCurrentUserModel();
+    if (!mounted) return;
+    setState(() {
+      _currentUser = user;
+      _loading = false;
+    });
   }
 
-  void _showEnergyDialog(String docId, String currentName) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text("Hur mår du, $currentName?"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _energyOption(
-                docId,
-                4,
-                "Toppen!",
-                Icons.battery_full_rounded,
-                Colors.green,
-              ),
-              _energyOption(
-                docId,
-                3,
-                "Helt okej",
-                Icons.battery_5_bar_rounded,
-                Colors.lightGreen,
-              ),
-              _energyOption(
-                docId,
-                2,
-                "Lite trött",
-                Icons.battery_3_bar_rounded,
-                Colors.orangeAccent,
-              ),
-              _energyOption(
-                docId,
-                1,
-                "Slut på batteri",
-                Icons.battery_alert_rounded,
-                Colors.redAccent,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _energyOption(
-    String docId,
-    int level,
-    String label,
-    IconData icon,
-    Color color,
-  ) {
-    return ListTile(
-      leading: Icon(icon, color: color, size: 30),
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-      onTap: () {
-        FirebaseFirestore.instance.collection('users').doc(docId).update({
-          'energy': level,
-        });
-        Navigator.pop(context);
-      },
-    );
-  }
-
-  void _showStartmotorDialog(DocumentSnapshot doc) {
-    Map data = doc.data() as Map;
-    List substeps = data['substeps'] ?? [];
-    String choreTitle = data['chore'] ?? 'Syssla';
-
+  void _showEnergyDialog(UserModel user) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) {
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.6,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-          ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.rocket_launch_rounded,
-                    color: Colors.orange,
-                    size: 30,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      choreTitle,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                "Ta ett litet steg i taget. Du klarar det!",
-                style: TextStyle(color: Colors.grey, fontSize: 16),
-              ),
-              const SizedBox(height: 20),
-              const Divider(),
-              Expanded(
-                child: substeps.isEmpty
-                    ? const Center(
-                        child: Text("Inga delsteg inlagda. Bara kör! 🚀"),
-                      )
-                    : ListView.builder(
-                        itemCount: substeps.length,
-                        itemBuilder: (context, index) {
-                          var step = substeps[index];
-                          bool isDone = step['isDone'] ?? false;
-                          return CheckboxListTile(
-                            title: Text(
-                              step['title'],
-                              style: TextStyle(
-                                decoration: isDone
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                                color: isDone ? Colors.grey : Colors.black87,
-                              ),
-                            ),
-                            value: isDone,
-                            activeColor: Colors.green,
-                            onChanged: (val) async {
-                              List newSteps = List.from(substeps);
-                              newSteps[index]['isDone'] = val;
-                              bool allDone = newSteps.every(
-                                (s) => s['isDone'] == true,
-                              );
-                              await FirebaseFirestore.instance
-                                  .collection('chores')
-                                  .doc(doc.id)
-                                  .update({
-                                    'substeps': newSteps,
-                                    if (allDone) 'isDone': true,
-                                  });
-                              if (allDone && mounted)
-                                Navigator.pop(context);
-                              else {
-                                Navigator.pop(context);
-                                _showStartmotorDialog(
-                                  await FirebaseFirestore.instance
-                                      .collection('chores')
-                                      .doc(doc.id)
-                                      .get(),
-                                );
-                              }
-                            },
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (_) => _EnergySheet(user: user),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final String todayDate = DateFormat(
-      'EEEE d MMMM',
-      'sv',
-    ).format(DateTime.now());
-    final String capitalizedDate =
-        todayDate.substring(0, 1).toUpperCase() + todayDate.substring(1);
-    Color textColor = AppTheme.getTextColor();
+    super.build(context);
 
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Idag",
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 22,
-                color: textColor,
+    return StreamBuilder<UserModel?>(
+      stream: _userStream,
+      builder: (context, userSnap) {
+        if (userSnap.hasError) {
+          return Container(
+            decoration: AppTheme.getBackground(),
+            child: Center(
+              child: Text('Fel: ${userSnap.error}',
+                  style: const TextStyle(color: Colors.red)),
+            ),
+          );
+        }
+        final user = userSnap.data ?? _currentUser;
+        final isFocus = user?.isFocusMode ?? false;
+
+        return Container(
+          decoration: AppTheme.getBackground(),
+          child: isFocus
+              ? _buildFocusView(user)
+              : _buildParentView(user),
+        );
+      },
+    );
+  }
+
+  // ─── PARENT VIEW ───────────────────────────────────────────────────────────
+  Widget _buildParentView(UserModel? user) {
+    return StreamBuilder<List<UserModel>>(
+      stream: _familyStream,
+      builder: (ctx, famSnap) {
+        if (famSnap.hasError) {
+          return Center(
+            child: Text('Fel: ${famSnap.error}',
+                style: const TextStyle(color: Colors.red)),
+          );
+        }
+        final members = famSnap.data ?? _familyMembers;
+        if (famSnap.hasData) _familyMembers = members;
+        return CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader(user, members)),
+            SliverToBoxAdapter(
+              child: _buildSection(
+                'DAGSTIDSLINJE',
+                _buildTimeline(),
               ),
             ),
-            Text(
-              capitalizedDate,
-              style: TextStyle(fontSize: 14, color: AppTheme.getSubTextColor()),
+            SliverToBoxAdapter(
+              child: _buildSection('HÄRNÄST', _buildNextCard()),
             ),
+            SliverToBoxAdapter(
+              child: _buildSection(
+                  'FAMILJENS ENERGI', _buildEnergySection(members)),
+            ),
+            SliverToBoxAdapter(
+              child: _buildSection('SYSSLOR IDAG', _buildChoreSummary()),
+            ),
+            SliverToBoxAdapter(
+              child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
-        ),
-        actions: [
+        );
+      },
+    );
+  }
+
+  // ─── FOCUS VIEW ────────────────────────────────────────────────────────────
+  Widget _buildFocusView(UserModel? user) {
+    final name = user?.name.split(' ').first ?? '';
+    return StreamBuilder<QuerySnapshot>(
+      stream: _eventsStream,
+      builder: (ctx, snap) {
+        if (snap.hasError) {
+          return Center(
+            child: Text('Fel: ${snap.error}',
+                style: const TextStyle(color: Colors.red)),
+          );
+        }
+        final docs = snap.data?.docs ?? [];
+        return CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader(user, _familyMembers)),
+            if (docs.isNotEmpty) ...[
+              SliverToBoxAdapter(child: _buildFocusMainCard(docs.first)),
+              if (docs.length > 1)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                    child: Text('Senare idag',
+                        style: AppTheme.sectionLabelStyle),
+                  ),
+                ),
+              if (docs.length > 1)
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 100,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: docs.length - 1,
+                      itemBuilder: (_, i) =>
+                          _buildFocusSmallCard(docs[i + 1]),
+                    ),
+                  ),
+                ),
+            ] else
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        const Text('😌', style: TextStyle(fontSize: 52)),
+                        const SizedBox(height: 12),
+                        Text('Ingen planering idag, $name!',
+                            style: AppTheme.sectionTitleStyle,
+                            textAlign: TextAlign.center),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 100)),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildFocusMainCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final piktogram = data['piktogram'] as String? ?? '📅';
+    final title = data['title'] as String? ?? '';
+    final date = (data['date'] as Timestamp?)?.toDate();
+    final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
+    final dayColor = AppTheme.getDayAccentColor();
+
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(24),
+      decoration: AppTheme.cardDecoration(),
+      child: Column(
+        children: [
+          Text(piktogram, style: const TextStyle(fontSize: 64)),
+          const SizedBox(height: 12),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 6),
+          Text(timeStr,
+              style: TextStyle(
+                  fontSize: 18,
+                  color: dayColor,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 16),
+          Text('Du klarar det! 💪',
+              style: TextStyle(
+                  fontSize: 15, color: Colors.grey.shade500)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFocusSmallCard(QueryDocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    final piktogram = data['piktogram'] as String? ?? '📅';
+    final title = data['title'] as String? ?? '';
+    final date = (data['date'] as Timestamp?)?.toDate();
+    final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
+    return Container(
+      width: 130,
+      margin: const EdgeInsets.only(right: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.cardDecoration(radius: 16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(piktogram, style: const TextStyle(fontSize: 28)),
+          const SizedBox(height: 4),
+          Text(title,
+              style: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis),
+          Text(timeStr,
+              style: TextStyle(
+                  fontSize: 11, color: Colors.grey.shade500)),
+        ],
+      ),
+    );
+  }
+
+  // ─── HEADER ────────────────────────────────────────────────────────────────
+  Widget _buildHeader(UserModel? user, List<UserModel> members) {
+    final dayColor = AppTheme.getDayAccentColor();
+    final now = DateTime.now();
+    final weekday = now.weekday;
+    final textColor = AppTheme.getNpfTextColor(weekday);
+    final dayName = _swedishWeekday(weekday);
+    final dateStr = DateFormat('d MMMM', 'sv').format(now);
+    final firstName = user?.name.split(' ').first ?? '';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: dayColor,
+        borderRadius:
+            const BorderRadius.vertical(bottom: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             children: [
-              Text(
-                "Visa bara mina",
-                style: TextStyle(fontSize: 12, color: textColor),
+              Expanded(
+                child: Text(dayName,
+                    style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: textColor)),
               ),
-              Switch(
-                value: _showOnlyMine,
-                activeColor: Colors.black87,
-                activeTrackColor: Colors.white,
-                onChanged: (val) => setState(() => _showOnlyMine = val),
+              GestureDetector(
+                onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const FamilyStatusPage())),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: textColor.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.people_rounded,
+                          color: textColor, size: 16),
+                      const SizedBox(width: 4),
+                      Text('Familjestatus',
+                          style: TextStyle(
+                              color: textColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
-          const SizedBox(width: 8),
+          const SizedBox(height: 2),
+          Text(dateStr,
+              style: TextStyle(
+                  fontSize: 13,
+                  color: textColor.withValues(alpha: 0.85))),
+          const SizedBox(height: 4),
+          if (firstName.isNotEmpty)
+            Text('God morgon, $firstName! ☀️',
+                style: TextStyle(fontSize: 15, color: textColor)),
+          const SizedBox(height: 16),
+          // Family avatars
+          if (members.isNotEmpty || _loading)
+            SizedBox(
+              height: 72,
+              child: _loading
+                  ? const ShimmerListPlaceholder()
+                  : ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: members.length,
+                      itemBuilder: (_, i) =>
+                          _buildAvatarWidget(members[i], textColor, user),
+                    ),
+            ),
         ],
       ),
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: AppTheme.getBackground(),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _sectionHeader("Familjens Energi"),
-                  _buildEnergyBar(),
-                  const SizedBox(height: 20),
+    );
+  }
 
-                  _sectionHeader("Dagens Mat"),
-                  _buildFoodCard(),
-                  const SizedBox(height: 20),
+  Widget _buildAvatarWidget(
+      UserModel member, Color textColor, UserModel? currentUser) {
+    final isMe = member.uid == currentUser?.uid;
+    Color avatarColor;
+    try {
+      avatarColor = Color(member.colorValue as int);
+    } catch (_) {
+      avatarColor = AppTheme.getDayAccentColor();
+    }
+    final energyColor = _energyColor(member.energy);
+    final initial =
+        member.name.isNotEmpty ? member.name[0].toUpperCase() : '?';
 
-                  _sectionHeader("På Schemat"),
-                  _buildScheduleList(),
-                  const SizedBox(height: 20),
-
-                  // --- HÄR ÄR DE NYA KNAPPARNA (Timer & Skärmtid) ---
-                  _sectionHeader("Verktyg"),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.timer, size: 22),
-                          label: const Text("Timer"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.9),
-                            foregroundColor: Colors.black87,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(15),
-                            ),
-                          ),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) =>
-                                    const PersonalCountdownScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.videogame_asset, size: 22),
-                          label: const Text("Skärmregler"),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.9),
-                            foregroundColor: Colors.black87,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(15),
-                            ),
-                          ),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const ScreenRulesPage(),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+    return GestureDetector(
+      onTap: () {
+        if (isMe) {
+          _showEnergyDialog(member);
+        }
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(right: 16),
+        child: Column(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: avatarColor,
+                  child: Text(initial,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18)),
+                ),
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: energyColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.white, width: 2),
+                    ),
                   ),
-                  const SizedBox(height: 20),
-
-                  _sectionHeader("Att göra"),
-                  _buildChoresList(),
-                ],
-              ),
+                ),
+                if (isMe)
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle),
+                      child: Icon(Icons.edit,
+                          size: 10,
+                          color: AppTheme.getTextColor()),
+                    ),
+                  ),
+              ],
             ),
-          ),
+            const SizedBox(height: 4),
+            Text(member.name.split(' ').first,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: textColor.withValues(alpha: 0.9),
+                    fontWeight: FontWeight.w500)),
+          ],
         ),
       ),
     );
   }
 
-  Widget _sectionHeader(String title) => Padding(
-    padding: const EdgeInsets.only(bottom: 8.0, left: 4),
-    child: Text(
-      title,
-      style: TextStyle(
-        fontSize: 18,
-        fontWeight: FontWeight.bold,
-        color: AppTheme.getTextColor(),
-      ),
-    ),
-  );
+  Color _energyColor(int energy) {
+    switch (energy) {
+      case 4:
+        return const Color(0xFF6BAE75);
+      case 3:
+        return const Color(0xFFEDD87A);
+      case 2:
+        return const Color(0xFFE8A5B0);
+      default:
+        return const Color(0xFFD95F4B);
+    }
+  }
 
-  Widget _buildEnergyBar() {
-    return SizedBox(
-      height: 90,
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('users').snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const SizedBox();
-          var users = snapshot.data!.docs;
-          return ListView.builder(
+  // ─── TIMELINE ──────────────────────────────────────────────────────────────
+  Widget _buildTimeline() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _eventsStream,
+      builder: (ctx, snap) {
+        if (snap.hasError) {
+          return Container(
+            height: 60,
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            decoration: AppTheme.cardDecoration(),
+            child: Center(
+              child: Text('Fel: ${snap.error}',
+                  style: const TextStyle(color: Colors.red, fontSize: 12)),
+            ),
+          );
+        }
+        if (!snap.hasData) {
+          return Container(
+            height: 80,
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            decoration: AppTheme.cardDecoration(),
+            child: const Center(child: ShimmerListPlaceholder()),
+          );
+        }
+        final docs = snap.data!.docs;
+        if (docs.isEmpty) {
+          return Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.grey.shade300,
+                width: 1.5,
+                style: BorderStyle.solid,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text('📅', style: TextStyle(fontSize: 20)),
+                const SizedBox(width: 10),
+                Text(
+                  'Inga aktiviteter idag — lägg till i Planering!',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                ),
+              ],
+            ),
+          );
+        }
+        final now = DateTime.now();
+        return SizedBox(
+          height: 82,
+          child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: users.length,
-            itemBuilder: (context, index) {
-              var data = users[index].data() as Map;
-              String name = data['name'] ?? "?";
-              String email = data['email'] ?? "";
-              String colorHex = data['color'] ?? 'ff2196f3';
-              int energy = data['energy'] ?? 3;
-              IconData batteryIcon;
-              Color batteryColor;
-              switch (energy) {
-                case 4:
-                  batteryIcon = Icons.battery_full_rounded;
-                  batteryColor = Colors.green;
-                  break;
-                case 2:
-                  batteryIcon = Icons.battery_3_bar_rounded;
-                  batteryColor = Colors.orangeAccent;
-                  break;
-                case 1:
-                  batteryIcon = Icons.battery_alert_rounded;
-                  batteryColor = Colors.redAccent;
-                  break;
-                default:
-                  batteryIcon = Icons.battery_5_bar_rounded;
-                  batteryColor = Colors.lightGreen;
-              }
-              return Padding(
-                padding: const EdgeInsets.only(right: 16.0),
-                child: GestureDetector(
-                  onTap: () {
-                    if (email == _currentUserEmail)
-                      _showEnergyDialog(users[index].id, name);
-                  },
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: docs.length,
+            itemBuilder: (_, i) {
+              final d = docs[i].data() as Map<String, dynamic>;
+              final date = (d['date'] as Timestamp?)?.toDate();
+              final title = d['title'] as String? ?? '';
+              final piktogram = d['piktogram'] as String? ?? '📅';
+              final dayColor = AppTheme.getDayAccentColor();
+              final isCurrent = date != null &&
+                  date.isBefore(now) &&
+                  date
+                      .add(const Duration(hours: 1))
+                      .isAfter(now);
+              return GestureDetector(
+                onTap: () => _openDetail(docs[i]),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.only(right: 10),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  transform: isCurrent
+                      ? (Matrix4.identity()..scale(1.05))
+                      : Matrix4.identity(),
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? dayColor
+                        : dayColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 28,
-                            backgroundColor: Color(
-                              int.parse(colorHex, radix: 16),
-                            ),
-                            child: Text(
-                              name.isNotEmpty ? name[0].toUpperCase() : "?",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 20,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            bottom: 0,
-                            right: 0,
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                              ),
-                              padding: const EdgeInsets.all(2),
-                              child: Icon(
-                                batteryIcon,
-                                color: batteryColor,
-                                size: 20,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
+                      Text(piktogram,
+                          style: const TextStyle(fontSize: 18)),
+                      const SizedBox(height: 2),
                       Text(
-                        name,
+                        date != null
+                            ? DateFormat('HH:mm').format(date)
+                            : '',
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: AppTheme.getTextColor(),
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: isCurrent
+                              ? Colors.white
+                              : Colors.grey.shade700,
                         ),
                       ),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: isCurrent
+                              ? Colors.white
+                              : AppTheme.getTextColor(),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (isCurrent)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('NU',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                        ),
                     ],
                   ),
                 ),
               );
             },
+          ),
+        );
+      },
+    );
+  }
+
+  // ─── NEXT CARD ─────────────────────────────────────────────────────────────
+  Widget _buildNextCard() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _eventsStream,
+      builder: (ctx, snap) {
+        if (snap.hasError) {
+          return Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: AppTheme.cardDecoration(),
+            child: Text('Fel: ${snap.error}',
+                style: const TextStyle(color: Colors.red, fontSize: 12)),
+          );
+        }
+        if (!snap.hasData) {
+          return Container(
+            height: 100,
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: AppTheme.cardDecoration(),
+          );
+        }
+        final docs = snap.data!.docs;
+        if (docs.isEmpty) {
+          return Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+            decoration: AppTheme.cardDecoration(),
+            child: Column(
+              children: [
+                const Text('✨', style: TextStyle(fontSize: 36)),
+                const SizedBox(height: 10),
+                Text('Inget planerat härnäst',
+                    style: AppTheme.sectionTitleStyle,
+                    textAlign: TextAlign.center),
+                const SizedBox(height: 6),
+                Text(
+                  'Tryck på Planering för att lägga till',
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          );
+        }
+        final doc = docs.first;
+        final d = doc.data() as Map<String, dynamic>;
+        final title = d['title'] as String? ?? '';
+        final piktogram = d['piktogram'] as String? ?? '📅';
+        final date = (d['date'] as Timestamp?)?.toDate();
+        final checklist =
+            (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+        final dayColor = AppTheme.getDayAccentColor();
+        final now = DateTime.now();
+        final diffMin = date != null
+            ? date.difference(now).inMinutes
+            : 0;
+        final timeLabel = diffMin <= 0
+            ? 'NU PÅGÅR'
+            : diffMin < 60
+                ? 'OM ${diffMin} MIN'
+                : 'OM ${(diffMin / 60).round()} H';
+        final timeStr =
+            date != null ? DateFormat('HH:mm').format(date) : '';
+
+        return GestureDetector(
+          onTap: () => _openDetail(doc),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: AppTheme.cardDecoration().copyWith(
+              border: Border(
+                left: BorderSide(color: dayColor, width: 4),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: dayColor.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(timeLabel,
+                        style: TextStyle(
+                            color: dayColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Text(piktogram,
+                          style: const TextStyle(fontSize: 40)),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold)),
+                            Text(timeStr,
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    color: dayColor,
+                                    fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (checklist.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    ...checklist.map((item) => _ChecklistTile(
+                          item: item,
+                          docId: doc.id,
+                          dayColor: dayColor,
+                        )),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ─── ENERGY SECTION ────────────────────────────────────────────────────────
+  Widget _buildEnergySection(List<UserModel> members) {
+    if (members.isEmpty) {
+      return Container(
+        height: 90,
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        child: const ShimmerListPlaceholder(),
+      );
+    }
+    return SizedBox(
+      height: 90,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: members.length,
+        itemBuilder: (_, i) {
+          final m = members[i];
+          Color avatarColor;
+          try {
+            avatarColor = Color(m.colorValue as int);
+          } catch (_) {
+            avatarColor = AppTheme.getDayAccentColor();
+          }
+          final energyText = ['', '😔 Låg', '😌 OK', '😊 Bra', '🚀 Topp'][
+              m.energy.clamp(1, 4)];
+          return Container(
+            width: 85,
+            margin: const EdgeInsets.only(right: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: AppTheme.cardDecoration(radius: 16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: avatarColor,
+                  child: Text(
+                      m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(height: 4),
+                Text(m.name.split(' ').first,
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis),
+                Text(energyText,
+                    style: const TextStyle(fontSize: 10),
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildFoodCard() {
-    final String dateKey = _getDateKey(DateTime.now());
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('planner_events')
-          .where('date', isEqualTo: dateKey)
-          .where('type', isEqualTo: 'food')
-          .snapshots(),
-      builder: (context, snapshot) {
-        String foodText = "Inget bestämt än";
-        if (snapshot.hasData && snapshot.data!.docs.isNotEmpty)
-          foodText =
-              (snapshot.data!.docs.first.data() as Map)['title'] ??
-              "Inget bestämt än";
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppTheme.getCardColor(),
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.restaurant, color: Colors.orangeAccent),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  foodText,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 16,
-                    color: AppTheme.getTextColor(),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildScheduleList() {
-    final String dateKey = _getDateKey(DateTime.now());
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('planner_events')
-          .where('date', isEqualTo: dateKey)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox();
-        var docs = snapshot.data!.docs.where((doc) {
-          var data = doc.data() as Map;
-          if (data['type'] == 'food') return false;
-          if (_showOnlyMine && _currentUserName != null)
-            return data['title'].toString().contains(_currentUserName!);
-          return true;
-        }).toList();
-        if (docs.isEmpty)
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.getCardColor(),
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: Text(
-              "Inget mer på schemat idag.",
-              style: TextStyle(color: AppTheme.getSubTextColor()),
-            ),
-          );
-        docs.sort(
-          (a, b) =>
-              (a.data() as Map)['time'].compareTo((b.data() as Map)['time']),
-        );
-        return Column(
-          children: docs.map((doc) {
-            var data = doc.data() as Map;
-            Color eventColor = _getEventColor(data['title'], data['type']);
-            IconData eventIcon = AppTheme.getEventIcon(
-              data['title'],
-              data['type'],
-            );
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.getCardColor(),
-                borderRadius: BorderRadius.circular(12),
-                border: Border(left: BorderSide(color: eventColor, width: 4)),
-              ),
-              child: ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: eventColor.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(eventIcon, color: eventColor, size: 20),
-                ),
-                title: Text(
-                  data['title'],
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                    color: AppTheme.getTextColor(),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: data['time'] != ""
-                    ? Text(
-                        data['time'],
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.getSubTextColor(),
-                        ),
-                      )
-                    : null,
-                dense: true,
-              ),
-            );
-          }).toList(),
-        );
-      },
-    );
-  }
-
-  Widget _buildChoresList() {
-    final String dateKey = _getDateKey(DateTime.now());
+  // ─── CHORE SUMMARY ─────────────────────────────────────────────────────────
+  Widget _buildChoreSummary() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const SizedBox.shrink();
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('chores')
-          .where('date', isEqualTo: dateKey)
           .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData)
-          return const Center(child: CircularProgressIndicator());
-        var docs = snapshot.data!.docs;
-        if (_showOnlyMine && _currentUserName != null)
-          docs = docs
-              .where(
-                (doc) => (doc.data() as Map)['who'].contains(_currentUserName!),
-              )
-              .toList();
-        if (docs.isEmpty)
-          return Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              _showOnlyMine
-                  ? "Du har inga sysslor idag."
-                  : "Inga sysslor inlagda idag.",
-              style: TextStyle(color: AppTheme.getSubTextColor()),
-            ),
+      builder: (ctx, snap) {
+        if (snap.hasError) {
+          return Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: AppTheme.cardDecoration(),
+            child: Text('Fel: ${snap.error}',
+                style: const TextStyle(color: Colors.red, fontSize: 12)),
           );
-        docs.sort((a, b) {
-          bool doneA = (a.data() as Map)['isDone'] ?? false;
-          bool doneB = (b.data() as Map)['isDone'] ?? false;
-          return doneA == doneB ? 0 : (doneA ? 1 : -1);
-        });
-        return Column(
-          children: docs.map((doc) {
-            var data = doc.data() as Map;
-            bool isDone = data['isDone'] ?? false;
-            Color whoColor = Color(
-              int.parse(data['whoColor'] ?? 'ff000000', radix: 16),
-            );
-            List substeps = data['substeps'] ?? [];
-            int doneSteps = substeps.where((s) => s['isDone'] == true).length;
-            return GestureDetector(
-              onTap: () {
-                _showStartmotorDialog(doc);
-              },
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: isDone
-                      ? Colors.white.withOpacity(0.2)
-                      : AppTheme.getCardColor(),
-                  borderRadius: BorderRadius.circular(12),
-                  border: isDone
-                      ? null
-                      : Border.all(
-                          color: Colors.white.withOpacity(0.5),
-                          width: 1,
-                        ),
+        }
+        final docs = snap.data?.docs ?? [];
+        final total = docs.length;
+        final done = docs.where((d) {
+          final data = d.data() as Map<String, dynamic>;
+          return data['isDone'] == true;
+        }).length;
+        final dayColor = AppTheme.getDayAccentColor();
+        final progress = total > 0 ? done / total : 0.0;
+
+        return GestureDetector(
+          onTap: () {
+            // Navigate to chores tab via bottom nav
+          },
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: AppTheme.cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('$done av $total klara',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15)),
+                    Icon(Icons.arrow_forward_ios_rounded,
+                        size: 14, color: Colors.grey.shade400),
+                  ],
                 ),
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: isDone ? Colors.grey : whoColor,
-                    radius: 16,
-                    child: Text(
-                      data['who'].isNotEmpty
-                          ? data['who'][0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 8,
+                    backgroundColor: Colors.grey.shade200,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(dayColor),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ─── QUICK TOOLS ───────────────────────────────────────────────────────────
+  Widget _buildQuickTools() {
+    final tools = [
+      {'emoji': '⏱️', 'label': 'Timer', 'page': const TimerPage()},
+      {
+        'emoji': '📱',
+        'label': 'Skärmtid',
+        'page': const ScreenRulesPage()
+      },
+      {
+        'emoji': '🛒',
+        'label': 'Inköp',
+        'page': const ShoppingListPage()
+      },
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: tools
+            .map((t) => Expanded(
+                  child: GestureDetector(
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => t['page'] as Widget)),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      height: 80,
+                      decoration: AppTheme.cardDecoration(radius: 16),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(t['emoji'] as String,
+                              style: const TextStyle(fontSize: 28)),
+                          const SizedBox(height: 4),
+                          Text(t['label'] as String,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ],
                       ),
                     ),
                   ),
-                  title: Text(
-                    data['chore'],
-                    style: TextStyle(
-                      decoration: isDone ? TextDecoration.lineThrough : null,
-                      color: isDone ? Colors.black38 : AppTheme.getTextColor(),
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                ))
+            .toList(),
+      ),
+    );
+  }
+
+  // ─── SECTION WRAPPER ───────────────────────────────────────────────────────
+  Widget _buildSection(String title, Widget child) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Text(title, style: AppTheme.sectionLabelStyle),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+
+  void _openDetail(QueryDocumentSnapshot doc) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ActivityDetailSheet(docSnapshot: doc),
+    );
+  }
+
+  String _swedishWeekday(int weekday) {
+    const days = [
+      '', 'Måndag', 'Tisdag', 'Onsdag', 'Torsdag',
+      'Fredag', 'Lördag', 'Söndag'
+    ];
+    return days[weekday.clamp(1, 7)];
+  }
+}
+
+// ─── ENERGY SHEET ───────────────────────────────────────────────────────────
+class _EnergySheet extends StatelessWidget {
+  final UserModel user;
+  const _EnergySheet({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final levels = [
+      {'energy': 1, 'emoji': '😔', 'label': 'Låg energi'},
+      {'energy': 2, 'emoji': '😌', 'label': 'Lite trött'},
+      {'energy': 3, 'emoji': '😊', 'label': 'Bra energi'},
+      {'energy': 4, 'emoji': '🚀', 'label': 'Full energi!'},
+    ];
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2)),
+          ),
+          const SizedBox(height: 16),
+          Text('Hur mår du idag?',
+              style: AppTheme.sectionTitleStyle),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: levels.map((l) {
+              final selected = user.energy == l['energy'];
+              return GestureDetector(
+                onTap: () {
+                  UserService.updateEnergy(
+                      user.uid, l['energy'] as int);
+                  Navigator.pop(context);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppTheme.getDayAccentColor()
+                            .withValues(alpha: 0.15)
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(16),
+                    border: selected
+                        ? Border.all(
+                            color: AppTheme.getDayAccentColor(),
+                            width: 2)
+                        : null,
                   ),
-                  subtitle: substeps.isNotEmpty
-                      ? Row(
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: LinearProgressIndicator(
-                                  value: doneSteps / substeps.length,
-                                  backgroundColor: Colors.grey[300],
-                                  color: Colors.green,
-                                  minHeight: 4,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              "$doneSteps/${substeps.length}",
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: AppTheme.getSubTextColor(),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Text(
-                          data['who'],
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.getSubTextColor(),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                  trailing: Checkbox(
-                    value: isDone,
-                    activeColor: Colors.black87,
-                    onChanged: (val) => FirebaseFirestore.instance
-                        .collection('chores')
-                        .doc(doc.id)
-                        .update({'isDone': val}),
+                  child: Column(
+                    children: [
+                      Text(l['emoji'] as String,
+                          style: const TextStyle(fontSize: 32)),
+                      const SizedBox(height: 4),
+                      Text(l['label'] as String,
+                          style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500)),
+                    ],
                   ),
                 ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── CHECKLIST TILE ─────────────────────────────────────────────────────────
+class _ChecklistTile extends StatefulWidget {
+  final Map<String, dynamic> item;
+  final String docId;
+  final Color dayColor;
+
+  const _ChecklistTile({
+    required this.item,
+    required this.docId,
+    required this.dayColor,
+  });
+
+  @override
+  State<_ChecklistTile> createState() => _ChecklistTileState();
+}
+
+class _ChecklistTileState extends State<_ChecklistTile>
+    with SingleTickerProviderStateMixin {
+  late bool _isDone;
+  late AnimationController _anim;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _isDone = widget.item['isDone'] == true;
+    _anim = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 200));
+    _scale = Tween<double>(begin: 1.0, end: 1.2)
+        .chain(CurveTween(curve: Curves.elasticOut))
+        .animate(_anim);
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    setState(() => _isDone = !_isDone);
+    _anim.forward().then((_) => _anim.reverse());
+    // Persist to Firestore (update checklist item)
+    FirebaseFirestore.instance
+        .collection('planner_events')
+        .doc(widget.docId)
+        .get()
+        .then((doc) {
+      if (!doc.exists) return;
+      final list = List<Map<String, dynamic>>.from(
+          (doc.data()!['checklist'] as List? ?? []));
+      final idx = list.indexWhere(
+          (e) => e['item'] == widget.item['item']);
+      if (idx != -1) {
+        list[idx] = {...list[idx], 'isDone': _isDone};
+        doc.reference.update({'checklist': list});
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _toggle,
+      child: Container(
+        height: 56,
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: _isDone
+              ? widget.dayColor.withValues(alpha: 0.08)
+              : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            ScaleTransition(
+              scale: _scale,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color:
+                      _isDone ? widget.dayColor : Colors.transparent,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: _isDone
+                          ? widget.dayColor
+                          : Colors.grey.shade400,
+                      width: 2),
+                ),
+                child: _isDone
+                    ? const Icon(Icons.check,
+                        color: Colors.white, size: 16)
+                    : null,
               ),
-            );
-          }).toList(),
-        );
-      },
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                widget.item['item'] as String? ?? '',
+                style: TextStyle(
+                    fontSize: 15,
+                    decoration: _isDone
+                        ? TextDecoration.lineThrough
+                        : null,
+                    color: _isDone
+                        ? Colors.grey.shade400
+                        : AppTheme.getTextColor()),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

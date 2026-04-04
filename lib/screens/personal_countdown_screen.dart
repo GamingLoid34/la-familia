@@ -25,7 +25,6 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   // Variabler för "Dra upp tiden" (Input)
   double _dragSeconds = 0;
   int _extraHours = 0;
-  bool _isDragging = false;
 
   @override
   void initState() {
@@ -148,7 +147,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   // --- VY 1: HELSKÄRMSLÄGE (FOKUS) ---
   Widget _buildFullScreenFocusMode() {
     return Scaffold(
-      body: Container(
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
         decoration: _getDailyBackground(),
         child: Stack(
           children: [
@@ -189,7 +190,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
             ),
           ],
         ),
-      ),
+      ))),
     );
   }
 
@@ -251,7 +252,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
                 ),
             ],
           ),
-          body: Container(
+          body: Center(child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
+            child: Container(
             decoration: _getDailyBackground(),
             child: SafeArea(
               child: Column(
@@ -344,7 +347,8 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
               ),
             ),
           ),
-        );
+        ))),
+      );
       },
     );
   }
@@ -382,17 +386,12 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
 
     return GestureDetector(
       onPanStart: isInteractive
-          ? (d) {
-              setState(() => _isDragging = true);
-              _updateTimeFromDrag(d.localPosition, size);
-            }
+          ? (d) => _updateTimeFromDrag(d.localPosition, size)
           : null,
       onPanUpdate: isInteractive
           ? (d) => _updateTimeFromDrag(d.localPosition, size)
           : null,
-      onPanEnd: isInteractive
-          ? (d) => setState(() => _isDragging = false)
-          : null,
+      onPanEnd: isInteractive ? (d) {} : null,
       onTapUp: isInteractive
           ? (d) => _updateTimeFromDrag(d.localPosition, size)
           : null,

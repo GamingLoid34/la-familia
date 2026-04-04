@@ -1,9 +1,26 @@
-import 'package:flutter/material.dart';
-import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../app_theme.dart';
+import '../data/piktogram.dart';
+import '../models/user_model.dart';
+import '../services/family_service.dart';
+import '../widgets/activity_detail_sheet.dart';
+
+DateTime? _parseEventDate(dynamic dateValue) {
+  try {
+    if (dateValue is Timestamp) return dateValue.toDate();
+    if (dateValue is String) {
+      final p = dateValue.split('-');
+      if (p.length >= 3) {
+        return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+      }
+    }
+  } catch (_) {}
+  return null;
+}
 
 class PlannerPage extends StatefulWidget {
   const PlannerPage({super.key});
@@ -11,744 +28,578 @@ class PlannerPage extends StatefulWidget {
   State<PlannerPage> createState() => _PlannerPageState();
 }
 
-class _PlannerPageState extends State<PlannerPage> {
+class _PlannerPageState extends State<PlannerPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
+  DateTime _selectedDay = DateTime.now();
+  UserModel? _currentUser;
+  List<UserModel> _familyMembers = [];
   String? _filterPerson;
+
+  late final Stream<QuerySnapshot> _eventsStream;
 
   @override
   void initState() {
     super.initState();
-    _selectedDay = DateTime.now();
-  }
-
-  void _showEventDialog({DocumentSnapshot? eventToEdit}) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => AddEventSheet(eventToEdit: eventToEdit),
-    );
-  }
-
-  void _showImportDialog() {
-    showDialog(context: context, builder: (context) => const ImportDialog());
-  }
-
-  Color _getEventColor(Map data) {
-    String type = data['type'] ?? '';
-    String title = (data['title'] ?? '').toString().toLowerCase();
-    if (title.contains('läkare') ||
-        title.contains('tand') ||
-        title.contains('bup') ||
-        title.contains('sjukhus') ||
-        title.contains('vård'))
-      return Colors.redAccent;
-    if (title.contains('skola') ||
-        title.contains('läxa') ||
-        title.contains('prov'))
-      return Colors.purpleAccent;
-    if (type == 'work' || title.contains('jobb')) return Colors.blue;
-    if (type == 'food') return Colors.orange;
-    return Colors.pinkAccent;
-  }
-
-  Future<void> _deleteEvent(String docId) async {
-    await FirebaseFirestore.instance
+    _eventsStream = FirebaseFirestore.instance
         .collection('planner_events')
-        .doc(docId)
-        .delete();
+        .snapshots();
+    _loadUser();
   }
+
+  Future<void> _loadUser() async {
+    final user = await FamilyService.getCurrentUserModel();
+    final members = <UserModel>[];
+    if (user?.familyId != null) {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('familyId', isEqualTo: user!.familyId)
+          .get();
+      for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
+    }
+    if (mounted) setState(() { _currentUser = user; _familyMembers = members; });
+  }
+
+  List<QueryDocumentSnapshot> _getEventsForDay(
+      List<QueryDocumentSnapshot> all, DateTime day) {
+    return all.where((doc) {
+      try {
+        final d = doc.data() as Map<String, dynamic>;
+        final date = _parseEventDate(d['date']);
+        if (date == null) return false;
+        if (!isSameDay(date, day)) return false;
+        if (_filterPerson != null) {
+          final persons = (d['persons'] as List? ?? []).cast<String>();
+          return persons.contains(_filterPerson);
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+  }
+
+  void _showAddSheet({QueryDocumentSnapshot? edit}) =>
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _AddEventSheet(
+          selectedDay: _selectedDay,
+          familyMembers: _familyMembers,
+          familyId: _currentUser?.familyId,
+          eventToEdit: edit,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
-    Color textColor = AppTheme.getTextColor();
-    Color cardColor = AppTheme.getCardColor();
+    super.build(context);
+    final dayColor = AppTheme.getDayAccentColor();
+    final isFocus = _currentUser?.isFocusMode ?? false;
+    final bottomPad = MediaQuery.of(context).padding.bottom;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 80.0),
-        child: FloatingActionButton(
-          onPressed: () => _showEventDialog(),
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.blueAccent,
-          child: const Icon(Icons.add_rounded, size: 30),
-        ),
-      ),
-      body: Stack(
+    return Container(
+      decoration: AppTheme.getBackground(),
+      child: Stack(
         children: [
-          Container(decoration: AppTheme.getBackground()),
-          SafeArea(
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const SizedBox(width: 48),
-                      Text(
-                        "Planering",
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.upload_file, color: textColor),
-                        onPressed: _showImportDialog,
-                      ),
-                    ],
+          StreamBuilder<QuerySnapshot>(
+            stream: _eventsStream,
+            builder: (ctx, snap) {
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text('Fel: ${snap.error}',
+                        style: const TextStyle(color: Colors.red)),
                   ),
-                ),
-                const SizedBox(height: 15),
-                SizedBox(
-                  height: 50,
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const SizedBox();
-                      var users = snapshot.data!.docs
-                          .where((d) => (d.data() as Map)['name'] != null)
-                          .toList();
-                      return ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        scrollDirection: Axis.horizontal,
-                        itemCount: users.length + 1,
-                        itemBuilder: (context, index) {
-                          if (index == 0) {
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 10),
-                              child: GestureDetector(
-                                onTap: () =>
-                                    setState(() => _filterPerson = null),
-                                child: CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: _filterPerson == null
-                                      ? Colors.white
-                                      : cardColor,
-                                  child: Icon(
-                                    Icons.people,
-                                    color: _filterPerson == null
-                                        ? Colors.blue
-                                        : textColor,
-                                  ),
-                                ),
-                              ),
-                            );
-                          }
-                          var data = users[index - 1].data() as Map;
-                          Color uColor = Color(
-                            int.parse(data['color'] ?? 'ff2196f3', radix: 16),
-                          );
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 10),
-                            child: GestureDetector(
-                              onTap: () => setState(
-                                () => _filterPerson =
-                                    _filterPerson == data['name']
-                                    ? null
-                                    : data['name'],
-                              ),
-                              child: CircleAvatar(
-                                backgroundColor: uColor,
-                                radius: 22,
-                                child: _filterPerson == data['name']
-                                    ? Container(
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          border: Border.all(
-                                            color: Colors.white,
-                                            width: 3,
-                                          ),
-                                        ),
-                                      )
-                                    : Center(
-                                        child: Text(
-                                          data['name'][0].toUpperCase(),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 15),
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('planner_events')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData)
-                        return const Center(child: CircularProgressIndicator());
-                      List<QueryDocumentSnapshot> allDocs = snapshot.data!.docs;
-                      if (_filterPerson != null)
-                        allDocs = allDocs
-                            .where(
-                              (doc) => (doc.data() as Map)['title']
-                                  .toString()
-                                  .contains(_filterPerson!),
-                            )
-                            .toList();
-                      Map<DateTime, List<dynamic>> eventsPerDay = {};
-                      for (var doc in allDocs) {
-                        try {
-                          var data = doc.data() as Map;
-                          List<String> p = data['date'].split('-');
-                          DateTime d = DateTime.utc(
-                            int.parse(p[0]),
-                            int.parse(p[1]),
-                            int.parse(p[2]),
-                          );
-                          if (eventsPerDay[d] == null) eventsPerDay[d] = [];
-                          eventsPerDay[d]!.add(data);
-                        } catch (e) {}
-                      }
-                      String selDate =
-                          "${_selectedDay?.year}-${_selectedDay?.month}-${_selectedDay?.day}";
-                      var dayEvents = allDocs
-                          .where((d) => (d.data() as Map)['date'] == selDate)
-                          .toList();
-
-                      return Column(
-                        children: [
-                          Container(
-                            margin: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: cardColor,
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            padding: const EdgeInsets.all(8),
-                            child: TableCalendar(
-                              locale: 'sv_SE',
-                              firstDay: DateTime.utc(2024),
-                              lastDay: DateTime.utc(2030),
-                              focusedDay: _focusedDay,
-                              calendarFormat: CalendarFormat.month,
-                              startingDayOfWeek: StartingDayOfWeek.monday,
-
-                              availableGestures: AvailableGestures.none,
-
-                              eventLoader: (day) =>
-                                  eventsPerDay[DateTime.utc(
-                                    day.year,
-                                    day.month,
-                                    day.day,
-                                  )] ??
-                                  [],
-                              calendarBuilders: CalendarBuilders(
-                                defaultBuilder: (context, day, focusedDay) {
-                                  return Center(
-                                    child: Container(
-                                      width: 35,
-                                      height: 35,
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.getNpfDayColor(
-                                          day.weekday,
-                                        ).withOpacity(0.8),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        '${day.day}',
-                                        style: TextStyle(
-                                          color: AppTheme.getNpfTextColor(
-                                            day.weekday,
-                                          ),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                todayBuilder: (context, day, focusedDay) {
-                                  return Center(
-                                    child: Container(
-                                      width: 35,
-                                      height: 35,
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.getNpfDayColor(
-                                          day.weekday,
-                                        ),
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 2,
-                                        ),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        '${day.day}',
-                                        style: TextStyle(
-                                          color: AppTheme.getNpfTextColor(
-                                            day.weekday,
-                                          ),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                selectedBuilder: (context, day, focusedDay) {
-                                  return Center(
-                                    child: Container(
-                                      width: 38,
-                                      height: 38,
-                                      decoration: const BoxDecoration(
-                                        color: Colors.black87,
-                                        shape: BoxShape.circle,
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        '${day.day}',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                                markerBuilder: (context, day, events) {
-                                  if (events.isEmpty) return const SizedBox();
-                                  return Positioned(
-                                    bottom: 2,
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: events
-                                          .take(3)
-                                          .map(
-                                            (e) => Container(
-                                              margin:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 1.0,
-                                                  ),
-                                              width: 5,
-                                              height: 5,
-                                              decoration: BoxDecoration(
-                                                color: Colors.white,
-                                                shape: BoxShape.circle,
-                                                border: Border.all(
-                                                  color: Colors.black54,
-                                                  width: 0.5,
-                                                ),
-                                              ),
-                                            ),
-                                          )
-                                          .toList(),
-                                    ),
-                                  );
-                                },
-                              ),
-                              headerStyle: HeaderStyle(
-                                formatButtonVisible: false,
-                                titleCentered: true,
-                                titleTextStyle: TextStyle(
-                                  color: textColor,
-                                  fontSize: 17,
-                                ),
-                                leftChevronVisible: true,
-                                rightChevronVisible: true,
-                                leftChevronIcon: Icon(
-                                  Icons.chevron_left,
-                                  color: textColor,
-                                ),
-                                rightChevronIcon: Icon(
-                                  Icons.chevron_right,
-                                  color: textColor,
-                                ),
-                              ),
-                              selectedDayPredicate: (day) =>
-                                  isSameDay(_selectedDay, day),
-                              onDaySelected: (s, f) => setState(() {
-                                _selectedDay = s;
-                                _focusedDay = f;
-                              }),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Expanded(
-                            child: ListView.builder(
-                              padding: const EdgeInsets.only(bottom: 120),
-                              itemCount: dayEvents.length,
-                              itemBuilder: (context, index) {
-                                var data = dayEvents[index].data() as Map;
-                                Color dotColor = _getEventColor(data);
-                                IconData icon = AppTheme.getEventIcon(
-                                  data['title'],
-                                  data['type'],
-                                );
-
-                                return GestureDetector(
-                                  onTap: () => _showEventDialog(
-                                    eventToEdit: dayEvents[index],
-                                  ),
-                                  child: Container(
-                                    margin: const EdgeInsets.fromLTRB(
-                                      16,
-                                      0,
-                                      16,
-                                      12,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: cardColor,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: ListTile(
-                                      leading: CircleAvatar(
-                                        backgroundColor: dotColor.withOpacity(
-                                          0.2,
-                                        ),
-                                        child: Icon(
-                                          icon,
-                                          color: dotColor,
-                                          size: 20,
-                                        ),
-                                      ),
-                                      title: Text(
-                                        data['title'],
-                                        style: TextStyle(
-                                          color: textColor,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      subtitle: Text(
-                                        data['time'],
-                                        style: TextStyle(
-                                          color: textColor.withOpacity(0.7),
-                                        ),
-                                      ),
-                                      trailing: IconButton(
-                                        icon: Icon(
-                                          Icons.delete,
-                                          color: textColor.withOpacity(0.5),
-                                        ),
-                                        onPressed: () =>
-                                            _deleteEvent(dayEvents[index].id),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
+                );
+              }
+              final all = snap.data?.docs ?? [];
+              if (isFocus) return _buildFocusView(all);
+              return _buildParentView(all, dayColor);
+            },
+          ),
+          Positioned(
+            right: 16,
+            bottom: bottomPad + 16,
+            child: FloatingActionButton.extended(
+              onPressed: _showAddSheet,
+              backgroundColor: dayColor,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Ny aktivitet',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class ImportDialog extends StatelessWidget {
-  const ImportDialog({super.key});
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text("Importera"),
-      content: const Text("Kommer snart"),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("OK"),
+  Widget _buildParentView(List<QueryDocumentSnapshot> all, Color dayColor) {
+    final selected = _getEventsForDay(all, _selectedDay);
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(child: _buildCalendar(all, dayColor)),
+          SliverToBoxAdapter(child: _buildPersonFilter(dayColor)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+              child: Text(
+                  () {
+                    try {
+                      return DateFormat('EEEE d MMMM', 'sv').format(_selectedDay);
+                    } catch (_) {
+                      return DateFormat('d MMMM').format(_selectedDay);
+                    }
+                  }(),
+                  style: AppTheme.sectionTitleStyle),
+            ),
+          ),
+          if (selected.isEmpty)
+            SliverToBoxAdapter(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.all(24),
+                decoration: AppTheme.cardDecoration(),
+                child: const Center(child: Text('Ingen planering — lägg till! ✨',
+                    style: TextStyle(color: Colors.grey))),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) => _ActivityCard(doc: selected[i], dayColor: dayColor),
+                childCount: selected.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
+        ],
+      );
+  }
+
+  Widget _buildFocusView(List<QueryDocumentSnapshot> all) {
+    final today = _getEventsForDay(all, DateTime.now());
+    final dayColor = AppTheme.getDayAccentColor();
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Text('Min dag', style: AppTheme.sectionTitleStyle),
+            ),
+          ),
+          if (today.isEmpty)
+            SliverToBoxAdapter(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.all(32),
+                decoration: AppTheme.cardDecoration(),
+                child: const Center(child: Text('Fri dag! 🌿')),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) => _FocusCard(doc: today[i], dayColor: dayColor),
+                childCount: today.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
+        ],
+      );
+  }
+
+  Widget _buildHeader(Color dayColor) {
+    final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
+    return Container(
+      decoration: BoxDecoration(
+        color: dayColor,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+      child: Text('Planering',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
+    );
+  }
+
+  Widget _buildCalendar(List<QueryDocumentSnapshot> all, Color dayColor) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      decoration: AppTheme.cardDecoration(),
+      child: TableCalendar(
+        firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
+        focusedDay: _focusedDay,
+        selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
+        calendarFormat: CalendarFormat.month,
+        availableCalendarFormats: const {CalendarFormat.month: 'Månad'},
+        eventLoader: (day) {
+          try {
+            return _getEventsForDay(all, day).map((e) => e.id).toList();
+          } catch (_) {
+            return [];
+          }
+        },
+        onDaySelected: (s, f) => setState(() { _selectedDay = s; _focusedDay = f; }),
+        onPageChanged: (f) => setState(() => _focusedDay = f),
+        locale: 'sv',
+        calendarStyle: CalendarStyle(
+          selectedDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
+          todayDecoration: BoxDecoration(color: dayColor.withValues(alpha: 0.3), shape: BoxShape.circle),
+          markerDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
+          markersMaxCount: 3,
+          outsideDaysVisible: false,
         ),
-      ],
+        headerStyle: const HeaderStyle(
+          formatButtonVisible: false, titleCentered: true,
+          titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPersonFilter(Color dayColor) {
+    if (_familyMembers.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        children: [
+          _Pill(label: 'Alla', selected: _filterPerson == null, color: dayColor,
+              onTap: () => setState(() => _filterPerson = null)),
+          ..._familyMembers.map((m) {
+            Color mc;
+            try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
+            return _Pill(
+              label: m.name.split(' ').first,
+              selected: _filterPerson == m.name,
+              color: mc,
+              onTap: () => setState(() => _filterPerson = _filterPerson == m.name ? null : m.name),
+            );
+          }),
+        ],
+      ),
     );
   }
 }
 
-class AddEventSheet extends StatefulWidget {
-  final DocumentSnapshot? eventToEdit;
-  const AddEventSheet({super.key, this.eventToEdit});
+class _Pill extends StatelessWidget {
+  final String label; final bool selected; final Color color; final VoidCallback onTap;
+  const _Pill({required this.label, required this.selected, required this.color, required this.onTap});
   @override
-  State<AddEventSheet> createState() => _AddEventSheetState();
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: selected ? color : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: selected ? color : Colors.grey.shade300),
+      ),
+      child: Text(label, style: TextStyle(
+        color: selected ? Colors.white : AppTheme.getTextColor(),
+        fontWeight: FontWeight.w600, fontSize: 13)),
+    ),
+  );
 }
 
-class _AddEventSheetState extends State<AddEventSheet> {
-  String _selectedType = 'food';
-  final TextEditingController _titleController = TextEditingController();
-  String? _selectedPersonName;
-  TimeOfDay? _startTime;
-  TimeOfDay? _endTime;
-  final Set<DateTime> _selectedDates = {};
-  DateTime _focusedDay = DateTime.now();
-  bool _addToGoogleCalendar = false;
+class _ActivityCard extends StatelessWidget {
+  final QueryDocumentSnapshot doc; final Color dayColor;
+  const _ActivityCard({required this.doc, required this.dayColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = doc.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    final pik = d['piktogram'] as String? ?? '📅';
+    final date = _parseEventDate(d['date']);
+    final time = date != null ? DateFormat('HH:mm').format(date) : '';
+    final isPending = d['isPending'] == true;
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        decoration: AppTheme.cardDecoration().copyWith(
+          border: Border(left: BorderSide(color: dayColor, width: 4))),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(children: [
+            Text(pik, style: const TextStyle(fontSize: 36)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              Text(time, style: TextStyle(fontSize: 13, color: dayColor, fontWeight: FontWeight.w600)),
+              if (isPending) const Text('⏳ Väntar på godkännande',
+                  style: TextStyle(fontSize: 11, color: Colors.orange)),
+            ])),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusCard extends StatelessWidget {
+  final QueryDocumentSnapshot doc; final Color dayColor;
+  const _FocusCard({required this.doc, required this.dayColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = doc.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    final pik = d['piktogram'] as String? ?? '📅';
+    final date = _parseEventDate(d['date']);
+    final time = date != null ? DateFormat('HH:mm').format(date) : '';
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.all(20),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(children: [
+          Text(pik, style: const TextStyle(fontSize: 44)),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(time, style: TextStyle(fontSize: 15, color: dayColor, fontWeight: FontWeight.w600)),
+          ])),
+          Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey.shade400),
+        ]),
+      ),
+    );
+  }
+}
+
+class _AddEventSheet extends StatefulWidget {
+  final DateTime selectedDay;
+  final List<UserModel> familyMembers;
+  final String? familyId;
+  final QueryDocumentSnapshot? eventToEdit;
+  const _AddEventSheet({required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
+  @override
+  State<_AddEventSheet> createState() => _AddEventSheetState();
+}
+
+class _AddEventSheetState extends State<_AddEventSheet> {
+  int _step = 0;
+  String _pik = '📅';
+  String _cat = 'Alla';
+  String _q = '';
+  final _title = TextEditingController();
+  TimeOfDay _start = TimeOfDay.now();
+  final List<String> _persons = [];
+  final List<String> _checklist = [];
+  final _clCtrl = TextEditingController();
+  bool _saving = false;
+
   @override
   void initState() {
     super.initState();
     if (widget.eventToEdit != null) {
-      var data = widget.eventToEdit!.data() as Map;
-      _selectedType = data['type'];
-      _titleController.text = data['title'];
-      try {
-        _selectedDates.add(DateTime.parse(data['date']));
-      } catch (e) {}
-    } else {
-      DateTime now = DateTime.now();
-      _selectedDates.add(DateTime(now.year, now.month, now.day));
+      final d = widget.eventToEdit!.data() as Map<String, dynamic>;
+      _pik = d['piktogram'] as String? ?? '📅';
+      _title.text = d['title'] as String? ?? '';
+      _step = 1;
     }
   }
 
-  Future<void> _pickTime(bool isStart) async {
-    final t = await showTimePicker(
-      context: context,
-      initialTime: const TimeOfDay(hour: 12, minute: 0),
-      initialEntryMode: TimePickerEntryMode.dial,
-      builder: (c, child) => MediaQuery(
-        data: MediaQuery.of(c).copyWith(alwaysUse24HourFormat: true),
-        child: child!,
-      ),
-    );
-    if (t != null) setState(() => isStart ? _startTime = t : _endTime = t);
-  }
+  List<PiktogramItem> get _filtered => piktogramLibrary.where((p) =>
+    (_cat == 'Alla' || p.category == _cat) &&
+    (_q.isEmpty || p.label.toLowerCase().contains(_q.toLowerCase()))
+  ).toList();
 
-  String _formatTime(TimeOfDay t) =>
-      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-  Future<void> _openGoogleCalendar(
-    String title,
-    DateTime date,
-    TimeOfDay? start,
-    TimeOfDay? end,
-  ) async {
-    final DateFormat formatter = DateFormat('yyyyMMdd');
-    final String dateStr = formatter.format(date);
-    String dates = "$dateStr/$dateStr";
-    if (start != null) {
-      final String sTime =
-          "${start.hour.toString().padLeft(2, '0')}${start.minute.toString().padLeft(2, '0')}00";
-      final String eTime = end != null
-          ? "${end.hour.toString().padLeft(2, '0')}${end.minute.toString().padLeft(2, '0')}00"
-          : "${(start.hour + 1).toString().padLeft(2, '0')}${start.minute.toString().padLeft(2, '0')}00";
-      dates = "${dateStr}T$sTime/${dateStr}T$eTime";
-    }
-    final Uri url = Uri.parse(
-      'https://www.google.com/calendar/render?action=TEMPLATE&text=${Uri.encodeComponent(title)}&dates=$dates',
-    );
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    }
-  }
-
-  Future<void> _saveAll() async {
-    if (_selectedDates.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Välj minst ett datum i kalendern!"),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
-    }
-    String finalTitle = _titleController.text;
-    if ((_selectedType == 'work' || _selectedType == 'activity') &&
-        _selectedPersonName != null) {
-      finalTitle = finalTitle.isEmpty
-          ? _selectedPersonName!
-          : "$_selectedPersonName ($finalTitle)";
-    }
-    String timeStr = _startTime != null ? _formatTime(_startTime!) : "";
-    if (_endTime != null) timeStr += " - ${_formatTime(_endTime!)}";
-    for (var date in _selectedDates) {
-      String dateKey = "${date.year}-${date.month}-${date.day}";
-      if (_selectedType == 'food') {
-        var old = await FirebaseFirestore.instance
-            .collection('planner_events')
-            .where('date', isEqualTo: dateKey)
-            .where('type', isEqualTo: 'food')
-            .get();
-        for (var doc in old.docs) await doc.reference.delete();
+  Future<void> _save() async {
+    if (_title.text.trim().isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final d = widget.selectedDay;
+      final data = {
+        'title': _title.text.trim(),
+        'piktogram': _pik,
+        'type': 'activity',
+        'date': '${d.year}-${d.month}-${d.day}',
+        'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
+        'persons': _persons,
+        'checklist': _checklist.map((i) => {'item': i, 'isDone': false}).toList(),
+        'source': 'manual',
+        'createdBy': user?.uid,
+        'isPending': false,
+        'familyId': widget.familyId ?? '',
+      };
+      if (widget.eventToEdit != null) {
+        await widget.eventToEdit!.reference.update(data);
+      } else {
+        await FirebaseFirestore.instance.collection('planner_events').add(data);
       }
-      await FirebaseFirestore.instance.collection('planner_events').add({
-        'type': _selectedType,
-        'title': finalTitle,
-        'date': dateKey,
-        'time': timeStr,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-      if (_addToGoogleCalendar) {
-        await _openGoogleCalendar(finalTitle, date, _startTime, _endTime);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Aktivitet sparad! ✅'),
+            backgroundColor: Color(0xFF6BAE75),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fel vid sparande: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
-    if (mounted) Navigator.pop(context);
-  }
-
-  Widget _typeButton(String label, IconData icon, String value, Color color) {
-    bool isSelected = _selectedType == value;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedType = value),
-      child: Column(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isSelected ? color : Colors.grey[100],
-              shape: BoxShape.circle,
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: color.withOpacity(0.4),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Icon(
-              icon,
-              color: isSelected ? Colors.white : Colors.grey[400],
-              size: 28,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: isSelected ? Colors.black87 : Colors.grey[400],
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final dayColor = AppTheme.getDayAccentColor();
     return Container(
-      height: MediaQuery.of(context).size.height * 0.90,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      height: MediaQuery.of(context).size.height * 0.92,
+      decoration: const BoxDecoration(color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      child: Column(children: [
+        Padding(padding: const EdgeInsets.only(top: 12),
+          child: Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(children: [
+            Expanded(child: Text(_step == 0 ? 'Välj piktogram' : 'Aktivitetsdetaljer',
+                style: AppTheme.sectionTitleStyle)),
+            if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0),
+                child: const Text('← Byt piktogram')),
+          ]),
+        ),
+        Expanded(child: _step == 0 ? _picker(dayColor) : _form(dayColor)),
+      ]),
+    );
+  }
+
+  Widget _picker(Color dayColor) {
+    final items = _filtered;
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: TextField(
+          onChanged: (v) => setState(() => _q = v),
+          decoration: InputDecoration(hintText: 'Sök...', prefixIcon: const Icon(Icons.search),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            filled: true, fillColor: Colors.grey.shade100, contentPadding: const EdgeInsets.symmetric(vertical: 8)),
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-      child: Column(
-        children: [
-          const Text(
-            "Lägg till händelse",
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 15),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Column(
-                children: [
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _typeButton(
-                        "Mat",
-                        Icons.restaurant_rounded,
-                        'food',
-                        Colors.orange,
-                      ),
-                      _typeButton(
-                        "Jobb/Skola",
-                        Icons.work_rounded,
-                        'work',
-                        Colors.blue,
-                      ),
-                      _typeButton(
-                        "Aktivitet",
-                        Icons.sports_soccer_rounded,
-                        'activity',
-                        Colors.pink,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 25),
-                  if (_selectedType != 'food')
-                    SizedBox(
-                      height: 80,
-                      child: StreamBuilder<QuerySnapshot>(
-                        stream: FirebaseFirestore.instance
-                            .collection('users')
-                            .snapshots(),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData) return const SizedBox();
-                          var users = snapshot.data!.docs
-                              .where(
-                                (d) =>
-                                    (d.data() as Map)['name'] != null &&
-                                    (d.data() as Map)['name']
-                                        .toString()
-                                        .isNotEmpty,
-                              )
-                              .toList();
-                          return ListView(
-                            scrollDirection: Axis.horizontal,
-                            children: users.map((doc) {
-                              var data = doc.data() as Map;
-                              bool isSel = _selectedPersonName == data['name'];
-                              Color uColor = Color(
-                                int.parse(
-                                  data['color'] ?? 'ff2196f3',
-                                  radix: 16,
-                                ),
-                              );
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 15.0),
-                                child: GestureDetector(
-                                  onTap: () => setState(
-                                    () => _selectedPersonName = isSel
-                                        ? null
-                                        : data['name'],
-                                  ),
-                                  child: Column(
-                                    children: [
-                                      CircleAvatar(
-                                        backgroundColor: uColor,
-                                        radius: 24,
-                                        child: Container(
-                                          decoration: isSel
-                                              ? BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(
-                                                    color: Colors.blueAccent,
-                                                    width: 3,
-                                                  ),
-                                                )
-                                              : null,
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            data['name'][0].toUpperCase(),
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 5),
-                                      Text(
-                                        data['name'],
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: isSel
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                          color: isSel
+      SizedBox(height: 40, child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: piktogramCategories.map((c) => _Pill(label: c, selected: _cat == c,
+            color: dayColor, onTap: () => setState(() => _cat = c))).toList())),
+      const SizedBox(height: 8),
+      Expanded(child: GridView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 5, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.9),
+        itemCount: items.length,
+        itemBuilder: (_, i) {
+          final p = items[i];
+          final sel = p.emoji == _pik;
+          return GestureDetector(
+            onTap: () { setState(() { _pik = p.emoji; if (_title.text.isEmpty) _title.text = p.label; _step = 1; }); },
+            child: AnimatedContainer(duration: const Duration(milliseconds: 150),
+              decoration: BoxDecoration(
+                color: sel ? dayColor.withValues(alpha: 0.15) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+                border: sel ? Border.all(color: dayColor, width: 2) : null),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text(p.emoji, style: const TextStyle(fontSize: 24)),
+                Text(p.label, style: const TextStyle(fontSize: 9), textAlign: TextAlign.center,
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+              ])),
+          );
+        },
+      )),
+    ]);
+  }
+
+  Widget _form(Color dayColor) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: GestureDetector(
+          onTap: () => setState(() => _step = 0),
+          child: Column(children: [
+            Text(_pik, style: const TextStyle(fontSize: 56)),
+            Text('Byt piktogram', style: TextStyle(fontSize: 12, color: dayColor)),
+          ]),
+        )),
+        const SizedBox(height: 16),
+        TextField(controller: _title,
+          decoration: InputDecoration(labelText: 'Aktivitetsnamn',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)))),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.access_time),
+          label: Text('Starttid: ${_start.format(context)}'),
+          onPressed: () async {
+            final t = await showTimePicker(context: context, initialTime: _start);
+            if (t != null) setState(() => _start = t);
+          },
+        ),
+        const SizedBox(height: 16),
+        Text('Vem deltar?', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, children: widget.familyMembers.map((m) {
+          final sel = _persons.contains(m.name);
+          Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
+          return FilterChip(label: Text(m.name.split(' ').first), selected: sel,
+            selectedColor: mc.withValues(alpha: 0.2), checkmarkColor: mc,
+            onSelected: (v) => setState(() => v ? _persons.add(m.name) : _persons.remove(m.name)));
+        }).toList()),
+        const SizedBox(height: 16),
+        Text('Förberedelser', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: TextField(controller: _clCtrl,
+            decoration: InputDecoration(hintText: 'Lägg till...', contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+            onSubmitted: (v) { if (v.trim().isNotEmpty) setState(() { _checklist.add(v.trim()); _clCtrl.clear(); }); })),
+          const SizedBox(width: 8),
+          IconButton(icon: Icon(Icons.add_circle_rounded, color: dayColor, size: 32),
+            onPressed: () { if (_clCtrl.text.trim().isNotEmpty) setState(() { _checklist.add(_clCtrl.text.trim()); _clCtrl.clear(); }); }),
+        ]),
+        ..._checklist.map((item) => ListTile(
+          leading: const Icon(Icons.check_circle_outline), title: Text(item), dense: true, contentPadding: EdgeInsets.zero,
+          trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: Colors.red),
+            onPressed: () => setState(() => _checklist.remove(item))))),
+        const SizedBox(height: 24),
+        SizedBox(width: double.infinity, height: 56, child: ElevatedButton(
+          onPressed: _saving ? null : _save,
+          style: ElevatedButton.styleFrom(backgroundColor: dayColor, foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+          child: _saving ? const CircularProgressIndicator(color: Colors.white) :
+              const Text('Spara aktivitet', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        )),
+        const SizedBox(height: 40),
+      ]),
+    );
+  }
+}

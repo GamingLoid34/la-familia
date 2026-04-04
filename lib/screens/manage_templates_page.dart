@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../theme/app_theme.dart';
+import '../app_theme.dart';
 
 class ManageTemplatesPage extends StatefulWidget {
   const ManageTemplatesPage({super.key});
@@ -97,7 +97,9 @@ class _ManageTemplatesPageState extends State<ManageTemplatesPage> {
         elevation: 0,
         iconTheme: IconThemeData(color: textColor),
       ),
-      body: Container(
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
         height: double.infinity,
         decoration: AppTheme.getBackground(),
         child: SafeArea(
@@ -289,7 +291,7 @@ class _ManageTemplatesPageState extends State<ManageTemplatesPage> {
             ),
           ),
         ),
-      ),
+      ))),
     );
   }
 }

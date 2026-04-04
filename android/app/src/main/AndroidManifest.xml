@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="myapp"
+        android:label="La Familia"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -19,6 +19,15 @@
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
+              />
+            <!-- Enable high refresh rate (120Hz) on supported devices -->
+            <meta-data
+              android:name="io.flutter.embedding.android.EnableVulkan"
+              android:value="true"
+              />
+            <meta-data
+              android:name="io.flutter.embedding.android.RequestedRefreshRate"
+              android:value="auto"
               />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/timer_service.dart'; // Hämta vår nya tjänst
+import '../timer_service.dart'; // Hämta vår nya tjänst
 
 class TimerPage extends StatefulWidget {
   const TimerPage({super.key});
@@ -21,7 +21,7 @@ class _TimerPageState extends State<TimerPage> {
   Widget build(BuildContext context) {
     // Vi använder ValueListenableBuilder för att lyssna på ändringar live
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF5F0ED),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -29,10 +29,15 @@ class _TimerPageState extends State<TimerPage> {
           icon: const Icon(Icons.close, color: Colors.black, size: 30),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text("Fokus-Timer", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        title: const Text(
+          "Fokus-Timer",
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
         centerTitle: true,
       ),
-      body: SafeArea(
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: SafeArea(
         child: ValueListenableBuilder<int>(
           valueListenable: _service.remainingSeconds,
           builder: (context, currentSeconds, child) {
@@ -42,21 +47,23 @@ class _TimerPageState extends State<TimerPage> {
                 return ValueListenableBuilder<bool>(
                   valueListenable: _service.isRunning,
                   builder: (context, running, child) {
-                    
-                    double progress = maxSeconds > 0 ? currentSeconds / maxSeconds : 0.0;
+                    double progress = maxSeconds > 0
+                        ? currentSeconds / maxSeconds
+                        : 0.0;
                     double minutesSet = maxSeconds / 60;
 
                     return Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const Spacer(),
-                        
+
                         // --- DEN STORA VISUELLA KLOCKAN ---
                         Stack(
                           alignment: Alignment.center,
                           children: [
                             SizedBox(
-                              width: 300, height: 300,
+                              width: 300,
+                              height: 300,
                               child: CircularProgressIndicator(
                                 value: 1.0,
                                 color: Colors.grey[200],
@@ -64,7 +71,8 @@ class _TimerPageState extends State<TimerPage> {
                               ),
                             ),
                             SizedBox(
-                              width: 300, height: 300,
+                              width: 300,
+                              height: 300,
                               child: CircularProgressIndicator(
                                 value: progress,
                                 color: Colors.redAccent,
@@ -77,19 +85,111 @@ class _TimerPageState extends State<TimerPage> {
                               children: [
                                 Text(
                                   _formatTime(currentSeconds),
-                                  style: const TextStyle(fontSize: 60, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                                  style: const TextStyle(
+                                    fontSize: 60,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.redAccent,
+                                  ),
                                 ),
                                 if (currentSeconds == 0)
-                                  const Text("KLART!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20))
+                                  const Text(
+                                    "KLART!",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                    ),
+                                  )
                                 else if (!running)
-                                  const Text("PAUSAD", style: TextStyle(color: Colors.grey))
+                                  const Text(
+                                    "PAUSAD",
+                                    style: TextStyle(color: Colors.grey),
+                                  ),
                               ],
                             ),
                           ],
                         ),
-                        
+
                         const Spacer(),
 
-                        // --- REGLAGE (Bara om ej aktiv) ---
                         if (!running && currentSeconds == maxSeconds) ...[
-                          const Text("Ställ in tid (min
+                          const Text(
+                            "Ställ in tid (minuter)",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          Slider(
+                            value: minutesSet,
+                            min: 5,
+                            max: 120,
+                            divisions: 23,
+                            activeColor: Colors.redAccent,
+                            onChanged: (val) {
+                              _service.setTimer(val.toInt() * 60);
+                            },
+                          ),
+                        ],
+
+                        // --- KNAPPAR ---
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (!running)
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.redAccent,
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(20),
+                                ),
+                                onPressed: () => _service.startTimer(),
+                                child: const Icon(
+                                  Icons.play_arrow,
+                                  size: 40,
+                                  color: Colors.white,
+                                ),
+                              )
+                            else ...[
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.orange,
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(20),
+                                ),
+                                onPressed: () => _service.pauseTimer(),
+                                child: const Icon(
+                                  Icons.pause,
+                                  size: 40,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 20),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.grey,
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(20),
+                                ),
+                                onPressed: () => _service.stopTimer(),
+                                child: const Icon(
+                                  Icons.stop,
+                                  size: 40,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 50),
+                      ],
+                    );
+                  },
+                );
+              },
+            );
+          },
+        ),
+      ))),
+    );
+  }
+}
