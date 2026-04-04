@@ -32,24 +32,27 @@ class _DashboardPageState extends State<DashboardPage>
 
   late final Stream<UserModel?> _userStream;
   late final Stream<List<UserModel>> _familyStream;
-  late final Stream<QuerySnapshot> _eventsStream;
+  late Stream<QuerySnapshot> _eventsStream;
 
   @override
   void initState() {
     super.initState();
     _userStream = UserService.getCurrentUserStream();
     _familyStream = FamilyService.getCurrentFamilyStream();
-    _eventsStream = _buildEventsStream();
+    _eventsStream = _buildEventsStream(null);
     _loadData();
   }
 
-  Stream<QuerySnapshot> _buildEventsStream() {
+  Stream<QuerySnapshot> _buildEventsStream(String? familyId) {
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
-    return FirebaseFirestore.instance
+    var query = FirebaseFirestore.instance
         .collection('planner_events')
-        .where('date', isEqualTo: todayStr)
-        .snapshots();
+        .where('date', isEqualTo: todayStr);
+    if (familyId != null && familyId.isNotEmpty) {
+      query = query.where('familyId', isEqualTo: familyId);
+    }
+    return query.snapshots();
   }
 
   // Hanterar både Timestamp och String "yyyy-M-d"
@@ -64,12 +67,31 @@ class _DashboardPageState extends State<DashboardPage>
     return null;
   }
 
+  // Kombinerar 'date' och 'time' fält till ett DateTime med korrekt tid
+  static DateTime? _parseDateTime(Map<String, dynamic> d) {
+    try {
+      final base = _parseDate(d['date']);
+      if (base == null) return null;
+      final timeStr = d['time'] as String? ?? '';
+      if (timeStr.isNotEmpty) {
+        final tp = timeStr.split(':');
+        if (tp.length >= 2) {
+          return DateTime(base.year, base.month, base.day,
+              int.parse(tp[0]), int.parse(tp[1]));
+        }
+      }
+      return base;
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _loadData() async {
     final user = await FamilyService.getCurrentUserModel();
     if (!mounted) return;
     setState(() {
       _currentUser = user;
       _loading = false;
+      _eventsStream = _buildEventsStream(user?.familyId);
     });
   }
 
@@ -526,7 +548,7 @@ class _DashboardPageState extends State<DashboardPage>
             itemCount: docs.length,
             itemBuilder: (_, i) {
               final d = docs[i].data() as Map<String, dynamic>;
-              final date = _parseDate(d['date']);
+              final date = _parseDateTime(d);
               final title = d['title'] as String? ?? '';
               final piktogram = d['piktogram'] as String? ?? '📅';
               final dayColor = AppTheme.getDayAccentColor();
@@ -656,7 +678,7 @@ class _DashboardPageState extends State<DashboardPage>
         final d = doc.data() as Map<String, dynamic>;
         final title = d['title'] as String? ?? '';
         final piktogram = d['piktogram'] as String? ?? '📅';
-        final date = _parseDate(d['date']);
+        final date = _parseDateTime(d);
         final checklist =
             (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
         final dayColor = AppTheme.getDayAccentColor();
