@@ -167,7 +167,10 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
       ),
-      body: SingleChildScrollView(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430),
+          child: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -325,6 +328,8 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
               ),
             ),
           ],
+        ),
+      ),
         ),
       ),
     );

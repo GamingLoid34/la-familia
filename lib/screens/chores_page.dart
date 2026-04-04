@@ -376,12 +376,27 @@ class _ChoresPageState extends State<ChoresPage>
     );
   }
 
-  void _showAddChoreSheet() => showModalBottomSheet(
-    context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
-    builder: (_) => _AddChoreSheet(
-      familyMembers: _familyMembers,
-      familyId: _currentUser?.familyId,
-    ));
+  void _showAddChoreSheet() {
+    if (_currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Laddar familjedata... försök igen'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddChoreSheet(
+        familyMembers: _familyMembers,
+        familyId: _currentUser?.familyId ?? '',
+      ),
+    );
+  }
 
   int _weekNumber() {
     final now = DateTime.now();

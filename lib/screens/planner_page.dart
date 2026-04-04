@@ -82,18 +82,29 @@ class _PlannerPageState extends State<PlannerPage>
     }).toList();
   }
 
-  void _showAddSheet({QueryDocumentSnapshot? edit}) =>
-      showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _AddEventSheet(
-          selectedDay: _selectedDay,
-          familyMembers: _familyMembers,
-          familyId: _currentUser?.familyId,
-          eventToEdit: edit,
+  void _showAddSheet({QueryDocumentSnapshot? edit}) {
+    if (_currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Laddar familjedata... försök igen'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.orange,
         ),
       );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddEventSheet(
+        selectedDay: _selectedDay,
+        familyMembers: _familyMembers,
+        familyId: _currentUser?.familyId ?? '',
+        eventToEdit: edit,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
