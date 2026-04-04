@@ -45,15 +45,23 @@ class _DashboardPageState extends State<DashboardPage>
 
   Stream<QuerySnapshot> _buildEventsStream() {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
+    final todayStr = '${now.year}-${now.month}-${now.day}';
     return FirebaseFirestore.instance
         .collection('planner_events')
-        .where('date',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(today))
-        .where('date', isLessThan: Timestamp.fromDate(tomorrow))
-        .orderBy('date')
+        .where('date', isEqualTo: todayStr)
         .snapshots();
+  }
+
+  // Hanterar både Timestamp och String "yyyy-M-d"
+  static DateTime? _parseDate(dynamic v) {
+    try {
+      if (v is Timestamp) return v.toDate();
+      if (v is String) {
+        final p = v.split('-');
+        if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _loadData() async {
@@ -214,7 +222,7 @@ class _DashboardPageState extends State<DashboardPage>
     final data = doc.data() as Map<String, dynamic>;
     final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = (data['date'] as Timestamp?)?.toDate();
+    final date = _parseDate(data['date']);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     final dayColor = AppTheme.getDayAccentColor();
 
@@ -249,7 +257,7 @@ class _DashboardPageState extends State<DashboardPage>
     final data = doc.data() as Map<String, dynamic>;
     final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = (data['date'] as Timestamp?)?.toDate();
+    final date = _parseDate(data['date']);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     return Container(
       width: 130,
@@ -518,7 +526,7 @@ class _DashboardPageState extends State<DashboardPage>
             itemCount: docs.length,
             itemBuilder: (_, i) {
               final d = docs[i].data() as Map<String, dynamic>;
-              final date = (d['date'] as Timestamp?)?.toDate();
+              final date = _parseDate(d['date']);
               final title = d['title'] as String? ?? '';
               final piktogram = d['piktogram'] as String? ?? '📅';
               final dayColor = AppTheme.getDayAccentColor();
@@ -648,7 +656,7 @@ class _DashboardPageState extends State<DashboardPage>
         final d = doc.data() as Map<String, dynamic>;
         final title = d['title'] as String? ?? '';
         final piktogram = d['piktogram'] as String? ?? '📅';
-        final date = (d['date'] as Timestamp?)?.toDate();
+        final date = _parseDate(d['date']);
         final checklist =
             (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
         final dayColor = AppTheme.getDayAccentColor();

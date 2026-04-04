@@ -3,6 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../app_theme.dart';
 
+DateTime? _parseDate(dynamic v) {
+  try {
+    if (v is Timestamp) return v.toDate();
+    if (v is String) {
+      final p = v.split('-');
+      if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+    }
+  } catch (_) {}
+  return null;
+}
+
 class ActivityDetailSheet extends StatefulWidget {
   final QueryDocumentSnapshot docSnapshot;
 
@@ -38,9 +49,14 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
     final dayColor = AppTheme.getDayAccentColor();
     final pik = _data['piktogram'] as String? ?? '📅';
     final title = _data['title'] as String? ?? '';
-    final date = (_data['date'] as dynamic)?.toDate() as DateTime?;
+    final date = _parseDate(_data['date']);
     final persons = (_data['persons'] as List? ?? []).cast<String>();
-    final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
+    // Prefer stored 'time' field, fall back to parsing date
+    final timeStr = (_data['time'] as String?)?.isNotEmpty == true
+        ? (_data['time'] as String)
+        : (date != null && (date.hour != 0 || date.minute != 0)
+            ? DateFormat('HH:mm').format(date)
+            : '');
 
     return Container(
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),

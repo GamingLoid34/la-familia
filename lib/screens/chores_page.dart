@@ -231,8 +231,10 @@ class _ChoresPageState extends State<ChoresPage>
             SliverList(
               delegate: SliverChildBuilderDelegate(
                 (_, i) => _ChoreCard(
-                  doc: filtered[i], dayColor: dayColor,
+                  doc: filtered[i], 
+                  dayColor: dayColor,
                   currentUser: _currentUser,
+                  familyMembers: _familyMembers,
                   onComplete: _onChoreCompleted,
                 ),
                 childCount: filtered.length,
@@ -415,8 +417,15 @@ class _ChoreCard extends StatefulWidget {
   final QueryDocumentSnapshot doc;
   final Color dayColor;
   final UserModel? currentUser;
+  final List<UserModel> familyMembers;
   final VoidCallback onComplete;
-  const _ChoreCard({required this.doc, required this.dayColor, this.currentUser, required this.onComplete});
+  const _ChoreCard({
+    required this.doc, 
+    required this.dayColor, 
+    this.currentUser, 
+    required this.familyMembers,
+    required this.onComplete
+  });
   @override
   State<_ChoreCard> createState() => _ChoreCardState();
 }
@@ -440,6 +449,33 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
     _anim.forward().then((_) => _anim.reverse());
     await widget.doc.reference.update({'isDone': !current});
     if (!current) widget.onComplete();
+  }
+
+  void _confirmDelete(BuildContext context, QueryDocumentSnapshot doc) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort syssla?'),
+        content: const Text('Är du säker på att du vill ta bort denna syssla? Den försvinner för alla i familjen.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text('Avbryt')
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red, 
+              foregroundColor: Colors.white
+            ),
+            onPressed: () {
+              doc.reference.delete();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Ta bort'),
+          ),
+        ],
+      )
+    );
   }
 
   @override
@@ -476,7 +512,31 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
                   decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(10)),
                   child: Text('+$points ⭐', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber)),
                 ),
-                const SizedBox(width: 8),
+                // Tre prickar för att Redigera eller Ta bort
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
+                  padding: EdgeInsets.zero,
+                  onSelected: (val) {
+                    if (val == 'edit') {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (_) => _AddChoreSheet(
+                          familyMembers: widget.familyMembers,
+                          familyId: widget.currentUser?.familyId,
+                          choreToEdit: widget.doc,
+                        ),
+                      );
+                    } else if (val == 'delete') {
+                      _confirmDelete(context, widget.doc);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(value: 'edit', child: Text('Redigera')),
+                    const PopupMenuItem(value: 'delete', child: Text('Ta bort', style: TextStyle(color: Colors.red))),
+                  ],
+                ),
                 ScaleTransition(
                   scale: _scale,
                   child: GestureDetector(
@@ -570,7 +630,8 @@ class _FocusChoreCard extends StatelessWidget {
 class _AddChoreSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String? familyId;
-  const _AddChoreSheet({required this.familyMembers, this.familyId});
+  final QueryDocumentSnapshot? choreToEdit;
+  const _AddChoreSheet({required this.familyMembers, this.familyId, this.choreToEdit});
   @override
   State<_AddChoreSheet> createState() => _AddChoreSheetState();
 }
@@ -585,6 +646,23 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
   final _subCtrl = TextEditingController();
   bool _saving = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Fyll i formuläret automatiskt om vi redigerar en existerande syssla
+    if (widget.choreToEdit != null) {
+      final d = widget.choreToEdit!.data() as Map<String, dynamic>;
+      _title.text = d['chore'] as String? ?? d['title'] as String? ?? '';
+      _pik = d['piktogram'] as String? ?? '✅';
+      _assignTo = d['who'] as String?;
+      if (_assignTo != null && _assignTo!.isEmpty) _assignTo = null;
+      _points = (d['points'] as int?) ?? 10;
+      final subs = (d['substeps'] as List? ?? []).cast<Map<String, dynamic>>();
+      _substeps.addAll(subs.map((s) => s['title'] as String? ?? ''));
+      _step = 1; // Hoppa direkt till det sista formuläret när man redigerar
+    }
+  }
+
   Future<void> _save() async {
     if (_title.text.trim().isEmpty) return;
     setState(() => _saving = true);
@@ -593,6 +671,7 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
       final firstDay = DateTime(now.year, 1, 1);
       final weekNum = ((now.difference(firstDay).inDays + firstDay.weekday - 1) / 7).ceil();
       final weekOf = '${now.year}-W$weekNum';
+      
       String whoColor = '';
       if (_assignTo != null) {
         final member = widget.familyMembers.where((m) => m.name == _assignTo).isNotEmpty
@@ -600,24 +679,39 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
             : null;
         if (member != null) whoColor = member.color;
       }
-      await FirebaseFirestore.instance.collection('chores').add({
-        'chore': _title.text.trim(),
-        'piktogram': _pik,
-        'who': _assignTo ?? '',
-        'whoColor': whoColor,
-        'isDone': false,
-        'points': _points,
-        'isRecurring': false,
-        'familyId': widget.familyId ?? '',
-        'weekOf': weekOf,
-        'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
-      });
+
+      if (widget.choreToEdit != null) {
+        // Uppdatera existerande syssla
+        await widget.choreToEdit!.reference.update({
+          'chore': _title.text.trim(),
+          'piktogram': _pik,
+          'who': _assignTo ?? '',
+          'whoColor': whoColor,
+          'points': _points,
+          'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
+        });
+      } else {
+        // Skapa ny syssla
+        await FirebaseFirestore.instance.collection('chores').add({
+          'chore': _title.text.trim(),
+          'piktogram': _pik,
+          'who': _assignTo ?? '',
+          'whoColor': whoColor,
+          'isDone': false,
+          'points': _points,
+          'isRecurring': false,
+          'familyId': widget.familyId ?? '',
+          'weekOf': weekOf,
+          'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
+        });
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Syssla sparad! ✅'),
-            backgroundColor: Color(0xFF6BAE75),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(widget.choreToEdit != null ? 'Syssla uppdaterad! ✅' : 'Syssla sparad! ✅'),
+            backgroundColor: const Color(0xFF6BAE75),
+            duration: const Duration(seconds: 2),
           ),
         );
         Navigator.pop(context);
@@ -647,7 +741,10 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
             decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           child: Row(children: [
-            Expanded(child: Text(_step == 0 ? 'Välj piktogram' : 'Ny syssla', style: AppTheme.sectionTitleStyle)),
+            Expanded(child: Text(
+              _step == 0 ? 'Välj piktogram' : (widget.choreToEdit != null ? 'Redigera syssla' : 'Ny syssla'), 
+              style: AppTheme.sectionTitleStyle
+            )),
             if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0), child: const Text('← Byt')),
           ])),
         Expanded(child: _step == 0 ? _buildPicker(dayColor) : _buildForm(dayColor)),
@@ -736,7 +833,7 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
         style: ElevatedButton.styleFrom(backgroundColor: dayColor, foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
         child: _saving ? const CircularProgressIndicator(color: Colors.white) :
-            const Text('Spara syssla', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
+            Text(widget.choreToEdit != null ? 'Uppdatera syssla' : 'Spara syssla', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
       const SizedBox(height: 40),
     ]));
   }
