@@ -96,7 +96,10 @@ class _MyAppState extends State<MyApp> {
       ],
       supportedLocales: const [
         Locale('sv', 'SE'),
+        Locale('en', 'US'),
       ],
+      localeResolutionCallback: (locale, supportedLocales) =>
+          const Locale('sv', 'SE'),
 
       themeMode: ThemeMode.light,
       theme: ThemeData(
