@@ -14,8 +14,7 @@ import 'firebase_options.dart';
 
 // Import av dina sidor & tjänster
 import 'screens/dashboard_page.dart';
-import 'screens/planner_page.dart';
-import 'screens/chores_page.dart';
+import 'screens/agenda_page.dart';
 import 'screens/settings_page.dart';
 import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
@@ -218,8 +217,8 @@ class _MainPageState extends State<MainPage> {
 
   final List<Widget> _pages = [
     const DashboardPage(),
-    const PlannerPage(),
-    const ChoresPage(),
+    const AgendaPage(initialTab: AgendaTab.activities),
+    const AgendaPage(initialTab: AgendaTab.chores),
     const SettingsPage(),
   ];
 

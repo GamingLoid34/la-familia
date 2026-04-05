@@ -8,6 +8,7 @@ import '../providers/family_provider.dart';
 import '../services/user_service.dart';
 import '../widgets/shimmer_list_placeholder.dart';
 import '../widgets/activity_detail_sheet.dart';
+import 'agenda_page.dart';
 import 'timer_page.dart';
 import 'shopping_list_page.dart';
 import 'screen_rules_page.dart';
@@ -729,7 +730,12 @@ class _DashboardPageState extends State<DashboardPage>
     final progress = total > 0 ? done / total : 0.0;
 
     return GestureDetector(
-      onTap: () {},
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const AgendaPage(initialTab: AgendaTab.chores),
+        ),
+      ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
         padding: const EdgeInsets.all(20),
