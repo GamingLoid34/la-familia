@@ -186,7 +186,12 @@ class _PlannerPageState extends State<PlannerPage>
           else
             SliverList(
               delegate: SliverChildBuilderDelegate(
-                (_, i) => _ActivityCard(doc: selected[i], dayColor: dayColor),
+                (_, i) => _ActivityCard(
+                  doc: selected[i], 
+                  dayColor: dayColor,
+                  currentUser: _currentUser,
+                  familyMembers: _familyMembers,
+                ),
                 childCount: selected.length,
               ),
             ),
@@ -220,7 +225,12 @@ class _PlannerPageState extends State<PlannerPage>
           else
             SliverList(
               delegate: SliverChildBuilderDelegate(
-                (_, i) => _FocusCard(doc: today[i], dayColor: dayColor),
+                (_, i) => _FocusCard(
+                  doc: today[i], 
+                  dayColor: dayColor,
+                  currentUser: _currentUser,
+                  familyMembers: _familyMembers,
+                ),
                 childCount: today.length,
               ),
             ),
@@ -249,7 +259,7 @@ class _PlannerPageState extends State<PlannerPage>
       child: TableCalendar(
         firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
-        availableGestures: AvailableGestures.horizontalSwipe, // <-- Detta tillåter vertikal scroll!
+        availableGestures: AvailableGestures.horizontalSwipe, // Tillåter vertikal scroll
         selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
         calendarFormat: CalendarFormat.month,
         availableCalendarFormats: const {CalendarFormat.month: 'Månad'},
@@ -327,16 +337,47 @@ class _Pill extends StatelessWidget {
 }
 
 class _ActivityCard extends StatelessWidget {
-  final QueryDocumentSnapshot doc; final Color dayColor;
-  const _ActivityCard({required this.doc, required this.dayColor});
+  final QueryDocumentSnapshot doc; 
+  final Color dayColor;
+  final UserModel? currentUser;
+  final List<UserModel> familyMembers;
+  
+  const _ActivityCard({
+    required this.doc, 
+    required this.dayColor,
+    required this.currentUser,
+    required this.familyMembers,
+  });
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort aktivitet?'),
+        content: const Text('Är du säker på att du vill ta bort denna aktivitet?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              doc.reference.delete();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Ta bort'),
+          ),
+        ],
+      )
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '📅';
+    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
     final date = _parseEventDate(d['date']);
-    final time = date != null ? DateFormat('HH:mm').format(date) : '';
+    final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
     final isPending = d['isPending'] == true;
 
     return GestureDetector(
@@ -358,6 +399,32 @@ class _ActivityCard extends StatelessWidget {
               if (isPending) const Text('⏳ Väntar på godkännande',
                   style: TextStyle(fontSize: 11, color: Colors.orange)),
             ])),
+            // Lägg till popup-menyn här
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
+              padding: EdgeInsets.zero,
+              onSelected: (val) {
+                if (val == 'edit') {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => _AddEventSheet(
+                      selectedDay: date ?? DateTime.now(),
+                      familyMembers: familyMembers,
+                      familyId: currentUser?.familyId,
+                      eventToEdit: doc,
+                    ),
+                  );
+                } else if (val == 'delete') {
+                  _confirmDelete(context);
+                }
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(value: 'edit', child: Text('Redigera')),
+                const PopupMenuItem(value: 'delete', child: Text('Ta bort', style: TextStyle(color: Colors.red))),
+              ],
+            ),
           ]),
         ),
       ),
@@ -366,16 +433,47 @@ class _ActivityCard extends StatelessWidget {
 }
 
 class _FocusCard extends StatelessWidget {
-  final QueryDocumentSnapshot doc; final Color dayColor;
-  const _FocusCard({required this.doc, required this.dayColor});
+  final QueryDocumentSnapshot doc; 
+  final Color dayColor;
+  final UserModel? currentUser;
+  final List<UserModel> familyMembers;
+
+  const _FocusCard({
+    required this.doc, 
+    required this.dayColor,
+    required this.currentUser,
+    required this.familyMembers,
+  });
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort aktivitet?'),
+        content: const Text('Är du säker på att du vill ta bort denna aktivitet?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              doc.reference.delete();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Ta bort'),
+          ),
+        ],
+      )
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '📅';
+    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
     final date = _parseEventDate(d['date']);
-    final time = date != null ? DateFormat('HH:mm').format(date) : '';
+    final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
 
     return GestureDetector(
       onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
@@ -392,7 +490,31 @@ class _FocusCard extends StatelessWidget {
             Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             Text(time, style: TextStyle(fontSize: 15, color: dayColor, fontWeight: FontWeight.w600)),
           ])),
-          Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey.shade400),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
+            padding: EdgeInsets.zero,
+            onSelected: (val) {
+              if (val == 'edit') {
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => _AddEventSheet(
+                    selectedDay: date ?? DateTime.now(),
+                    familyMembers: familyMembers,
+                    familyId: currentUser?.familyId,
+                    eventToEdit: doc,
+                  ),
+                );
+              } else if (val == 'delete') {
+                _confirmDelete(context);
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(value: 'edit', child: Text('Redigera')),
+              const PopupMenuItem(value: 'delete', child: Text('Ta bort', style: TextStyle(color: Colors.red))),
+            ],
+          ),
         ]),
       ),
     );
@@ -419,17 +541,64 @@ class _AddEventSheetState extends State<_AddEventSheet> {
   final List<String> _persons = [];
   final List<String> _checklist = [];
   final _clCtrl = TextEditingController();
+  
   bool _saving = false;
+  bool _saveAsTemplate = false; // NY! Switch för att spara mall
+  List<QueryDocumentSnapshot> _templates = []; // Håller inlästa mallar
 
   @override
   void initState() {
     super.initState();
+    _loadTemplates();
+
+    // Ladda in befintlig data om vi redigerar!
     if (widget.eventToEdit != null) {
       final d = widget.eventToEdit!.data() as Map<String, dynamic>;
       _pik = d['piktogram'] as String? ?? '📅';
       _title.text = d['title'] as String? ?? '';
+      
+      final timeStr = d['time'] as String? ?? '';
+      if (timeStr.isNotEmpty) {
+        final parts = timeStr.split(':');
+        if (parts.length >= 2) {
+          _start = TimeOfDay(hour: int.tryParse(parts[0]) ?? 0, minute: int.tryParse(parts[1]) ?? 0);
+        }
+      }
+      
+      final loadedPersons = (d['persons'] as List? ?? []).cast<String>();
+      _persons.addAll(loadedPersons);
+      
+      final loadedChecklist = (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+      _checklist.addAll(loadedChecklist.map((e) => e['item'] as String? ?? ''));
+
       _step = 1;
     }
+  }
+
+  Future<void> _loadTemplates() async {
+    try {
+      final snap = await FirebaseFirestore.instance.collection('activity_templates').get();
+      if (mounted) {
+        setState(() {
+          // Filtrera ut de mallar som tillhör familjen, eller saknar familj-ID
+          _templates = snap.docs.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            final fid = d['familyId'] as String? ?? '';
+            return fid.isEmpty || fid == widget.familyId;
+          }).toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _applyTemplate(Map<String, dynamic> data) {
+    setState(() {
+      _pik = data['piktogram'] ?? '📅';
+      _title.text = data['title'] ?? '';
+      _checklist.clear();
+      _checklist.addAll((data['checklist'] as List<dynamic>? ?? []).map((e) => e.toString()));
+      _step = 1; // Hoppa direkt till formuläret!
+    });
   }
 
   List<PiktogramItem> get _filtered => piktogramLibrary.where((p) =>
@@ -443,30 +612,57 @@ class _AddEventSheetState extends State<_AddEventSheet> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       final d = widget.selectedDay;
+      final titleStr = _title.text.trim();
+      
       final data = {
-        'title': _title.text.trim(),
+        'title': titleStr,
         'piktogram': _pik,
         'type': 'activity',
         'date': '${d.year}-${d.month}-${d.day}',
         'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
         'persons': _persons,
-        'checklist': _checklist.map((i) => {'item': i, 'isDone': false}).toList(),
+        // Behåll tidigare checklista-status om vi redigerar
+        'checklist': _checklist.map((i) {
+          bool isDone = false;
+          if (widget.eventToEdit != null) {
+            final oldD = widget.eventToEdit!.data() as Map<String, dynamic>;
+            final oldChecklist = (oldD['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+            final existing = oldChecklist.where((old) => old['item'] == i);
+            if (existing.isNotEmpty) {
+              isDone = existing.first['isDone'] == true;
+            }
+          }
+          return {'item': i, 'isDone': isDone};
+        }).toList(),
         'source': 'manual',
         'createdBy': user?.uid,
         'isPending': false,
         'familyId': widget.familyId ?? '',
       };
+
+      // 1. Spara aktiviteten
       if (widget.eventToEdit != null) {
         await widget.eventToEdit!.reference.update(data);
       } else {
         await FirebaseFirestore.instance.collection('planner_events').add(data);
       }
+
+      // 2. Spara som mall om checkboxen är ikryssad
+      if (_saveAsTemplate) {
+        await FirebaseFirestore.instance.collection('activity_templates').add({
+          'title': titleStr,
+          'piktogram': _pik,
+          'checklist': _checklist,
+          'familyId': widget.familyId ?? '',
+        });
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Aktivitet sparad! ✅'),
-            backgroundColor: Color(0xFF6BAE75),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(widget.eventToEdit != null ? 'Aktivitet uppdaterad! ✅' : 'Aktivitet sparad! ✅'),
+            backgroundColor: const Color(0xFF6BAE75),
+            duration: const Duration(seconds: 2),
           ),
         );
         Navigator.pop(context);
@@ -498,10 +694,12 @@ class _AddEventSheetState extends State<_AddEventSheet> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           child: Row(children: [
-            Expanded(child: Text(_step == 0 ? 'Välj piktogram' : 'Aktivitetsdetaljer',
-                style: AppTheme.sectionTitleStyle)),
+            Expanded(child: Text(
+              _step == 0 ? 'Välj piktogram / Mall' : (widget.eventToEdit != null ? 'Redigera aktivitet' : 'Aktivitetsdetaljer'),
+              style: AppTheme.sectionTitleStyle
+            )),
             if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0),
-                child: const Text('← Byt piktogram')),
+                child: const Text('← Tillbaka')),
           ]),
         ),
         Expanded(child: _step == 0 ? _picker(dayColor) : _form(dayColor)),
@@ -511,12 +709,59 @@ class _AddEventSheetState extends State<_AddEventSheet> {
 
   Widget _picker(Color dayColor) {
     final items = _filtered;
-    return Column(children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+      // --- MALLAR ---
+      if (_templates.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Text('Hämta från mall', style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 80,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _templates.length,
+            itemBuilder: (ctx, i) {
+              final d = _templates[i].data() as Map<String, dynamic>;
+              return GestureDetector(
+                onTap: () => _applyTemplate(d),
+                child: Container(
+                  margin: const EdgeInsets.only(right: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: dayColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: dayColor.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(d['piktogram'] ?? '📋', style: const TextStyle(fontSize: 28)),
+                      const SizedBox(width: 10),
+                      Text(d['title'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Divider(),
+        ),
+      ],
+
+      // --- SÖK PIKTOGRAM ---
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: TextField(
           onChanged: (v) => setState(() => _q = v),
-          decoration: InputDecoration(hintText: 'Sök...', prefixIcon: const Icon(Icons.search),
+          decoration: InputDecoration(hintText: 'Sök piktogram...', prefixIcon: const Icon(Icons.search),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
             filled: true, fillColor: Colors.grey.shade100, contentPadding: const EdgeInsets.symmetric(vertical: 8)),
         ),
@@ -560,7 +805,7 @@ class _AddEventSheetState extends State<_AddEventSheet> {
           onTap: () => setState(() => _step = 0),
           child: Column(children: [
             Text(_pik, style: const TextStyle(fontSize: 56)),
-            Text('Byt piktogram', style: TextStyle(fontSize: 12, color: dayColor)),
+            Text('Byt piktogram / Mall', style: TextStyle(fontSize: 12, color: dayColor)),
           ]),
         )),
         const SizedBox(height: 16),
@@ -587,7 +832,7 @@ class _AddEventSheetState extends State<_AddEventSheet> {
             onSelected: (v) => setState(() => v ? _persons.add(m.name) : _persons.remove(m.name)));
         }).toList()),
         const SizedBox(height: 16),
-        Text('Förberedelser', style: AppTheme.sectionLabelStyle),
+        Text('Packlista / Förberedelser', style: AppTheme.sectionLabelStyle),
         const SizedBox(height: 8),
         Row(children: [
           Expanded(child: TextField(controller: _clCtrl,
@@ -602,13 +847,33 @@ class _AddEventSheetState extends State<_AddEventSheet> {
           leading: const Icon(Icons.check_circle_outline), title: Text(item), dense: true, contentPadding: EdgeInsets.zero,
           trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: Colors.red),
             onPressed: () => setState(() => _checklist.remove(item))))),
+        
+        // --- SPARA SOM MALL SWITCH ---
+        if (widget.eventToEdit == null) ...[
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200)
+            ),
+            child: SwitchListTile(
+              title: const Text('Spara som mall', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Sparar namn, emoji och packlista för framtiden.', style: TextStyle(fontSize: 12)),
+              value: _saveAsTemplate,
+              activeColor: dayColor,
+              onChanged: (val) => setState(() => _saveAsTemplate = val),
+            ),
+          ),
+        ],
+
         const SizedBox(height: 24),
         SizedBox(width: double.infinity, height: 56, child: ElevatedButton(
           onPressed: _saving ? null : _save,
           style: ElevatedButton.styleFrom(backgroundColor: dayColor, foregroundColor: Colors.white,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
           child: _saving ? const CircularProgressIndicator(color: Colors.white) :
-              const Text('Spara aktivitet', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text(widget.eventToEdit != null ? 'Uppdatera aktivitet' : 'Spara aktivitet', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         )),
         const SizedBox(height: 40),
       ]),

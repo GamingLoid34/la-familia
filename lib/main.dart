@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
-import 'firebase_options.dart';
+import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firebase_options.dart';
+
 // Import av dina sidor
 import 'screens/dashboard_page.dart';
 import 'screens/planner_page.dart';
@@ -18,13 +21,29 @@ import 'app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('sv');
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  
+  // Initiera svenska datuminställningar
+  await initializeDateFormatting('sv', null);
+  
+  // Initiera Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
+  // Aktivera offline-cache för Firestore
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
+
+  // Tvinga 120Hz på Android-enheter (som din S25)
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    try {
+      await FlutterDisplayMode.setHighRefreshRate();
+    } catch (e) {
+      debugPrint('Kunde inte aktivera 120Hz: $e');
+    }
+  }
 
   runApp(const MyApp());
 }
@@ -68,24 +87,26 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'La Familia',
       debugShowCheckedModeBanner: false,
-      // --- Språkinställningar för svenska datum mm ---
+      
+      // Språkstöd för svenska
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('sv', 'SE')],
+      supportedLocales: const [
+        Locale('sv', 'SE'),
+      ],
 
       themeMode: ThemeMode.light,
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F0ED),
+        scaffoldBackgroundColor: const Color(0xFFF4F6F8),
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppTheme.getNpfDayColor(_weekday),
           brightness: Brightness.light,
         ),
       ),
-      // Show splash screen first, it navigates to AuthWrapper when done
       home: const SplashScreen(),
     );
   }
@@ -158,12 +179,11 @@ class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
   late PageController _pageController;
 
-  // Listan över sidor
   final List<Widget> _pages = [
-    const DashboardPage(), // Index 0: Hem
-    const PlannerPage(), // Index 1: Planering
-    const ChoresPage(), // Index 2: Sysslor
-    const SettingsPage(), // Index 3: Inställningar
+    const DashboardPage(),
+    const PlannerPage(),
+    const ChoresPage(),
+    const SettingsPage(),
   ];
 
   @override
@@ -178,7 +198,6 @@ class _MainPageState extends State<MainPage> {
     super.dispose();
   }
 
-  // När man klickar i menyn
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -198,17 +217,49 @@ class _MainPageState extends State<MainPage> {
     final width = MediaQuery.of(context).size.width;
     final isWide = width > 600;
 
-    Widget bodyContent = PageView(
-      controller: _pageController,
-      onPageChanged: (index) {
-        setState(() {
-          _selectedIndex = index;
-        });
-      },
-      children: _pages,
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F7F7),
+      extendBody: true,
+      body: Center(
+        child: Container(
+          width: isWide ? 430 : double.infinity,
+          decoration: isWide
+              ? const BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 24,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                )
+              : null,
+          child: ClipRect(
+            child: PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              children: _pages,
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: isWide
+          ? SafeArea(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [SizedBox(width: 430, child: _buildBottomNav(activeColor))],
+              ),
+            )
+          : _buildBottomNav(activeColor),
     );
+  }
 
-    Widget bottomNav = Container(
+  Widget _buildBottomNav(Color activeColor) {
+    return Container(
       margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -246,9 +297,7 @@ class _MainPageState extends State<MainPage> {
           backgroundColor: Colors.white,
           selectedItemColor: activeColor,
           unselectedItemColor: Colors.grey.shade400,
-          selectedIconTheme: const IconThemeData(
-            size: 28,
-          ), // Slight scale up (approx 1.1x from 24)
+          selectedIconTheme: const IconThemeData(size: 28),
           unselectedIconTheme: const IconThemeData(size: 24),
           type: BottomNavigationBarType.fixed,
           showUnselectedLabels: true,
@@ -256,36 +305,6 @@ class _MainPageState extends State<MainPage> {
           elevation: 0,
         ),
       ),
-    );
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
-      extendBody: true,
-      body: Center(
-        child: Container(
-          width: isWide ? 430 : double.infinity,
-          decoration: isWide
-              ? const BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                )
-              : null,
-          child: ClipRect(child: bodyContent),
-        ),
-      ),
-      bottomNavigationBar: isWide
-          ? SafeArea(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [SizedBox(width: 430, child: bottomNav)],
-              ),
-            )
-          : bottomNav,
     );
   }
 }

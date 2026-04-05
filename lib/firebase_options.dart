@@ -53,7 +53,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyBjHA2kJQIt8sxtVUJAOzMXIgz0FDQp1lw',
-    appId: '1:1062436758460:web:df4155c095ec2692bb81b9',
+    appId: '1:1062436758460:web:4c46764483a57ab7bb81b9',
     messagingSenderId: '1062436758460',
     projectId: 'la-familia-5d9f5',
     authDomain: 'la-familia-5d9f5.firebaseapp.com',
@@ -62,9 +62,10 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDJlzJW_SZyDY_JTJd3BzPauqhVR_B4FaM',
-    appId: '1:1062436758460:android:d753e6aee97cca85bb81b9',
+    appId: '1:1062436758460:android:582e05e37d8cadccbb81b9',
     messagingSenderId: '1062436758460',
     projectId: 'la-familia-5d9f5',
     storageBucket: 'la-familia-5d9f5.firebasestorage.app',
   );
+
 }

@@ -23,7 +23,7 @@ class AppTheme {
     }
   }
 
-  /// Returns dark text for light NPF days, white for saturated days.
+  /// Används om man fortfarande har en färgad bakgrundsyta någonstans
   static Color getNpfTextColor(int weekday) {
     switch (weekday) {
       case 3: // Wednesday grey
@@ -40,12 +40,9 @@ class AppTheme {
 
   // ─── App Background ────────────────────────────────────────────────────────
   static BoxDecoration getBackground() {
-    final color = getNpfDayColor(DateTime.now().weekday);
-    return BoxDecoration(
-      color: Color.alphaBlend(
-        color.withValues(alpha: 0.08),
-        const Color(0xFFF5F0EB),
-      ),
+    // DESIGNUPPDATERING: En helt ren och fräsch ljusgrå/benvit bakgrund!
+    return const BoxDecoration(
+      color: Color(0xFFF4F6F8),
     );
   }
 
@@ -56,19 +53,22 @@ class AppTheme {
 
   // ─── Card Decoration ───────────────────────────────────────────────────────
   static BoxDecoration cardDecoration({
-    double radius = 20,
+    double radius = 24, // Lite rundare hörn för modernare look
     Color? color,
   }) =>
       BoxDecoration(
         color: color ?? Colors.white,
         borderRadius: BorderRadius.circular(radius),
         boxShadow: [
+          // DESIGNUPPDATERING: Mycket mjukare och bredare skugga för svävande känsla
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
           ),
         ],
+        // Diskret ram för att separera ljusa ytor
+        border: Border.all(color: Colors.black.withValues(alpha: 0.02)),
       );
 
   // ─── Event Icons ───────────────────────────────────────────────────────────
@@ -90,22 +90,24 @@ class AppTheme {
 
   // ─── Typography ────────────────────────────────────────────────────────────
   static TextStyle get pageTitleStyle => const TextStyle(
-        fontSize: 28,
-        fontWeight: FontWeight.w700,
+        fontSize: 32,
+        fontWeight: FontWeight.w800,
         color: Color(0xFF1A1A2E),
+        letterSpacing: -0.5,
       );
 
   static TextStyle get sectionLabelStyle => TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
         color: Colors.grey.shade500,
-        letterSpacing: 0.08 * 11,
+        letterSpacing: 1.2,
       );
 
   static TextStyle get sectionTitleStyle => const TextStyle(
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
+        fontSize: 20,
+        fontWeight: FontWeight.bold,
         color: Color(0xFF1A1A2E),
+        letterSpacing: -0.3,
       );
 
   static TextStyle get cardTitleStyle => const TextStyle(

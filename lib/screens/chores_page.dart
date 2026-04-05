@@ -301,7 +301,7 @@ class _ChoresPageState extends State<ChoresPage>
         ]),
         const SizedBox(height: 12),
         SizedBox(
-          height: 80,
+          height: 100,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: _familyMembers.length,

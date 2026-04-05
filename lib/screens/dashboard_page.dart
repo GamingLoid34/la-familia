@@ -85,6 +85,20 @@ class _DashboardPageState extends State<DashboardPage>
     return null;
   }
 
+  // Hjälpmetod för att sortera aktiviteterna i rätt tidsordning
+  List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
+    final list = rawDocs.toList();
+    list.sort((a, b) {
+      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      if (dA == null && dB == null) return 0;
+      if (dA == null) return 1; // Sätter aktiviteter utan tid sist
+      if (dB == null) return -1;
+      return dA.compareTo(dB);
+    });
+    return list;
+  }
+
   Future<void> _loadData() async {
     final user = await FamilyService.getCurrentUserModel();
     if (!mounted) return;
@@ -187,7 +201,9 @@ class _DashboardPageState extends State<DashboardPage>
                 style: const TextStyle(color: Colors.red)),
           );
         }
-        final docs = snap.data?.docs ?? [];
+        // Använd vår sorteringsfunktion här
+        final docs = _getSortedDocs(snap.data?.docs ?? []);
+        
         return CustomScrollView(
           physics: const BouncingScrollPhysics(),
           slivers: [
@@ -206,7 +222,7 @@ class _DashboardPageState extends State<DashboardPage>
               if (docs.length > 1)
                 SliverToBoxAdapter(
                   child: SizedBox(
-                    height: 100,
+                    height: 110,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -376,7 +392,7 @@ class _DashboardPageState extends State<DashboardPage>
           // Family avatars
           if (members.isNotEmpty || _loading)
             SizedBox(
-              height: 72,
+              height: 86, // ÖKAD HÖJD HÄR för att slippa pixel-overflow!
               child: _loading
                   ? const ShimmerListPlaceholder()
                   : ListView.builder(
@@ -446,9 +462,10 @@ class _DashboardPageState extends State<DashboardPage>
                     right: -4,
                     child: Container(
                       padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                           color: Colors.white,
-                          shape: BoxShape.circle),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.grey.shade200)),
                       child: Icon(Icons.edit,
                           size: 10,
                           color: AppTheme.getTextColor()),
@@ -456,12 +473,12 @@ class _DashboardPageState extends State<DashboardPage>
                   ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(member.name.split(' ').first,
                 style: TextStyle(
                     fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9),
-                    fontWeight: FontWeight.w500)),
+                    color: textColor.withValues(alpha: 0.9), // Anpassad färg
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -505,27 +522,14 @@ class _DashboardPageState extends State<DashboardPage>
             child: const Center(child: ShimmerListPlaceholder()),
           );
         }
-        final docs = snap.data!.docs;
+        
+        final docs = _getSortedDocs(snap.data!.docs);
+        
         if (docs.isEmpty) {
           return Container(
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.grey.shade300,
-                width: 1.5,
-                style: BorderStyle.solid,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
+            decoration: AppTheme.cardDecoration(),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -541,10 +545,10 @@ class _DashboardPageState extends State<DashboardPage>
         }
         final now = DateTime.now();
         return SizedBox(
-          height: 82,
+          height: 125, // ÖKAD HÖJD HÄR för att slippa pixel-overflow på tidslinjen när "NU"-kortet zoomar in!
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             itemCount: docs.length,
             itemBuilder: (_, i) {
               final d = docs[i].data() as Map<String, dynamic>;
@@ -561,17 +565,21 @@ class _DashboardPageState extends State<DashboardPage>
                 onTap: () => _openDetail(docs[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.only(right: 10),
+                  margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
                   padding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 10),
+                  transformAlignment: Alignment.center, // Skala från mitten för att undvika overflow nedåt
                   transform: isCurrent
                       ? (Matrix4.identity()..scale(1.05))
                       : Matrix4.identity(),
                   decoration: BoxDecoration(
                     color: isCurrent
                         ? dayColor
-                        : dayColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
+                        : dayColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: isCurrent 
+                        ? null 
+                        : Border.all(color: dayColor.withValues(alpha: 0.3)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -651,7 +659,9 @@ class _DashboardPageState extends State<DashboardPage>
             decoration: AppTheme.cardDecoration(),
           );
         }
-        final docs = snap.data!.docs;
+        
+        final docs = _getSortedDocs(snap.data!.docs);
+        
         if (docs.isEmpty) {
           return Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -674,7 +684,18 @@ class _DashboardPageState extends State<DashboardPage>
             ),
           );
         }
-        final doc = docs.first;
+
+        final now = DateTime.now();
+        QueryDocumentSnapshot? targetDoc;
+        for (var d in docs) {
+          final dt = _parseDateTime(d.data() as Map<String, dynamic>);
+          if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
+            targetDoc = d;
+            break;
+          }
+        }
+        final doc = targetDoc ?? docs.last;
+
         final d = doc.data() as Map<String, dynamic>;
         final title = d['title'] as String? ?? '';
         final piktogram = d['piktogram'] as String? ?? '📅';
@@ -682,7 +703,6 @@ class _DashboardPageState extends State<DashboardPage>
         final checklist =
             (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
         final dayColor = AppTheme.getDayAccentColor();
-        final now = DateTime.now();
         final diffMin = date != null
             ? date.difference(now).inMinutes
             : 0;
@@ -700,7 +720,7 @@ class _DashboardPageState extends State<DashboardPage>
             margin: const EdgeInsets.symmetric(horizontal: 16),
             decoration: AppTheme.cardDecoration().copyWith(
               border: Border(
-                left: BorderSide(color: dayColor, width: 4),
+                left: BorderSide(color: dayColor, width: 6),
               ),
             ),
             child: Padding(
@@ -766,13 +786,13 @@ class _DashboardPageState extends State<DashboardPage>
   Widget _buildEnergySection(List<UserModel> members) {
     if (members.isEmpty) {
       return Container(
-        height: 90,
+        height: 110,
         margin: const EdgeInsets.symmetric(horizontal: 16),
         child: const ShimmerListPlaceholder(),
       );
     }
     return SizedBox(
-      height: 90,
+      height: 110,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -853,7 +873,7 @@ class _DashboardPageState extends State<DashboardPage>
           },
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: AppTheme.cardDecoration(),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
