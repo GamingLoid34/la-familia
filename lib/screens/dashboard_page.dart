@@ -1,11 +1,10 @@
-import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
-import '../services/family_service.dart';
+import '../providers/family_provider.dart';
 import '../services/user_service.dart';
 import '../widgets/shimmer_list_placeholder.dart';
 import '../widgets/activity_detail_sheet.dart';
@@ -26,39 +25,6 @@ class _DashboardPageState extends State<DashboardPage>
     with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
-
-  UserModel? _currentUser;
-  List<UserModel> _familyMembers = [];
-  bool _loading = true;
-
-  late final Stream<UserModel?> _userStream;
-  late final Stream<List<UserModel>> _familyStream;
-  late Stream<QuerySnapshot> _eventsStream;
-
-  @override
-  void initState() {
-    super.initState();
-    // LÖSNINGEN PÅ KRASCHEN: .asBroadcastStream() gör att vi kan byta vy hur många gånger vi vill!
-    _userStream = UserService.getCurrentUserStream().asBroadcastStream();
-    _familyStream = FamilyService.getCurrentFamilyStream().asBroadcastStream();
-    
-    // Starta med en tom ström för att inte läcka data innan vi har ett familyId
-    _eventsStream = const Stream.empty(); 
-    _loadData();
-  }
-
-  Stream<QuerySnapshot> _buildEventsStream(String? familyId) {
-    if (familyId == null || familyId.isEmpty) {
-      return const Stream.empty(); // Säkerhetsspärr
-    }
-    final now = DateTime.now();
-    final todayStr = '${now.year}-${now.month}-${now.day}';
-    return FirebaseFirestore.instance
-        .collection('planner_events')
-        .where('date', isEqualTo: todayStr)
-        .where('familyId', isEqualTo: familyId)
-        .snapshots();
-  }
 
   static DateTime? _parseDate(dynamic v) {
     try {
@@ -101,16 +67,6 @@ class _DashboardPageState extends State<DashboardPage>
     return list;
   }
 
-  Future<void> _loadData() async {
-    final user = await FamilyService.getCurrentUserModel();
-    if (!mounted) return;
-    setState(() {
-      _currentUser = user;
-      _loading = false;
-      _eventsStream = _buildEventsStream(user?.familyId);
-    });
-  }
-
   void _showEnergyDialog(UserModel user) {
     showModalBottomSheet(
       context: context,
@@ -122,136 +78,114 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    
+    // Hämta vår samlade data via Provider!
+    final familyProvider = context.watch<FamilyProvider>();
 
-    return StreamBuilder<UserModel?>(
-      stream: _userStream,
-      builder: (context, userSnap) {
-        if (userSnap.hasError) {
-          return Container(
-            decoration: AppTheme.getBackground(),
-            child: Center(
-              child: Text('Fel: ${userSnap.error}',
-                  style: const TextStyle(color: Colors.red)),
-            ),
-          );
-        }
-        final user = userSnap.data ?? _currentUser;
-        final isFocus = user?.isFocusMode ?? false;
+    if (familyProvider.isLoading) {
+      return Container(
+        decoration: AppTheme.getBackground(),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
 
-        return Container(
-          decoration: AppTheme.getBackground(),
-          child: isFocus
-              ? _buildFocusView(user)
-              : _buildParentView(user),
-        );
-      },
+    final user = familyProvider.currentUser;
+    final isFocus = user?.isFocusMode ?? false;
+
+    return Container(
+      decoration: AppTheme.getBackground(),
+      child: isFocus
+          ? _buildFocusView(familyProvider)
+          : _buildParentView(familyProvider),
     );
   }
 
-  Widget _buildParentView(UserModel? user) {
-    return StreamBuilder<List<UserModel>>(
-      stream: _familyStream,
-      builder: (ctx, famSnap) {
-        if (famSnap.hasError) {
-          return Center(
-            child: Text('Fel: ${famSnap.error}',
-                style: const TextStyle(color: Colors.red)),
-          );
-        }
-        final members = famSnap.data ?? _familyMembers;
-        if (famSnap.hasData) _familyMembers = members;
-        return CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader(user, members)),
-            SliverToBoxAdapter(
-              child: _buildSection(
-                'DAGSTIDSLINJE',
-                _buildTimeline(),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: _buildSection('HÄRNÄST', _buildNextCard()),
-            ),
-            SliverToBoxAdapter(
-              child: _buildSection(
-                  'FAMILJENS ENERGI', _buildEnergySection(members)),
-            ),
-            SliverToBoxAdapter(
-              child: _buildSection('SYSSLOR IDAG', _buildChoreSummary()),
-            ),
-            SliverToBoxAdapter(
-              child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 100)),
-          ],
-        );
-      },
+  Widget _buildParentView(FamilyProvider provider) {
+    final user = provider.currentUser;
+    final members = provider.familyMembers;
+    final todayEvents = provider.todayEvents;
+    final chores = provider.chores;
+
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+        SliverToBoxAdapter(child: _buildHeader(user, members)),
+        SliverToBoxAdapter(
+          child: _buildSection(
+            'DAGSTIDSLINJE',
+            _buildTimeline(todayEvents),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: _buildSection('HÄRNÄST', _buildNextCard(todayEvents)),
+        ),
+        SliverToBoxAdapter(
+          child: _buildSection(
+              'FAMILJENS ENERGI', _buildEnergySection(members)),
+        ),
+        SliverToBoxAdapter(
+          child: _buildSection('SYSSLOR IDAG', _buildChoreSummary(chores)),
+        ),
+        SliverToBoxAdapter(
+          child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 100)),
+      ],
     );
   }
 
-  Widget _buildFocusView(UserModel? user) {
+  Widget _buildFocusView(FamilyProvider provider) {
+    final user = provider.currentUser;
     final name = user?.name.split(' ').first ?? '';
-    return StreamBuilder<QuerySnapshot>(
-      stream: _eventsStream,
-      builder: (ctx, snap) {
-        if (snap.hasError) {
-          return Center(
-            child: Text('Fel: ${snap.error}',
-                style: const TextStyle(color: Colors.red)),
-          );
-        }
-        final docs = _getSortedDocs(snap.data?.docs ?? []);
+    final docs = _getSortedDocs(provider.todayEvents);
         
-        return CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildHeader(user, _familyMembers)),
-            if (docs.isNotEmpty) ...[
-              SliverToBoxAdapter(child: _buildFocusMainCard(docs.first)),
-              if (docs.length > 1)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 8),
-                    child: Text('Senare idag',
-                        style: AppTheme.sectionLabelStyle),
-                  ),
-                ),
-              if (docs.length > 1)
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: 110,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: docs.length - 1,
-                      itemBuilder: (_, i) =>
-                          _buildFocusSmallCard(docs[i + 1]),
-                    ),
-                  ),
-                ),
-            ] else
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Center(
-                    child: Column(
-                      children: [
-                        const Text('😌', style: TextStyle(fontSize: 52)),
-                        const SizedBox(height: 12),
-                        Text('Ingen planering idag, $name!',
-                            style: AppTheme.sectionTitleStyle,
-                            textAlign: TextAlign.center),
-                      ],
-                    ),
-                  ),
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+        SliverToBoxAdapter(child: _buildHeader(user, provider.familyMembers)),
+        if (docs.isNotEmpty) ...[
+          SliverToBoxAdapter(child: _buildFocusMainCard(docs.first)),
+          if (docs.length > 1)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
+                child: Text('Senare idag',
+                    style: AppTheme.sectionLabelStyle),
+              ),
+            ),
+          if (docs.length > 1)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 110,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: docs.length - 1,
+                  itemBuilder: (_, i) =>
+                      _buildFocusSmallCard(docs[i + 1]),
                 ),
               ),
-            const SliverToBoxAdapter(child: SizedBox(height: 100)),
-          ],
-        );
-      },
+            ),
+        ] else
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Center(
+                child: Column(
+                  children: [
+                    const Text('😌', style: TextStyle(fontSize: 52)),
+                    const SizedBox(height: 12),
+                    Text('Ingen planering idag, $name!',
+                        style: AppTheme.sectionTitleStyle,
+                        textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 100)),
+      ],
     );
   }
 
@@ -387,17 +321,15 @@ class _DashboardPageState extends State<DashboardPage>
             Text('God morgon, $firstName! ☀️',
                 style: TextStyle(fontSize: 15, color: textColor)),
           const SizedBox(height: 16),
-          if (members.isNotEmpty || _loading)
+          if (members.isNotEmpty)
             SizedBox(
               height: 86,
-              child: _loading
-                  ? const ShimmerListPlaceholder()
-                  : ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: members.length,
-                      itemBuilder: (_, i) =>
-                          _buildAvatarWidget(members[i], textColor, user),
-                    ),
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: members.length,
+                itemBuilder: (_, i) =>
+                    _buildAvatarWidget(members[i], textColor, user),
+              ),
             ),
         ],
       ),
@@ -495,287 +427,238 @@ class _DashboardPageState extends State<DashboardPage>
     }
   }
 
-  Widget _buildTimeline() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _eventsStream,
-      builder: (ctx, snap) {
-        if (snap.hasError) {
-          return Container(
-            height: 60,
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-            decoration: AppTheme.cardDecoration(),
-            child: Center(
-              child: Text('Fel: ${snap.error}',
-                  style: const TextStyle(color: Colors.red, fontSize: 12)),
-            ),
-          );
-        }
-        if (!snap.hasData) {
-          return Container(
-            height: 80,
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-            decoration: AppTheme.cardDecoration(),
-            child: const Center(child: ShimmerListPlaceholder()),
-          );
-        }
+  Widget _buildTimeline(List<QueryDocumentSnapshot> rawDocs) {
+    final docs = _getSortedDocs(rawDocs);
         
-        final docs = _getSortedDocs(snap.data!.docs);
-        
-        if (docs.isEmpty) {
-          return Container(
-            margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-            decoration: AppTheme.cardDecoration(),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text('📅', style: TextStyle(fontSize: 20)),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    'Inga aktiviteter idag — lägg till i Planering!',
-                    style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-        final now = DateTime.now();
-        return SizedBox(
-          height: 125,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            itemCount: docs.length,
-            itemBuilder: (_, i) {
-              final d = docs[i].data() as Map<String, dynamic>;
-              final date = _parseDateTime(d);
-              final title = d['title'] as String? ?? '';
-              final piktogram = d['piktogram'] as String? ?? '📅';
-              final dayColor = AppTheme.getDayAccentColor();
-              final isCurrent = date != null &&
-                  date.isBefore(now) &&
-                  date
-                      .add(const Duration(hours: 1))
-                      .isAfter(now);
-              return GestureDetector(
-                onTap: () => _openDetail(docs[i]),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  transformAlignment: Alignment.center,
-                  transform: isCurrent
-                      ? (Matrix4.identity()..scale(1.05))
-                      : Matrix4.identity(),
-                  decoration: BoxDecoration(
-                    color: isCurrent
-                        ? dayColor
-                        : dayColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(16),
-                    border: isCurrent 
-                        ? null 
-                        : Border.all(color: dayColor.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(piktogram,
-                          style: const TextStyle(fontSize: 18)),
-                      const SizedBox(height: 2),
-                      Text(
-                        date != null
-                            ? DateFormat('HH:mm').format(date)
-                            : '',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: isCurrent
-                              ? Colors.white
-                              : Colors.grey.shade700,
-                        ),
-                      ),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isCurrent
-                              ? Colors.white
-                              : AppTheme.getTextColor(),
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (isCurrent)
-                        Container(
-                          margin: const EdgeInsets.only(top: 4),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.25),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text('NU',
-                              style: TextStyle(
-                                  fontSize: 9,
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildNextCard() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: _eventsStream,
-      builder: (ctx, snap) {
-        if (snap.hasError) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(16),
-            decoration: AppTheme.cardDecoration(),
-            child: Text('Fel: ${snap.error}',
-                style: const TextStyle(color: Colors.red, fontSize: 12)),
-          );
-        }
-        if (!snap.hasData) {
-          return Container(
-            height: 100,
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: AppTheme.cardDecoration(),
-          );
-        }
-        
-        final docs = _getSortedDocs(snap.data!.docs);
-        
-        if (docs.isEmpty) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-            decoration: AppTheme.cardDecoration(),
-            child: Column(
-              children: [
-                const Text('✨', style: TextStyle(fontSize: 36)),
-                const SizedBox(height: 10),
-                Text('Inget planerat härnäst',
-                    style: AppTheme.sectionTitleStyle,
-                    textAlign: TextAlign.center),
-                const SizedBox(height: 6),
-                Text(
-                  'Tryck på Planering för att lägga till',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          );
-        }
-
-        final now = DateTime.now();
-        QueryDocumentSnapshot? targetDoc;
-        for (var d in docs) {
-          final dt = _parseDateTime(d.data() as Map<String, dynamic>);
-          if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
-            targetDoc = d;
-            break;
-          }
-        }
-        final doc = targetDoc ?? docs.last;
-
-        final d = doc.data() as Map<String, dynamic>;
-        final title = d['title'] as String? ?? '';
-        final piktogram = d['piktogram'] as String? ?? '📅';
-        final date = _parseDateTime(d);
-        final checklist =
-            (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
-        final dayColor = AppTheme.getDayAccentColor();
-        final diffMin = date != null
-            ? date.difference(now).inMinutes
-            : 0;
-        final timeLabel = diffMin <= 0
-            ? 'NU PÅGÅR'
-            : diffMin < 60
-                ? 'OM ${diffMin} MIN'
-                : 'OM ${(diffMin / 60).round()} H';
-        final timeStr =
-            date != null ? DateFormat('HH:mm').format(date) : '';
-
-        return GestureDetector(
-          onTap: () => _openDetail(doc),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: AppTheme.cardDecoration().copyWith(
-              border: Border(
-                left: BorderSide(color: dayColor, width: 6),
+    if (docs.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text('📅', style: TextStyle(fontSize: 20)),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                'Inga aktiviteter idag — lägg till i Planering!',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+          ],
+        ),
+      );
+    }
+    final now = DateTime.now();
+    return SizedBox(
+      height: 125,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        itemCount: docs.length,
+        itemBuilder: (_, i) {
+          final d = docs[i].data() as Map<String, dynamic>;
+          final date = _parseDateTime(d);
+          final title = d['title'] as String? ?? '';
+          final piktogram = d['piktogram'] as String? ?? '📅';
+          final dayColor = AppTheme.getDayAccentColor();
+          final isCurrent = date != null &&
+              date.isBefore(now) &&
+              date.add(const Duration(hours: 1)).isAfter(now);
+          return GestureDetector(
+            onTap: () => _openDetail(docs[i]),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 10),
+              transformAlignment: Alignment.center,
+              transform: isCurrent
+                  ? (Matrix4.identity()..scale(1.05))
+                  : Matrix4.identity(),
+              decoration: BoxDecoration(
+                color: isCurrent
+                    ? dayColor
+                    : dayColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: isCurrent 
+                    ? null 
+                    : Border.all(color: dayColor.withValues(alpha: 0.3)),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: dayColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
+                  Text(piktogram,
+                      style: const TextStyle(fontSize: 18)),
+                  const SizedBox(height: 2),
+                  Text(
+                    date != null
+                        ? DateFormat('HH:mm').format(date)
+                        : '',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: isCurrent
+                          ? Colors.white
+                          : Colors.grey.shade700,
                     ),
-                    child: Text(timeLabel,
-                        style: TextStyle(
-                            color: dayColor,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold)),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Text(piktogram,
-                          style: const TextStyle(fontSize: 40)),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(title,
-                                style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold)),
-                            Text(timeStr,
-                                style: TextStyle(
-                                    fontSize: 14,
-                                    color: dayColor,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: isCurrent
+                          ? Colors.white
+                          : AppTheme.getTextColor(),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (isCurrent)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                    ],
-                  ),
-                  if (checklist.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    ...checklist.map((item) => _ChecklistTile(
-                          item: item,
-                          docId: doc.id,
-                          dayColor: dayColor,
-                        )),
-                  ],
+                      child: const Text('NU',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
                 ],
               ),
             ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildNextCard(List<QueryDocumentSnapshot> rawDocs) {
+    final docs = _getSortedDocs(rawDocs);
+        
+    if (docs.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+        decoration: AppTheme.cardDecoration(),
+        child: Column(
+          children: [
+            const Text('✨', style: TextStyle(fontSize: 36)),
+            const SizedBox(height: 10),
+            Text('Inget planerat härnäst',
+                style: AppTheme.sectionTitleStyle,
+                textAlign: TextAlign.center),
+            const SizedBox(height: 6),
+            Text(
+              'Tryck på Planering för att lägga till',
+              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final now = DateTime.now();
+    QueryDocumentSnapshot? targetDoc;
+    for (var d in docs) {
+      final dt = _parseDateTime(d.data() as Map<String, dynamic>);
+      if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
+        targetDoc = d;
+        break;
+      }
+    }
+    final doc = targetDoc ?? docs.last;
+
+    final d = doc.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    final piktogram = d['piktogram'] as String? ?? '📅';
+    final date = _parseDateTime(d);
+    final checklist =
+        (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+    final dayColor = AppTheme.getDayAccentColor();
+    final diffMin = date != null
+        ? date.difference(now).inMinutes
+        : 0;
+    final timeLabel = diffMin <= 0
+        ? 'NU PÅGÅR'
+        : diffMin < 60
+            ? 'OM ${diffMin} MIN'
+            : 'OM ${(diffMin / 60).round()} H';
+    final timeStr =
+        date != null ? DateFormat('HH:mm').format(date) : '';
+
+    return GestureDetector(
+      onTap: () => _openDetail(doc),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: AppTheme.cardDecoration().copyWith(
+          border: Border(
+            left: BorderSide(color: dayColor, width: 6),
           ),
-        );
-      },
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: dayColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(timeLabel,
+                    style: TextStyle(
+                        color: dayColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text(piktogram,
+                      style: const TextStyle(fontSize: 40)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                        Text(timeStr,
+                            style: TextStyle(
+                                fontSize: 14,
+                                color: dayColor,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (checklist.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                ...checklist.map((item) => _ChecklistTile(
+                      item: item,
+                      docId: doc.id,
+                      dayColor: dayColor,
+                    )),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -836,70 +719,49 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildChoreSummary() {
-    if (_currentUser?.familyId == null || _currentUser!.familyId!.isEmpty) {
-      return const SizedBox.shrink(); // Säkerhetsspärr
-    }
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('chores')
-          .where('familyId', isEqualTo: _currentUser!.familyId) // HÄR ÄR FILTRET SÄKERT!
-          .snapshots(),
-      builder: (ctx, snap) {
-        if (snap.hasError) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(16),
-            decoration: AppTheme.cardDecoration(),
-            child: Text('Fel: ${snap.error}',
-                style: const TextStyle(color: Colors.red, fontSize: 12)),
-          );
-        }
-        final docs = snap.data?.docs ?? [];
-        final total = docs.length;
-        final done = docs.where((d) {
-          final data = d.data() as Map<String, dynamic>;
-          return data['isDone'] == true;
-        }).length;
-        final dayColor = AppTheme.getDayAccentColor();
-        final progress = total > 0 ? done / total : 0.0;
+  Widget _buildChoreSummary(List<QueryDocumentSnapshot> chores) {
+    final total = chores.length;
+    final done = chores.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      return data['isDone'] == true;
+    }).length;
+    final dayColor = AppTheme.getDayAccentColor();
+    final progress = total > 0 ? done / total : 0.0;
 
-        return GestureDetector(
-          onTap: () {},
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(20),
-            decoration: AppTheme.cardDecoration(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return GestureDetector(
+      onTap: () {},
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(20),
+        decoration: AppTheme.cardDecoration(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('$done av $total klara',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15)),
-                    Icon(Icons.arrow_forward_ios_rounded,
-                        size: 14, color: Colors.grey.shade400),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 8,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(dayColor),
-                  ),
-                ),
+                Text('$done av $total klara',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15)),
+                Icon(Icons.arrow_forward_ios_rounded,
+                    size: 14, color: Colors.grey.shade400),
               ],
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: Colors.grey.shade200,
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(dayColor),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

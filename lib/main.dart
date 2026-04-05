@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 
-// Import av dina sidor
+// Import av dina sidor & tjänster
 import 'screens/dashboard_page.dart';
 import 'screens/planner_page.dart';
 import 'screens/chores_page.dart';
@@ -18,6 +21,8 @@ import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
 import 'screens/splash_screen.dart';
 import 'app_theme.dart';
+import 'providers/family_provider.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,9 +35,24 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    
+    // Aktivera Firebase Crashlytics
+    FlutterError.onError = (errorDetails) {
+      FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+    };
+    
+    // Fånga asynkrona fel som inte fångas av Flutter
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
+    
   } catch (e) {
     debugPrint('Firebase init error: $e');
   }
+
+  // Initiera Notistjänsten
+  await NotificationService.initialize();
 
   // Aktivera offline-cache för Firestore
   FirebaseFirestore.instance.settings = const Settings(
@@ -40,7 +60,14 @@ void main() async {
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
 
-  runApp(const MyApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => FamilyProvider()),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatefulWidget {

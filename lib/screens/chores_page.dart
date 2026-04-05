@@ -2,10 +2,11 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:confetti/confetti.dart';
+import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../data/piktogram.dart';
 import '../models/user_model.dart';
-import '../services/family_service.dart';
+import '../providers/family_provider.dart';
 import '../services/user_service.dart';
 import '../widgets/shimmer_list_placeholder.dart';
 
@@ -20,10 +21,7 @@ class _ChoresPageState extends State<ChoresPage>
   @override
   bool get wantKeepAlive => true;
 
-  UserModel? _currentUser;
-  List<UserModel> _familyMembers = [];
   String? _filterPerson;
-  Stream<QuerySnapshot>? _choresStream;
 
   // Reading timer
   bool _readingActive = false;
@@ -36,7 +34,6 @@ class _ChoresPageState extends State<ChoresPage>
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
-    _loadUser();
   }
 
   @override
@@ -46,39 +43,12 @@ class _ChoresPageState extends State<ChoresPage>
     super.dispose();
   }
 
-  Future<void> _loadUser() async {
-    final user = await FamilyService.getCurrentUserModel();
-    final members = <UserModel>[];
-    
-    // Hämta bara medlemmar om vi har ett familyId!
-    if (user?.familyId != null && user!.familyId!.isNotEmpty) {
-      final snap = await FirebaseFirestore.instance
-          .collection('users').where('familyId', isEqualTo: user.familyId).get();
-      for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
-    }
-    
-    if (mounted) {
-      setState(() {
-        _currentUser = user;
-        _familyMembers = members;
-        
-        // HÄR ÄR FILTRET SOM STÄNGER DATA-LÄCKAN
-        if (user?.familyId != null && user!.familyId!.isNotEmpty) {
-          _choresStream = FirebaseFirestore.instance
-              .collection('chores')
-              .where('familyId', isEqualTo: user.familyId) 
-              .snapshots();
-        }
-      });
-    }
-  }
-
-  void _toggleReading() {
+  void _toggleReading(UserModel? currentUser) {
     if (_readingActive) {
       final minutes = _readingSeconds ~/ 60;
       final points = (minutes / 5).floor();
-      if (points > 0 && _currentUser != null) {
-        UserService.addPoints(_currentUser!.uid, points);
+      if (points > 0 && currentUser != null) {
+        UserService.addPoints(currentUser.uid, points);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('Du läste $minutes minuter! +$points poäng! 📚'),
           backgroundColor: const Color(0xFF6BAE75),
@@ -93,9 +63,9 @@ class _ChoresPageState extends State<ChoresPage>
     }
   }
 
-  void _onChoreCompleted() {
+  void _onChoreCompleted(UserModel? currentUser) {
     _confettiController.play();
-    if (_currentUser != null) UserService.addPoints(_currentUser!.uid, 10);
+    if (currentUser != null) UserService.addPoints(currentUser.uid, 10);
   }
 
   String get _readingTimeStr {
@@ -107,7 +77,9 @@ class _ChoresPageState extends State<ChoresPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final isFocus = _currentUser?.isFocusMode ?? false;
+    
+    final familyProvider = context.watch<FamilyProvider>();
+    final isFocus = familyProvider.currentUser?.isFocusMode ?? false;
     final dayColor = AppTheme.getDayAccentColor();
 
     return Container(
@@ -115,30 +87,16 @@ class _ChoresPageState extends State<ChoresPage>
       child: Stack(
         alignment: Alignment.topCenter,
         children: [
-          if (_choresStream == null)
-            _buildParentView([], [], dayColor)
-          else
-            StreamBuilder<QuerySnapshot>(
-              stream: _choresStream,
-              builder: (ctx, snap) {
-                if (snap.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Text('Fel: ${snap.error}',
-                          style: const TextStyle(color: Colors.red)),
-                    ),
-                  );
-                }
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const ShimmerListPlaceholder();
-                }
-                final docs = snap.data?.docs ?? [];
-                final filtered = _filterChores(docs);
-                if (isFocus) return _buildFocusView(filtered, dayColor);
-                return _buildParentView(docs, filtered, dayColor);
-              },
-            ),
+          if (familyProvider.isLoading)
+            const ShimmerListPlaceholder()
+          else ...[
+            Builder(builder: (ctx) {
+              final filtered = _filterChores(familyProvider.chores);
+              if (isFocus) return _buildFocusView(filtered, dayColor, familyProvider);
+              return _buildParentView(familyProvider.chores, filtered, dayColor, familyProvider);
+            }),
+          ],
+          
           Positioned(
             right: 16,
             bottom: MediaQuery.of(context).padding.bottom + 16,
@@ -150,7 +108,7 @@ class _ChoresPageState extends State<ChoresPage>
                   if (_readingActive)
                     FloatingActionButton.extended(
                       heroTag: 'reading',
-                      onPressed: _toggleReading,
+                      onPressed: () => _toggleReading(familyProvider.currentUser),
                       backgroundColor: const Color(0xFF6BAE75),
                       foregroundColor: Colors.white,
                       icon: const Icon(Icons.stop),
@@ -159,7 +117,7 @@ class _ChoresPageState extends State<ChoresPage>
                   else
                     FloatingActionButton.extended(
                       heroTag: 'reading_start',
-                      onPressed: _toggleReading,
+                      onPressed: () => _toggleReading(familyProvider.currentUser),
                       backgroundColor: Colors.white,
                       foregroundColor: AppTheme.getTextColor(),
                       icon: const Text('📖', style: TextStyle(fontSize: 18)),
@@ -169,7 +127,7 @@ class _ChoresPageState extends State<ChoresPage>
                   const SizedBox(height: 12),
                   FloatingActionButton(
                     heroTag: 'add_chore',
-                    onPressed: _showAddChoreSheet,
+                    onPressed: () => _showAddChoreSheet(familyProvider),
                     backgroundColor: dayColor,
                     foregroundColor: Colors.white,
                     child: const Icon(Icons.add_rounded),
@@ -177,7 +135,7 @@ class _ChoresPageState extends State<ChoresPage>
                 ] else
                   FloatingActionButton.extended(
                     heroTag: 'reading_focus',
-                    onPressed: _toggleReading,
+                    onPressed: () => _toggleReading(familyProvider.currentUser),
                     backgroundColor: _readingActive
                         ? const Color(0xFF6BAE75)
                         : Colors.white,
@@ -221,24 +179,24 @@ class _ChoresPageState extends State<ChoresPage>
   }
 
   Widget _buildParentView(List<QueryDocumentSnapshot> all,
-      List<QueryDocumentSnapshot> filtered, Color dayColor) {
+      List<QueryDocumentSnapshot> filtered, Color dayColor, FamilyProvider provider) {
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
           SliverToBoxAdapter(child: _buildHeader(dayColor)),
-          SliverToBoxAdapter(child: _buildLeaderboard(all, dayColor)),
-          SliverToBoxAdapter(child: _buildPersonFilter(dayColor)),
+          SliverToBoxAdapter(child: _buildLeaderboard(provider.familyMembers, dayColor)),
+          SliverToBoxAdapter(child: _buildPersonFilter(provider.familyMembers, dayColor)),
           if (filtered.isEmpty)
-            SliverToBoxAdapter(child: _buildEmptyState(dayColor))
+            SliverToBoxAdapter(child: _buildEmptyState(dayColor, provider))
           else
             SliverList(
               delegate: SliverChildBuilderDelegate(
                 (_, i) => _ChoreCard(
                   doc: filtered[i], 
                   dayColor: dayColor,
-                  currentUser: _currentUser,
-                  familyMembers: _familyMembers,
-                  onComplete: _onChoreCompleted,
+                  currentUser: provider.currentUser,
+                  familyMembers: provider.familyMembers,
+                  onComplete: () => _onChoreCompleted(provider.currentUser),
                 ),
                 childCount: filtered.length,
               ),
@@ -248,8 +206,8 @@ class _ChoresPageState extends State<ChoresPage>
       );
   }
 
-  Widget _buildFocusView(List<QueryDocumentSnapshot> filtered, Color dayColor) {
-    final name = _currentUser?.name.split(' ').first ?? '';
+  Widget _buildFocusView(List<QueryDocumentSnapshot> filtered, Color dayColor, FamilyProvider provider) {
+    final name = provider.currentUser?.name.split(' ').first ?? '';
     final total = filtered.length;
     final done = filtered.where((d) => (d.data() as Map)['isDone'] == true).length;
     return CustomScrollView(
@@ -268,7 +226,7 @@ class _ChoresPageState extends State<ChoresPage>
           ),
           SliverList(
             delegate: SliverChildBuilderDelegate(
-              (_, i) => _FocusChoreCard(doc: filtered[i], dayColor: dayColor, onComplete: _onChoreCompleted),
+              (_, i) => _FocusChoreCard(doc: filtered[i], dayColor: dayColor, onComplete: () => _onChoreCompleted(provider.currentUser)),
               childCount: filtered.length,
             ),
           ),
@@ -289,8 +247,8 @@ class _ChoresPageState extends State<ChoresPage>
     );
   }
 
-  Widget _buildLeaderboard(List<QueryDocumentSnapshot> all, Color dayColor) {
-    if (_familyMembers.isEmpty) return const SizedBox.shrink();
+  Widget _buildLeaderboard(List<UserModel> familyMembers, Color dayColor) {
+    if (familyMembers.isEmpty) return const SizedBox.shrink();
     final weekStr = 'Vecka ${_weekNumber()}';
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -306,9 +264,9 @@ class _ChoresPageState extends State<ChoresPage>
           height: 100,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: _familyMembers.length,
+            itemCount: familyMembers.length,
             itemBuilder: (_, i) {
-              final m = _familyMembers[i];
+              final m = familyMembers[i];
               Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
               return Container(
                 width: 72, margin: const EdgeInsets.only(right: 12),
@@ -329,8 +287,8 @@ class _ChoresPageState extends State<ChoresPage>
     );
   }
 
-  Widget _buildPersonFilter(Color dayColor) {
-    if (_familyMembers.isEmpty) return const SizedBox.shrink();
+  Widget _buildPersonFilter(List<UserModel> familyMembers, Color dayColor) {
+    if (familyMembers.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 48,
       child: ListView(
@@ -339,7 +297,7 @@ class _ChoresPageState extends State<ChoresPage>
         children: [
           _PlannerPill(label: 'Alla', selected: _filterPerson == null, color: dayColor,
               onTap: () => setState(() => _filterPerson = null)),
-          ..._familyMembers.map((m) {
+          ...familyMembers.map((m) {
             Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
             return _PlannerPill(label: m.name.split(' ').first, selected: _filterPerson == m.name,
                 color: mc, onTap: () => setState(() => _filterPerson = _filterPerson == m.name ? null : m.name));
@@ -349,7 +307,7 @@ class _ChoresPageState extends State<ChoresPage>
     );
   }
 
-  Widget _buildEmptyState(Color dayColor) {
+  Widget _buildEmptyState(Color dayColor, FamilyProvider provider) {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 24, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
@@ -365,7 +323,7 @@ class _ChoresPageState extends State<ChoresPage>
               textAlign: TextAlign.center),
           const SizedBox(height: 20),
           ElevatedButton.icon(
-            onPressed: _showAddChoreSheet,
+            onPressed: () => _showAddChoreSheet(provider),
             style: ElevatedButton.styleFrom(
               backgroundColor: dayColor, foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -378,8 +336,8 @@ class _ChoresPageState extends State<ChoresPage>
     );
   }
 
-  void _showAddChoreSheet() {
-    if (_currentUser == null) {
+  void _showAddChoreSheet(FamilyProvider provider) {
+    if (provider.currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Laddar familjedata... försök igen'),
@@ -394,8 +352,8 @@ class _ChoresPageState extends State<ChoresPage>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _AddChoreSheet(
-        familyMembers: _familyMembers,
-        familyId: _currentUser?.familyId ?? '',
+        familyMembers: provider.familyMembers,
+        familyId: provider.currentUser?.familyId ?? '',
       ),
     );
   }

@@ -1,1 +1,53 @@
-{"firestore":{"rules":"firestore.rules"},"hosting":{"public":"build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"android":{"default":{"projectId":"la-familia-5d9f5","appId":"1:1062436758460:android:582e05e37d8cadccbb81b9","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"la-familia-5d9f5","configurations":{"android":"1:1062436758460:android:582e05e37d8cadccbb81b9","web":"1:1062436758460:web:4c46764483a57ab7bb81b9"}}}}}}
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "la-familia-5d9f5",
+          "appId": "1:1062436758460:android:582e05e37d8cadccbb81b9",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "la-familia-5d9f5",
+          "configurations": {
+            "android": "1:1062436758460:android:582e05e37d8cadccbb81b9",
+            "web": "1:1062436758460:web:4c46764483a57ab7bb81b9"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

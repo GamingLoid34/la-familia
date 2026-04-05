@@ -1,8 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
-import '../services/family_service.dart';
+import '../providers/family_provider.dart';
 
 class FamilyStatusPage extends StatefulWidget {
   const FamilyStatusPage({super.key});
@@ -11,18 +12,6 @@ class FamilyStatusPage extends StatefulWidget {
 }
 
 class _FamilyStatusPageState extends State<FamilyStatusPage> {
-  List<UserModel> _members = [];
-  Map<String, List<QueryDocumentSnapshot>> _memberEvents = {};
-  bool _loading = true;
-
-  late final Stream<List<UserModel>> _familyStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _familyStream = FamilyService.getCurrentFamilyStream();
-    _loadData();
-  }
 
   DateTime? _parseDate(dynamic v) {
     if (v is Timestamp) return v.toDate();
@@ -46,57 +35,9 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     return base;
   }
 
-  Future<void> _loadData() async {
-    try {
-      final currentUser = await FamilyService.getCurrentUserModel();
-      final familyId = currentUser?.familyId;
-
-      final members = await _familyStream.first
-          .timeout(const Duration(seconds: 6), onTimeout: () => []);
-      if (!mounted) return;
-
-      final now = DateTime.now();
-      // Använd samma sträng-format som när vi sparar eventen!
-      final todayStr = '${now.year}-${now.month}-${now.day}';
-
-      final Map<String, List<QueryDocumentSnapshot>> eventsMap = {};
-      if (familyId != null && familyId.isNotEmpty) {
-        for (final m in members) {
-          try {
-            final snap = await FirebaseFirestore.instance
-                .collection('planner_events')
-                .where('familyId', isEqualTo: familyId) // <--- HÄR LÄCKTE DATAN
-                .where('date', isEqualTo: todayStr)
-                .get()
-                .timeout(const Duration(seconds: 5));
-            
-            eventsMap[m.uid] = snap.docs.where((doc) {
-              final persons = ((doc.data())['persons'] as List? ?? []).cast<String>();
-              return persons.contains(m.name);
-            }).toList();
-          } catch (_) {
-            eventsMap[m.uid] = [];
-          }
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _members = members;
-          _memberEvents = eventsMap;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('FamilyStatusPage error: $e');
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  _MemberStatus _getStatus(UserModel m) {
+  _MemberStatus _getStatus(UserModel m, List<QueryDocumentSnapshot> memberEvents) {
     final now = DateTime.now();
-    final events = _memberEvents[m.uid] ?? [];
-    for (final doc in events) {
+    for (final doc in memberEvents) {
       final d = doc.data() as Map<String, dynamic>;
       final start = _parseDateTime(d);
       if (start == null) continue;
@@ -116,17 +57,16 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     return _MemberStatus.free;
   }
 
-  QueryDocumentSnapshot? _getCurrentEvent(UserModel m) {
+  QueryDocumentSnapshot? _getCurrentEvent(UserModel m, List<QueryDocumentSnapshot> memberEvents) {
     final now = DateTime.now();
-    final events = _memberEvents[m.uid] ?? [];
-    for (final doc in events) {
+    for (final doc in memberEvents) {
       final d = doc.data() as Map<String, dynamic>;
       final start = _parseDateTime(d);
       if (start == null) continue;
       final end = start.add(const Duration(hours: 1));
       if (start.isBefore(now) && end.isAfter(now)) return doc;
     }
-    for (final doc in events) {
+    for (final doc in memberEvents) {
       final d = doc.data() as Map<String, dynamic>;
       final start = _parseDateTime(d);
       if (start != null && start.isAfter(now)) return doc;
@@ -138,6 +78,11 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
   Widget build(BuildContext context) {
     final dayColor = AppTheme.getDayAccentColor();
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
+    
+    // Vi plockar ut all information från Providern (helt synkront nu!)
+    final provider = context.watch<FamilyProvider>();
+    final members = provider.familyMembers;
+    final todayEvents = provider.todayEvents;
 
     return Scaffold(
       body: Center(child: ConstrainedBox(
@@ -162,11 +107,12 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
                 ]),
               ),
             ),
-            if (_loading)
+            
+            if (provider.isLoading)
               const SliverToBoxAdapter(child: Center(child: Padding(
                 padding: EdgeInsets.all(40),
                 child: CircularProgressIndicator())))
-            else if (_members.isEmpty)
+            else if (members.isEmpty)
               SliverToBoxAdapter(
                 child: Container(
                   margin: const EdgeInsets.fromLTRB(16, 40, 16, 0),
@@ -190,8 +136,17 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
             else
               SliverList(
                 delegate: SliverChildBuilderDelegate(
-                  (_, i) => _buildMemberCard(_members[i], dayColor),
-                  childCount: _members.length,
+                  (_, i) {
+                    final m = members[i];
+                    // Räkna ut vilka event som tillhör just denna person idag
+                    final memberEvents = todayEvents.where((doc) {
+                      final persons = ((doc.data() as Map<String, dynamic>)['persons'] as List? ?? []).cast<String>();
+                      return persons.contains(m.name);
+                    }).toList();
+
+                    return _buildMemberCard(m, memberEvents, dayColor);
+                  },
+                  childCount: members.length,
                 ),
               ),
             const SliverToBoxAdapter(child: SizedBox(height: 100)),
@@ -201,9 +156,9 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     );
   }
 
-  Widget _buildMemberCard(UserModel m, Color dayColor) {
-    final status = _getStatus(m);
-    final currentEvent = _getCurrentEvent(m);
+  Widget _buildMemberCard(UserModel m, List<QueryDocumentSnapshot> memberEvents, Color dayColor) {
+    final status = _getStatus(m, memberEvents);
+    final currentEvent = _getCurrentEvent(m, memberEvents);
     Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
 
     return Container(

@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/family_service.dart';
@@ -30,7 +32,7 @@ class _SettingsPageState extends State<SettingsPage>
 
   List<Map<String, dynamic>> _calendarImports = [];
 
-  // Notification toggles (local state only — extend with Firestore as needed)
+  // Notification toggles
   bool _notifActivity = true;
   bool _notifChore = true;
   bool _notifReward = true;
@@ -38,7 +40,22 @@ class _SettingsPageState extends State<SettingsPage>
   @override
   void initState() {
     super.initState();
+    _loadPreferences();
     _loadData();
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _notifActivity = prefs.getBool('notifActivity') ?? true;
+      _notifChore = prefs.getBool('notifChore') ?? true;
+      _notifReward = prefs.getBool('notifReward') ?? true;
+    });
+  }
+
+  Future<void> _savePreference(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
   }
 
   Future<void> _loadData() async {
@@ -65,8 +82,8 @@ class _SettingsPageState extends State<SettingsPage>
           if (famDoc.exists) {
             familyName = famDoc.data()?['name'] as String?;
           }
-        } catch (_) {
-          // Family name is optional — ignore timeout
+        } catch (e, stack) {
+          developer.log('Misslyckades hämta familjenamn', error: e, stackTrace: stack);
         }
         try {
           final impsSnap = await FirebaseFirestore.instance
@@ -77,7 +94,9 @@ class _SettingsPageState extends State<SettingsPage>
           for (final d in impsSnap.docs) {
             _calendarImports.add({...d.data(), 'id': d.id});
           }
-        } catch (_) {}
+        } catch (e, stack) {
+          developer.log('Misslyckades hämta kalendrar', error: e, stackTrace: stack);
+        }
       }
       if (mounted) {
         setState(() {
@@ -87,8 +106,8 @@ class _SettingsPageState extends State<SettingsPage>
           _loading = false;
         });
       }
-    } catch (e) {
-      debugPrint('Settings _loadData error: $e');
+    } catch (e, stack) {
+      developer.log('Settings _loadData error', error: e, stackTrace: stack);
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -447,7 +466,8 @@ class _SettingsPageState extends State<SettingsPage>
                                 if (ctx.mounted) Navigator.pop(ctx);
                                 _showImportResult(count, name);
                                 await _loadData();
-                              } catch (e) {
+                              } catch (e, stack) {
+                                developer.log('Fel vid hämtning/tolkning av ICS URL', error: e, stackTrace: stack);
                                 setS(() {
                                   loading = false;
                                   errorMsg =
@@ -499,7 +519,8 @@ class _SettingsPageState extends State<SettingsPage>
                                 if (ctx.mounted) Navigator.pop(ctx);
                                 _showImportResult(count, name);
                                 await _loadData();
-                              } catch (e) {
+                              } catch (e, stack) {
+                                developer.log('Fel vid uppladdning av lokal ICS fil', error: e, stackTrace: stack);
                                 setS(() { loading = false; errorMsg = 'Fel: $e'; });
                               }
                             },
@@ -649,7 +670,8 @@ class _SettingsPageState extends State<SettingsPage>
         min = int.parse(clean.substring(11, 13));
       }
       return DateTime(y, m, d, h, min);
-    } catch (_) {
+    } catch (e, stack) {
+      developer.log('Fel vid tolkning av ICS-datum', error: e, stackTrace: stack);
       return null;
     }
   }
@@ -673,7 +695,10 @@ class _SettingsPageState extends State<SettingsPage>
               style: TextStyle(fontSize: 12)),
           value: _notifActivity,
           activeColor: dayColor,
-          onChanged: (v) => setState(() => _notifActivity = v),
+          onChanged: (v) {
+            setState(() => _notifActivity = v);
+            _savePreference('notifActivity', v);
+          },
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -681,7 +706,10 @@ class _SettingsPageState extends State<SettingsPage>
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
           value: _notifChore,
           activeColor: dayColor,
-          onChanged: (v) => setState(() => _notifChore = v),
+          onChanged: (v) {
+            setState(() => _notifChore = v);
+            _savePreference('notifChore', v);
+          },
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -689,7 +717,10 @@ class _SettingsPageState extends State<SettingsPage>
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
           value: _notifReward,
           activeColor: dayColor,
-          onChanged: (v) => setState(() => _notifReward = v),
+          onChanged: (v) {
+            setState(() => _notifReward = v);
+            _savePreference('notifReward', v);
+          },
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,

@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -10,7 +11,9 @@ DateTime? _parseDate(dynamic v) {
       final p = v.split('-');
       if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
     }
-  } catch (_) {}
+  } catch (e, stack) {
+    developer.log('Fel vid tolkning av datum i ActivityDetailSheet', error: e, stackTrace: stack);
+  }
   return null;
 }
 
