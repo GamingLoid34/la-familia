@@ -271,39 +271,60 @@ class _AgendaPageState extends State<AgendaPage>
           Positioned(
             right: 16,
             bottom: bottomPad + 16,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                FloatingActionButton.extended(
-                  heroTag: 'agenda_open_planner',
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const PlannerPage()),
-                  ),
-                  backgroundColor: dayColor,
-                  foregroundColor: Colors.white,
-                  icon: const Icon(Icons.calendar_month_rounded),
-                  label: const Text('Ny aktivitet',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 10),
-                FloatingActionButton.extended(
-                  heroTag: 'agenda_open_chores',
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ChoresPage()),
-                  ),
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppTheme.getTextColor(),
-                  icon: const Icon(Icons.cleaning_services_rounded),
-                  label: const Text('Ny syssla',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ],
+            child: FloatingActionButton(
+              heroTag: 'agenda_add',
+              onPressed: () => _showAddSheet(context, provider, dayColor),
+              backgroundColor: dayColor,
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add_rounded, size: 28),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showAddSheet(BuildContext context, FamilyProvider provider, Color dayColor) {
+    if (provider.currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Laddar familjedata... försök igen'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddTypeSheet(
+        dayColor: dayColor,
+        onActivityTap: () {
+          Navigator.pop(context);
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (_) => AddEventSheet(
+              selectedDay: _selectedDay,
+              familyMembers: provider.familyMembers,
+              familyId: provider.currentUser?.familyId ?? '',
+            ),
+          );
+        },
+        onChoreTap: () {
+          Navigator.pop(context);
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            builder: (_) => AddChoreSheet(
+              familyMembers: provider.familyMembers,
+              familyId: provider.currentUser?.familyId ?? '',
+            ),
+          );
+        },
       ),
     );
   }
@@ -703,3 +724,115 @@ class _ChoreRowState extends State<_ChoreRow> {
   }
 }
 
+class _AddTypeSheet extends StatelessWidget {
+  final Color dayColor;
+  final VoidCallback onActivityTap;
+  final VoidCallback onChoreTap;
+
+  const _AddTypeSheet({
+    required this.dayColor,
+    required this.onActivityTap,
+    required this.onChoreTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 20),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Text('Vad vill du lägga till?',
+              style: AppTheme.sectionTitleStyle),
+          const SizedBox(height: 20),
+          _TypeOption(
+            emoji: '📅',
+            title: 'Aktivitet',
+            subtitle: 'Planera något på ett specifikt datum',
+            color: dayColor,
+            onTap: onActivityTap,
+          ),
+          const SizedBox(height: 12),
+          _TypeOption(
+            emoji: '🧹',
+            title: 'Syssla',
+            subtitle: 'Lägg till en uppgift med poäng',
+            color: Colors.grey.shade700,
+            onTap: onChoreTap,
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeOption extends StatelessWidget {
+  final String emoji;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _TypeOption({
+    required this.emoji,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 32)),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: color)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            fontSize: 13, color: Colors.grey.shade600)),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios_rounded, size: 16, color: color),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

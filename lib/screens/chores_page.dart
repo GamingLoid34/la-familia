@@ -351,7 +351,7 @@ class _ChoresPageState extends State<ChoresPage>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _AddChoreSheet(
+      builder: (_) => AddChoreSheet(
         familyMembers: provider.familyMembers,
         familyId: provider.currentUser?.familyId ?? '',
       ),
@@ -540,7 +540,7 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
                         context: context,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,
-                        builder: (_) => _AddChoreSheet(
+                        builder: (_) => AddChoreSheet(
                           familyMembers: widget.familyMembers,
                           familyId: widget.currentUser?.familyId,
                           choreToEdit: widget.doc,
@@ -643,16 +643,16 @@ class _FocusChoreCard extends StatelessWidget {
   }
 }
 
-class _AddChoreSheet extends StatefulWidget {
+class AddChoreSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String? familyId;
   final QueryDocumentSnapshot? choreToEdit;
-  const _AddChoreSheet({required this.familyMembers, this.familyId, this.choreToEdit});
+  const AddChoreSheet({super.key, required this.familyMembers, this.familyId, this.choreToEdit});
   @override
-  State<_AddChoreSheet> createState() => _AddChoreSheetState();
+  State<AddChoreSheet> createState() => _AddChoreSheetState();
 }
 
-class _AddChoreSheetState extends State<_AddChoreSheet> {
+class _AddChoreSheetState extends State<AddChoreSheet> {
   String _pik = '✅'; String _cat = 'Alla'; String _q = '';
   int _step = 0;
   final _title = TextEditingController();
