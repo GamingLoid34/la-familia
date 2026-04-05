@@ -112,6 +112,7 @@ lib/widgets/shimmer_loading.dart
 pubspec.lock
 pubspec.yaml
 README.md
+ROADMAP.md
 web/favicon.png
 web/icons/Icon-192.png
 web/icons/Icon-512.png
@@ -163,6 +164,63 @@ files.forEach(f => {
         console.log('Fixed: ' + f);
     }
 });
+</file>
+
+<file path="ROADMAP.md">
+# 🗺️ La Familia – Master Åtgärdslista (Roadmap)
+
+Denna roadmap hanterar kritiska säkerhetsrisker, prestandaproblem, teknisk skuld och framtida funktionalitet för Flutter/Firebase-appen "La Familia". Åtgärderna är prioriterade från mest affärskritiskt (Fas 1) till framtida optimeringar (Fas 3).
+
+---
+
+## 🚨 Fas 1: Kritiska Blockers (Säkerhet, Skalbarhet & Auth)
+Dessa punkter måste åtgärdas innan appen distribueras till faktiska användare för att undvika dataläckor, krascher och onödiga serverkostnader.
+
+- [ ] **1.1 Lås ner Firestore-säkerhetsregler (`firestore.rules`)**
+  - **Problem:** Nuvarande `allow read, write: if request.auth != null;` tillåter alla inloggade att manipulera all data.
+  - **Åtgärd:** Skriv om reglerna så att en användare endast kan läsa/skriva i dokument där dokumentets `familyId` matchar användarens eget `familyId`.
+  - **Beroende:** Kräver en uppdatering i t.ex. `screen_rules_page.dart` och `countdowns` för att säkerställa att `familyId` faktiskt sparas ner på alla nya dokument innan reglerna aktiveras.
+  - **Filer:** `firestore.rules`, `lib/screens/screen_rules_page.dart`, `lib/screens/personal_countdown_screen.dart`.
+
+- [ ] **1.2 Säker hantering av familjemedlemmar (Cloud Functions)**
+  - **Problem:** `manage_members_page.dart` använder en inbyggd Firebase `SecondaryApp` för att föräldrar ska kunna skapa barnkonton. Detta är instabilt och leder till utloggningar/session-strul.
+  - **Åtgärd:** Sätt upp Firebase Cloud Functions. Skapa en säker "Callable Endpoint" (t.ex. `createUser`) som anropas från appen, skapar användaren i Firebase Auth säkert på backend, och returnerar det nya UID:t.
+  - **Filer:** `lib/screens/manage_members_page.dart`, `functions/index.js` (ska initieras).
+
+- [ ] **1.3 Optimera klientstyrd datahämtning (Firestore Queries)**
+  - **Problem:** `DashboardPage` laddar ner alldeles för mycket rådata och gör sorteringen/filtreringen i Dart-koden (t.ex. i `_buildEventsStream`). Detta skapar enorma läskostnader i Firebase när databasen växer.
+  - **Åtgärd:** Applicera korrekta queries i koden med `.where('date', isGreaterThanOrEqualTo: ...).orderBy('date')`. Skapa nödvändiga "Composite Indexes" i Firebase Console.
+  - **Filer:** `lib/screens/dashboard_page.dart`, `lib/screens/planner_page.dart`.
+
+---
+
+## ⚠️ Fas 2: Teknisk Skuld & Stabilitet
+Dessa punkter hanterar appens interna hälsa. De syns inte nödvändigtvis för slutanvändaren, men är avgörande för att koden ska vara underhållbar.
+
+- [ ] **2.1 Implementera State Management (Provider / Riverpod)**
+  - **Problem:** Koden har ett tungt beroende av nästlade `StreamBuilder` och `setState` direkt i UI-koden. Logik och gränssnitt är tätt sammankopplade.
+  - **Åtgärd:** Lyft ut databasanrop och tillståndshantering till dedikerade controllers/tjänster med ett State Management-paket. Detta kommer minska widget-rebuilds avsevärt och snabba upp appen.
+  - **Filer:** Projektövergripande (störst behov i `dashboard_page.dart` och `chores_page.dart`).
+
+- [ ] **2.2 Fånga och logga "Tysta Fel" (Error Handling)**
+  - **Problem:** Kodbasen innehåller flera generella `catch (_) {}` (exempelvis vid datum-parsning eller ICS-import) som sväljer krascher utan att lämna spår.
+  - **Åtgärd:** Byt ut till strukturerad loggning med `dart:developer`. Inför Firebase Crashlytics för att fånga upp eventuella krascher som sker hos slutanvändare.
+  - **Filer:** `lib/widgets/activity_detail_sheet.dart`, `lib/screens/settings_page.dart`, `lib/main.dart`.
+
+---
+
+## 🚀 Fas 3: Kärnfunktionalitet & UX
+Dessa punkter tar appen från "bra" till "oumbärlig" för målgruppen (särskilt för NPF-användare).
+
+- [ ] **3.1 Aktivera riktiga Push-notiser & Lokala larm**
+  - **Problem:** Toggles i `SettingsPage` ("Aktivitet börjar snart") uppdaterar bara den lokala widgetens tillstånd och gör ingenting i praktiken.
+  - **Åtgärd:** Integrera `firebase_messaging` och `flutter_local_notifications`. Sätt upp logik som triggar schemalagda larm lokalt på enheten 15 minuter före en aktivitet.
+  - **Filer:** `lib/main.dart`, `lib/screens/settings_page.dart`, samt en ny fil för Notification-hantering.
+
+- [ ] **3.2 Automatisera veckopoäng (Cron Jobs)**
+  - **Problem:** Idag finns logik för att nollställa poäng manuellt via klienten. Det bör ske per automatik.
+  - **Åtgärd:** Skapa en schemalagd Cloud Function (Pub/Sub) som körs automatiskt varje söndagnatt kl. 23:59 och nollställer `weeklyPoints` för alla aktiva användare.
+  - **Filer:** `functions/index.js`.
 </file>
 
 <file path=".claude/settings.local.json">
@@ -610,8 +668,97 @@ include(":app")
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Hjälpfunktion för att hämta inloggad användares familyId
+    function getUserFamilyId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.familyId;
+    }
+
+    // Hjälpfunktion för inloggningskrav
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // 1. ANVÄNDARE (users)
+    match /users/{userId} {
+      // Man får läsa och skriva sin egen profil (även om man saknar familyId än)
+      allow read, write: if isAuth() && request.auth.uid == userId;
+      
+      // Man får läsa andra användare i SAMMA familj
+      allow read: if isAuth() 
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && resource.data.familyId == getUserFamilyId();
+    }
+
+    // 2. FAMILJER (families)
+    match /families/{familyId} {
+      // Tillåt alla inloggade att läsa (behövs för att söka på inbjudningskod)
+      allow read: if isAuth();
+      // Alla inloggade får skapa en ny familj
+      allow create: if isAuth();
+      // Bara medlemmar i familjen får uppdatera familjedokumentet
+      allow update: if isAuth() && familyId == getUserFamilyId();
+    }
+
+    // 3. KÄRNDATA (Låst till familjens ID)
+    // Här kräver vi nu att man FAKTISKT har ett familyId för att få prata med dessa samlingar
+    
+    match /chores/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+    
+    match /planner_events/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /shopping_items/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+    
+    match /calendar_imports/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+    
+    match /chore_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == getUserFamilyId() || resource.data.familyId == "");
+      allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /activity_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == getUserFamilyId() || resource.data.familyId == "");
+      allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /screen_rules/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /work_shifts/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /countdowns/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    // Subcollection för points_history under users
+    match /users/{userId}/points_history/{docId} {
+      allow read: if isAuth() && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(userId)).data.familyId == getUserFamilyId());
+      allow write: if isAuth() && request.auth.uid == userId;
+    }
+
+    // Stäng ute allt annat
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
@@ -3215,8 +3362,9 @@ class _LoginPageState extends State<LoginPage> {
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
+// En statisk lista för att hålla timers levande i minnet under tiden appen är igång
+static final List<Map<String, dynamic>> _localTimers = [];
 
 class PersonalCountdownScreen extends StatefulWidget {
   const PersonalCountdownScreen({super.key});
@@ -3233,7 +3381,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   String? _viewingTimerId;
   Map<String, dynamic>? _viewingTimerData;
 
-  // NYTT: Helskärmsläge för totalt fokus
+  // Helskärmsläge för totalt fokus
   bool _isFullScreen = false;
 
   // Variabler för "Dra upp tiden" (Input)
@@ -3243,6 +3391,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   @override
   void initState() {
     super.initState();
+    // Uppdaterar gränssnittet varje sekund så att nedräkningen syns live
     _uiTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) setState(() {});
     });
@@ -3254,35 +3403,20 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     super.dispose();
   }
 
-  // --- DAGFÄRGER (Onsdag = Silver/Grå) ---
+  // --- DAGFÄRGER ---
   BoxDecoration _getDailyBackground() {
     final int weekday = DateTime.now().weekday;
     List<Color> colors;
 
     switch (weekday) {
-      case 1:
-        colors = [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)];
-        break; // Mån
-      case 2:
-        colors = [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)];
-        break; // Tis
-      case 3:
-        colors = [const Color(0xFFF5F5F5), const Color(0xFFCFD8DC)];
-        break; // Ons
-      case 4:
-        colors = [const Color(0xFFFFF3E0), const Color(0xFFFFCC80)];
-        break; // Tor
-      case 5:
-        colors = [const Color(0xFFFFFDE7), const Color(0xFFFFF59D)];
-        break; // Fre
-      case 6:
-        colors = [const Color(0xFFFCE4EC), const Color(0xFFF8BBD0)];
-        break; // Lör
-      case 7:
-        colors = [const Color(0xFFFFEBEE), const Color(0xFFFFCDD2)];
-        break; // Sön
-      default:
-        colors = [Colors.white, Colors.grey.shade200];
+      case 1: colors = [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)]; break;
+      case 2: colors = [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)]; break;
+      case 3: colors = [const Color(0xFFF5F5F5), const Color(0xFFCFD8DC)]; break;
+      case 4: colors = [const Color(0xFFFFF3E0), const Color(0xFFFFCC80)]; break;
+      case 5: colors = [const Color(0xFFFFFDE7), const Color(0xFFFFF59D)]; break;
+      case 6: colors = [const Color(0xFFFCE4EC), const Color(0xFFF8BBD0)]; break;
+      case 7: colors = [const Color(0xFFFFEBEE), const Color(0xFFFFCDD2)]; break;
+      default: colors = [Colors.white, Colors.grey.shade200];
     }
 
     return BoxDecoration(
@@ -3294,33 +3428,30 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     );
   }
 
-  Future<void> _startTimer() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
+  void _startTimer() {
     final totalDurationInSeconds = (_extraHours * 3600) + _dragSeconds.toInt();
-    if (totalDurationInSeconds <= 0) return;
+    if (totalDurationInSeconds <= 0) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Dra i klockan för att ställa in tid först!")));
+       return;
+    }
 
     final startTime = DateTime.now();
     final targetTime = startTime.add(Duration(seconds: totalDurationInSeconds));
+    final newId = DateTime.now().millisecondsSinceEpoch.toString();
 
-    final docRef = await FirebaseFirestore.instance
-        .collection('countdowns')
-        .add({
-          'title': 'Timer',
-          'targetTime': Timestamp.fromDate(targetTime),
-          'startTime': Timestamp.fromDate(startTime),
-          'userId': user.uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+    final newTimer = {
+      'id': newId,
+      'title': 'Fokustid',
+      'targetTime': targetTime,
+      'startTime': startTime,
+    };
 
-    // Efter start, nollställ input och gå direkt till visningsläge för den nya timern
-    final newDoc = await docRef.get();
     setState(() {
+      _localTimers.add(newTimer);
       _dragSeconds = 0;
       _extraHours = 0;
-      _viewingTimerId = newDoc.id;
-      _viewingTimerData = newDoc.data();
+      _viewingTimerId = newId;
+      _viewingTimerData = newTimer;
     });
   }
 
@@ -3349,12 +3480,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Om vi är i Helskärmsläge, visa en helt annan vy (Bara klockan)
     if (_isFullScreen && _viewingTimerId != null) {
       return _buildFullScreenFocusMode();
     }
-
-    // Annars, visa standardvyn med lista och inställningar
     return _buildStandardView();
   }
 
@@ -3367,10 +3495,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
         decoration: _getDailyBackground(),
         child: Stack(
           children: [
-            // Centerad JÄTTESTOR klocka
             Center(child: _buildClockLogic(isFullScreen: true)),
-
-            // Liten knapp nere i hörnet för att avsluta helskärm
             Positioned(
               bottom: 30,
               right: 30,
@@ -3378,15 +3503,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
                 backgroundColor: Colors.white.withOpacity(0.8),
                 elevation: 0,
                 child: const Icon(Icons.fullscreen_exit, color: Colors.black87),
-                onPressed: () {
-                  setState(() {
-                    _isFullScreen = false;
-                  });
-                },
+                onPressed: () => setState(() => _isFullScreen = false),
               ),
             ),
-
-            // Visa texten på vad vi gör, diskret
             Positioned(
               top: 60,
               left: 0,
@@ -3410,190 +3529,156 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
 
   // --- VY 2: STANDARDVY (INSTÄLLNINGAR & LISTA) ---
   Widget _buildStandardView() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const Center(child: Text("Logga in först"));
+    // Sortera listan så att den som är klar först hamnar överst
+    _localTimers.sort((a, b) {
+      final tA = a['targetTime'] as DateTime;
+      final tB = b['targetTime'] as DateTime;
+      return tA.compareTo(tB);
+    });
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('countdowns')
-          .orderBy('targetTime')
-          .snapshots(),
-      builder: (context, snapshot) {
-        List<DocumentSnapshot> docs = [];
-        if (snapshot.hasData) {
-          docs = snapshot.data!.docs;
-        }
+    if (_viewingTimerId != null) {
+      final found = _localTimers.where((doc) => doc['id'] == _viewingTimerId);
+      if (found.isNotEmpty) {
+        _viewingTimerData = found.first;
+      } else {
+        _viewingTimerId = null;
+        _viewingTimerData = null;
+      }
+    }
 
-        // Synka data om vi tittar på en timer
-        if (_viewingTimerId != null) {
-          final found = docs.where((doc) => doc.id == _viewingTimerId);
-          if (found.isNotEmpty) {
-            _viewingTimerData = found.first.data() as Map<String, dynamic>;
-          } else {
-            // Om den raderades externt
-            _viewingTimerId = null;
-            _viewingTimerData = null;
-          }
-        }
-
-        return Scaffold(
-          extendBodyBehindAppBar: true,
-          appBar: AppBar(
-            title: const Text(
-              "Tid & Nedräkning",
-              style: TextStyle(color: Colors.black87),
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: const Text(
+          "Tid & Nedräkning",
+          style: TextStyle(color: Colors.black87),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+        actions: [
+          if (_viewingTimerId != null)
+            TextButton.icon(
+              icon: const Icon(
+                Icons.add_circle_outline,
+                color: Colors.black87,
+              ),
+              label: const Text(
+                "Ny Timer",
+                style: TextStyle(color: Colors.black87),
+              ),
+              onPressed: () {
+                setState(() {
+                  _viewingTimerId = null;
+                  _viewingTimerData = null;
+                });
+              },
             ),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            iconTheme: const IconThemeData(color: Colors.black87),
-            actions: [
-              if (_viewingTimerId != null)
-                TextButton.icon(
-                  icon: const Icon(
-                    Icons.add_circle_outline,
-                    color: Colors.black87,
+        ],
+      ),
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+        decoration: _getDailyBackground(),
+        child: SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  _viewingTimerId != null
+                      ? "Fokus: ${_viewingTimerData?['title'] ?? 'Timer'}"
+                      : "Dra i klockan för att ställa in",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black54,
                   ),
-                  label: const Text(
-                    "Ny Timer",
-                    style: TextStyle(color: Colors.black87),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _viewingTimerId = null;
-                      _viewingTimerData = null;
-                    });
-                  },
                 ),
-            ],
-          ),
-          body: Center(child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 430),
-            child: Container(
-            decoration: _getDailyBackground(),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  const SizedBox(height: 10),
+              ),
+              const SizedBox(height: 20),
 
-                  // Rubrik
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Text(
-                      _viewingTimerId != null
-                          ? "Fokus: ${_viewingTimerData?['title'] ?? 'Timer'}"
-                          : "Dra för att ställa in",
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black54,
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  _buildClockLogic(isFullScreen: false),
+                  if (_viewingTimerId != null)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.fullscreen,
+                          size: 32,
+                          color: Colors.black54,
+                        ),
+                        tooltip: "Helskärm (Fokusläge)",
+                        onPressed: () => setState(() => _isFullScreen = true),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // KLOCKAN (Normal storlek)
-                  // Vi skickar med en knapp för att aktivera helskärm om vi tittar på en timer
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      _buildClockLogic(isFullScreen: false),
-
-                      // Helskärmsknapp (visas bara om vi tittar på en aktiv timer)
-                      if (_viewingTimerId != null)
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: IconButton(
-                            icon: const Icon(
-                              Icons.fullscreen,
-                              size: 32,
-                              color: Colors.black54,
-                            ),
-                            tooltip: "Helskärm (Fokusläge)",
-                            onPressed: () {
-                              setState(() {
-                                _isFullScreen = true;
-                              });
-                            },
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Kontroller (Starta/Stoppa)
-                  _buildControlButtons(),
-
-                  const SizedBox(height: 20),
-                  const Divider(indent: 40, endIndent: 40),
-                  const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: Text(
-                      "Aktiva timers",
-                      style: TextStyle(fontSize: 14, color: Colors.black54),
-                    ),
-                  ),
-
-                  // Lista
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        final doc = docs[index];
-                        final isSelected = (doc.id == _viewingTimerId);
-
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _viewingTimerId = doc.id;
-                              _viewingTimerData =
-                                  doc.data() as Map<String, dynamic>;
-                            });
-                          },
-                          child: _buildActiveTimerRow(doc, isSelected),
-                        );
-                      },
-                    ),
-                  ),
                 ],
               ),
-            ),
+
+              const SizedBox(height: 20),
+              _buildControlButtons(),
+              const SizedBox(height: 20),
+              const Divider(indent: 40, endIndent: 40),
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text(
+                  "Aktiva timers",
+                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                ),
+              ),
+
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _localTimers.length,
+                  itemBuilder: (context, index) {
+                    final timerData = _localTimers[index];
+                    final isSelected = (timerData['id'] == _viewingTimerId);
+
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _viewingTimerId = timerData['id'];
+                          _viewingTimerData = timerData;
+                        });
+                      },
+                      child: _buildActiveTimerRow(timerData, isSelected),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ))),
-      );
-      },
+        ),
+      ))),
     );
   }
 
-  // --- KLOCK-LOGIKEN (Återanvändbar) ---
   Widget _buildClockLogic({required bool isFullScreen}) {
-    // Storlek beroende på läge
     double size = isFullScreen
-        ? MediaQuery.of(context).size.width *
-              0.9 // 90% av bredden i helskärm
+        ? MediaQuery.of(context).size.width * 0.9 
         : 300;
 
     double secondsToShow = 0;
     bool isInteractive = true;
 
     if (_viewingTimerId != null && _viewingTimerData != null) {
-      // -- VISA TIMER --
       isInteractive = false;
-      final targetTime = (_viewingTimerData!['targetTime'] as Timestamp)
-          .toDate();
+      final targetTime = _viewingTimerData!['targetTime'] as DateTime;
       final now = DateTime.now();
       final diff = targetTime.difference(now).inSeconds;
 
       if (diff <= 0) {
         secondsToShow = 0;
       } else {
-        // Om mer än 60 min, visa fullt varv, annars exakt tid
         secondsToShow = (diff > 3600) ? 3600 : diff.toDouble();
       }
     } else {
-      // -- INPUT (Dra i klockan) --
       isInteractive = true;
       secondsToShow = _dragSeconds;
     }
@@ -3639,11 +3724,8 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     if (_viewingTimerId != null) {
       return ElevatedButton.icon(
         onPressed: () {
-          FirebaseFirestore.instance
-              .collection('countdowns')
-              .doc(_viewingTimerId)
-              .delete();
           setState(() {
+            _localTimers.removeWhere((t) => t['id'] == _viewingTimerId);
             _viewingTimerId = null;
             _viewingTimerData = null;
           });
@@ -3700,10 +3782,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     return const SizedBox(height: 48);
   }
 
-  Widget _buildActiveTimerRow(DocumentSnapshot doc, bool isSelected) {
-    final data = doc.data() as Map<String, dynamic>;
+  Widget _buildActiveTimerRow(Map<String, dynamic> timerData, bool isSelected) {
     final now = DateTime.now();
-    final targetTime = (data['targetTime'] as Timestamp).toDate();
+    final targetTime = timerData['targetTime'] as DateTime;
     final remainingSeconds = targetTime.difference(now).inSeconds;
 
     String timeString;
@@ -3740,7 +3821,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
           color: remainingSeconds <= 0 ? Colors.green : Colors.blueAccent,
         ),
         title: Text(
-          data['title'] ?? 'Timer',
+          timerData['title'] ?? 'Timer',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text(
@@ -3749,10 +3830,15 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
         ),
         trailing: IconButton(
           icon: const Icon(Icons.close, color: Colors.grey),
-          onPressed: () => FirebaseFirestore.instance
-              .collection('countdowns')
-              .doc(doc.id)
-              .delete(),
+          onPressed: () {
+            setState(() {
+              _localTimers.removeWhere((t) => t['id'] == timerData['id']);
+              if (_viewingTimerId == timerData['id']) {
+                _viewingTimerId = null;
+                _viewingTimerData = null;
+              }
+            });
+          },
         ),
       ),
     );
@@ -3767,7 +3853,7 @@ class InteractiveTimeTimerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius =
-        (size.width / 2) - (size.width * 0.13); // Skala radien dynamiskt
+        (size.width / 2) - (size.width * 0.13); 
 
     // 1. URTAVLA
     final tickPaint = Paint()
@@ -3780,7 +3866,7 @@ class InteractiveTimeTimerPainter extends CustomPainter {
       textAlign: TextAlign.center,
     );
 
-    double fontSize = size.width * 0.08; // Dynamisk textstorlek
+    double fontSize = size.width * 0.08; 
 
     for (int i = 0; i < 60; i++) {
       final angle = (2 * math.pi * (i / 60)) - (math.pi / 2);
@@ -3869,6 +3955,7 @@ class InteractiveTimeTimerPainter extends CustomPainter {
 <file path="lib/screens/screen_rules_page.dart">
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 
 class ScreenRulesPage extends StatefulWidget {
@@ -3879,6 +3966,24 @@ class ScreenRulesPage extends StatefulWidget {
 }
 
 class _ScreenRulesPageState extends State<ScreenRulesPage> {
+  String _familyId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final fid = doc.data()?['familyId'] as String? ?? '';
+      if (mounted) setState(() => _familyId = fid);
+    } catch (_) {}
+  }
+
   Future<void> _updateTime(String docId, TimeOfDay limit) async {
     await FirebaseFirestore.instance
         .collection('screen_rules')
@@ -3988,7 +4093,7 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    if (_appNameCtrl.text.isNotEmpty) {
+                    if (_appNameCtrl.text.isNotEmpty && _familyId.isNotEmpty) {
                       FirebaseFirestore.instance.collection('screen_rules').add(
                         {
                           'appName': _appNameCtrl.text,
@@ -3997,6 +4102,7 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
                           'limitMinute': _limit.minute,
                           'isAllowed': _isAllowed,
                           'memberId': _memberCtrl.text,
+                          'familyId': _familyId, // NYTT FÄLT
                         },
                       );
                       Navigator.pop(context);
@@ -4049,9 +4155,12 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
         width: double.infinity,
         height: double.infinity,
         child: SafeArea(
-          child: StreamBuilder<QuerySnapshot>(
+          child: _familyId.isEmpty 
+            ? const Center(child: CircularProgressIndicator())
+            : StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('screen_rules')
+                .where('familyId', isEqualTo: _familyId)
                 .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -4603,122 +4712,124 @@ class _SettingsPageState extends State<SettingsPage>
           title: const Text('Lägg till kalender'),
           content: SizedBox(
             width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Kalendernamn',
-                    hintText: 'T.ex. Mammas kalender',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Alternativ 1 — ICS-länk:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: urlCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'ICS-URL',
-                    hintText: 'https://calendar.google.com/calendar/ical/...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.link_rounded, size: 18),
-                    label: const Text('Hämta från URL'),
-                    onPressed: loading
-                        ? null
-                        : () async {
-                            final url = urlCtrl.text.trim();
-                            final name = nameCtrl.text.trim().isEmpty
-                                ? 'Importerad kalender'
-                                : nameCtrl.text.trim();
-                            if (url.isEmpty) return;
-                            setS(() { loading = true; errorMsg = null; });
-                            try {
-                              final resp = await http.get(Uri.parse(url))
-                                  .timeout(const Duration(seconds: 10));
-                              final content = utf8.decode(resp.bodyBytes);
-                              final count = await _parseAndSaveIcs(content, name, url);
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              _showImportResult(count, name);
-                              await _loadData();
-                            } catch (e) {
-                              setS(() {
-                                loading = false;
-                                errorMsg =
-                                    'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
-                              });
-                            }
-                          },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Alternativ 2 — Ladda upp .ics-fil:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.upload_file_rounded, size: 18),
-                    label: const Text('Välj .ics-fil'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.getDayAccentColor(),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Kalendernamn',
+                      hintText: 'T.ex. Mammas kalender',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      isDense: true,
                     ),
-                    onPressed: loading
-                        ? null
-                        : () async {
-                            final name = nameCtrl.text.trim().isEmpty
-                                ? 'Importerad kalender'
-                                : nameCtrl.text.trim();
-                            setS(() { loading = true; errorMsg = null; });
-                            try {
-                              final result = await FilePicker.platform.pickFiles(
-                                type: FileType.custom,
-                                allowedExtensions: ['ics'],
-                                withData: true,
-                              );
-                              if (result == null || result.files.isEmpty) {
-                                setS(() => loading = false);
-                                return;
-                              }
-                              final bytes = result.files.first.bytes;
-                              if (bytes == null) {
-                                setS(() { loading = false; errorMsg = 'Kunde inte läsa filen.'; });
-                                return;
-                              }
-                              final content = utf8.decode(bytes);
-                              final count = await _parseAndSaveIcs(content, name, '');
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              _showImportResult(count, name);
-                              await _loadData();
-                            } catch (e) {
-                              setS(() { loading = false; errorMsg = 'Fel: $e'; });
-                            }
-                          },
                   ),
-                ),
-                if (loading) ...[
                   const SizedBox(height: 16),
-                  const Center(child: CircularProgressIndicator()),
-                ],
-                if (errorMsg != null) ...[
+                  const Text('Alternativ 1 — ICS-länk:',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: urlCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'ICS-URL',
+                      hintText: 'https://calendar.google.com/calendar/ical/...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      isDense: true,
+                    ),
+                  ),
                   const SizedBox(height: 12),
-                  Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.link_rounded, size: 18),
+                      label: const Text('Hämta från URL'),
+                      onPressed: loading
+                          ? null
+                          : () async {
+                              final url = urlCtrl.text.trim();
+                              final name = nameCtrl.text.trim().isEmpty
+                                  ? 'Importerad kalender'
+                                  : nameCtrl.text.trim();
+                              if (url.isEmpty) return;
+                              setS(() { loading = true; errorMsg = null; });
+                              try {
+                                final resp = await http.get(Uri.parse(url))
+                                    .timeout(const Duration(seconds: 10));
+                                final content = utf8.decode(resp.bodyBytes);
+                                final count = await _parseAndSaveIcs(content, name, url);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                _showImportResult(count, name);
+                                await _loadData();
+                              } catch (e) {
+                                setS(() {
+                                  loading = false;
+                                  errorMsg =
+                                      'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
+                                });
+                              }
+                            },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Alternativ 2 — Ladda upp .ics-fil:',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.upload_file_rounded, size: 18),
+                      label: const Text('Välj .ics-fil'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.getDayAccentColor(),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: loading
+                          ? null
+                          : () async {
+                              final name = nameCtrl.text.trim().isEmpty
+                                  ? 'Importerad kalender'
+                                  : nameCtrl.text.trim();
+                              setS(() { loading = true; errorMsg = null; });
+                              try {
+                                final result = await FilePicker.platform.pickFiles(
+                                  type: FileType.custom,
+                                  allowedExtensions: ['ics'],
+                                  withData: true,
+                                );
+                                if (result == null || result.files.isEmpty) {
+                                  setS(() => loading = false);
+                                  return;
+                                }
+                                final bytes = result.files.first.bytes;
+                                if (bytes == null) {
+                                  setS(() { loading = false; errorMsg = 'Kunde inte läsa filen.'; });
+                                  return;
+                                }
+                                final content = utf8.decode(bytes);
+                                final count = await _parseAndSaveIcs(content, name, '');
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                _showImportResult(count, name);
+                                await _loadData();
+                              } catch (e) {
+                                setS(() { loading = false; errorMsg = 'Fel: $e'; });
+                              }
+                            },
+                    ),
+                  ),
+                  if (loading) ...[
+                    const SizedBox(height: 16),
+                    const Center(child: CircularProgressIndicator()),
+                  ],
+                  if (errorMsg != null) ...[
+                    const SizedBox(height: 12),
+                    Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
           actions: [
@@ -5472,7 +5583,8 @@ class _TimerPageState extends State<TimerPage> {
 <file path="lib/screens/work_schedule_page.dart">
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Moln-koppling
+import 'package:cloud_firestore/cloud_firestore.dart'; 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class WorkSchedulePage extends StatefulWidget {
@@ -5483,6 +5595,8 @@ class WorkSchedulePage extends StatefulWidget {
 }
 
 class _WorkSchedulePageState extends State<WorkSchedulePage> {
+  String _familyId = '';
+  
   // Familjemedlemmar och deras färger
   final Map<String, Color> familyColors = {
     "Mamma": Colors.purpleAccent,
@@ -5503,6 +5617,17 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
   void initState() {
     super.initState();
     _loadFamilySettings();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final fid = doc.data()?['familyId'] as String? ?? '';
+      if (mounted) setState(() => _familyId = fid);
+    } catch (_) {}
   }
 
   // Ladda om man ändrat namn i inställningar (men behåll färg-logiken enkel nu)
@@ -5600,6 +5725,16 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
       );
       return;
     }
+    
+    if (_familyId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Laddar familjedata, försök igen..."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     // Spara varje datum som en egen post i databasen
     for (var date in _selectedDates) {
@@ -5610,24 +5745,27 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
         'who': _selectedPerson,
         'startTime': _formatTime(startTime),
         'endTime': _formatTime(endTime),
+        'familyId': _familyId, // NYTT FÄLT
         'timestamp': FieldValue.serverTimestamp(),
       });
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Sparat $_selectedPerson:s pass!"),
-        backgroundColor: Colors.green,
-      ),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Sparat $_selectedPerson:s pass!"),
+          backgroundColor: Colors.green,
+        ),
+      );
 
-    // Rensa formuläret
-    setState(() {
-      _selectedDates.clear();
-      startTime = null;
-      endTime = null;
-      // Vi behåller vald person ifall man ska lägga in fler pass för samma
-    });
+      // Rensa formuläret
+      setState(() {
+        _selectedDates.clear();
+        startTime = null;
+        endTime = null;
+        // Vi behåller vald person ifall man ska lägga in fler pass för samma
+      });
+    }
   }
 
   @override
@@ -9659,6 +9797,7 @@ import 'timer_page.dart';
 import 'shopping_list_page.dart';
 import 'screen_rules_page.dart';
 import 'family_status_page.dart';
+import 'work_schedule_page.dart'; // <-- NY IMPORTERING HÄR
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -10038,7 +10177,7 @@ class _DashboardPageState extends State<DashboardPage>
           // Family avatars
           if (members.isNotEmpty || _loading)
             SizedBox(
-              height: 86, // ÖKAD HÖJD HÄR för att slippa pixel-overflow!
+              height: 86,
               child: _loading
                   ? const ShimmerListPlaceholder()
                   : ListView.builder(
@@ -10123,7 +10262,7 @@ class _DashboardPageState extends State<DashboardPage>
             Text(member.name.split(' ').first,
                 style: TextStyle(
                     fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9), // Anpassad färg
+                    color: textColor.withValues(alpha: 0.9), 
                     fontWeight: FontWeight.w600)),
           ],
         ),
@@ -10181,9 +10320,11 @@ class _DashboardPageState extends State<DashboardPage>
               children: [
                 const Text('📅', style: TextStyle(fontSize: 20)),
                 const SizedBox(width: 10),
-                Text(
-                  'Inga aktiviteter idag — lägg till i Planering!',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                Flexible(
+                  child: Text(
+                    'Inga aktiviteter idag — lägg till i Planering!',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                  ),
                 ),
               ],
             ),
@@ -10191,7 +10332,7 @@ class _DashboardPageState extends State<DashboardPage>
         }
         final now = DateTime.now();
         return SizedBox(
-          height: 125, // ÖKAD HÖJD HÄR för att slippa pixel-overflow på tidslinjen när "NU"-kortet zoomar in!
+          height: 125,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -10214,7 +10355,7 @@ class _DashboardPageState extends State<DashboardPage>
                   margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
                   padding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 10),
-                  transformAlignment: Alignment.center, // Skala från mitten för att undvika overflow nedåt
+                  transformAlignment: Alignment.center,
                   transform: isCurrent
                       ? (Matrix4.identity()..scale(1.05))
                       : Matrix4.identity(),
@@ -10558,16 +10699,9 @@ class _DashboardPageState extends State<DashboardPage>
   Widget _buildQuickTools() {
     final tools = [
       {'emoji': '⏱️', 'label': 'Timer', 'page': const TimerPage()},
-      {
-        'emoji': '📱',
-        'label': 'Skärmtid',
-        'page': const ScreenRulesPage()
-      },
-      {
-        'emoji': '🛒',
-        'label': 'Inköp',
-        'page': const ShoppingListPage()
-      },
+      {'emoji': '📱', 'label': 'Skärmtid', 'page': const ScreenRulesPage()},
+      {'emoji': '🛒', 'label': 'Inköp', 'page': const ShoppingListPage()},
+      {'emoji': '💼', 'label': 'Arbete', 'page': const WorkSchedulePage()},
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -10580,19 +10714,20 @@ class _DashboardPageState extends State<DashboardPage>
                         MaterialPageRoute(
                             builder: (_) => t['page'] as Widget)),
                     child: Container(
-                      margin: const EdgeInsets.only(right: 8),
+                      margin: const EdgeInsets.only(right: 6),
                       height: 80,
                       decoration: AppTheme.cardDecoration(radius: 16),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(t['emoji'] as String,
-                              style: const TextStyle(fontSize: 28)),
+                              style: const TextStyle(fontSize: 26)),
                           const SizedBox(height: 4),
                           Text(t['label'] as String,
                               style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis),
                         ],
                       ),
                     ),
