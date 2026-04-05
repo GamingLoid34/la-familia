@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
+// En statisk lista för att hålla timers levande i minnet under tiden appen är igång
+static final List<Map<String, dynamic>> _localTimers = [];
 
 class PersonalCountdownScreen extends StatefulWidget {
   const PersonalCountdownScreen({super.key});
@@ -19,7 +20,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   String? _viewingTimerId;
   Map<String, dynamic>? _viewingTimerData;
 
-  // NYTT: Helskärmsläge för totalt fokus
+  // Helskärmsläge för totalt fokus
   bool _isFullScreen = false;
 
   // Variabler för "Dra upp tiden" (Input)
@@ -29,6 +30,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
   @override
   void initState() {
     super.initState();
+    // Uppdaterar gränssnittet varje sekund så att nedräkningen syns live
     _uiTicker = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) setState(() {});
     });
@@ -40,35 +42,20 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     super.dispose();
   }
 
-  // --- DAGFÄRGER (Onsdag = Silver/Grå) ---
+  // --- DAGFÄRGER ---
   BoxDecoration _getDailyBackground() {
     final int weekday = DateTime.now().weekday;
     List<Color> colors;
 
     switch (weekday) {
-      case 1:
-        colors = [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)];
-        break; // Mån
-      case 2:
-        colors = [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)];
-        break; // Tis
-      case 3:
-        colors = [const Color(0xFFF5F5F5), const Color(0xFFCFD8DC)];
-        break; // Ons
-      case 4:
-        colors = [const Color(0xFFFFF3E0), const Color(0xFFFFCC80)];
-        break; // Tor
-      case 5:
-        colors = [const Color(0xFFFFFDE7), const Color(0xFFFFF59D)];
-        break; // Fre
-      case 6:
-        colors = [const Color(0xFFFCE4EC), const Color(0xFFF8BBD0)];
-        break; // Lör
-      case 7:
-        colors = [const Color(0xFFFFEBEE), const Color(0xFFFFCDD2)];
-        break; // Sön
-      default:
-        colors = [Colors.white, Colors.grey.shade200];
+      case 1: colors = [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)]; break;
+      case 2: colors = [const Color(0xFFE3F2FD), const Color(0xFFBBDEFB)]; break;
+      case 3: colors = [const Color(0xFFF5F5F5), const Color(0xFFCFD8DC)]; break;
+      case 4: colors = [const Color(0xFFFFF3E0), const Color(0xFFFFCC80)]; break;
+      case 5: colors = [const Color(0xFFFFFDE7), const Color(0xFFFFF59D)]; break;
+      case 6: colors = [const Color(0xFFFCE4EC), const Color(0xFFF8BBD0)]; break;
+      case 7: colors = [const Color(0xFFFFEBEE), const Color(0xFFFFCDD2)]; break;
+      default: colors = [Colors.white, Colors.grey.shade200];
     }
 
     return BoxDecoration(
@@ -80,33 +67,30 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     );
   }
 
-  Future<void> _startTimer() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
+  void _startTimer() {
     final totalDurationInSeconds = (_extraHours * 3600) + _dragSeconds.toInt();
-    if (totalDurationInSeconds <= 0) return;
+    if (totalDurationInSeconds <= 0) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Dra i klockan för att ställa in tid först!")));
+       return;
+    }
 
     final startTime = DateTime.now();
     final targetTime = startTime.add(Duration(seconds: totalDurationInSeconds));
+    final newId = DateTime.now().millisecondsSinceEpoch.toString();
 
-    final docRef = await FirebaseFirestore.instance
-        .collection('countdowns')
-        .add({
-          'title': 'Timer',
-          'targetTime': Timestamp.fromDate(targetTime),
-          'startTime': Timestamp.fromDate(startTime),
-          'userId': user.uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+    final newTimer = {
+      'id': newId,
+      'title': 'Fokustid',
+      'targetTime': targetTime,
+      'startTime': startTime,
+    };
 
-    // Efter start, nollställ input och gå direkt till visningsläge för den nya timern
-    final newDoc = await docRef.get();
     setState(() {
+      _localTimers.add(newTimer);
       _dragSeconds = 0;
       _extraHours = 0;
-      _viewingTimerId = newDoc.id;
-      _viewingTimerData = newDoc.data();
+      _viewingTimerId = newId;
+      _viewingTimerData = newTimer;
     });
   }
 
@@ -135,12 +119,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Om vi är i Helskärmsläge, visa en helt annan vy (Bara klockan)
     if (_isFullScreen && _viewingTimerId != null) {
       return _buildFullScreenFocusMode();
     }
-
-    // Annars, visa standardvyn med lista och inställningar
     return _buildStandardView();
   }
 
@@ -153,10 +134,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
         decoration: _getDailyBackground(),
         child: Stack(
           children: [
-            // Centerad JÄTTESTOR klocka
             Center(child: _buildClockLogic(isFullScreen: true)),
-
-            // Liten knapp nere i hörnet för att avsluta helskärm
             Positioned(
               bottom: 30,
               right: 30,
@@ -164,15 +142,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
                 backgroundColor: Colors.white.withOpacity(0.8),
                 elevation: 0,
                 child: const Icon(Icons.fullscreen_exit, color: Colors.black87),
-                onPressed: () {
-                  setState(() {
-                    _isFullScreen = false;
-                  });
-                },
+                onPressed: () => setState(() => _isFullScreen = false),
               ),
             ),
-
-            // Visa texten på vad vi gör, diskret
             Positioned(
               top: 60,
               left: 0,
@@ -196,190 +168,156 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
 
   // --- VY 2: STANDARDVY (INSTÄLLNINGAR & LISTA) ---
   Widget _buildStandardView() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const Center(child: Text("Logga in först"));
+    // Sortera listan så att den som är klar först hamnar överst
+    _localTimers.sort((a, b) {
+      final tA = a['targetTime'] as DateTime;
+      final tB = b['targetTime'] as DateTime;
+      return tA.compareTo(tB);
+    });
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('countdowns')
-          .orderBy('targetTime')
-          .snapshots(),
-      builder: (context, snapshot) {
-        List<DocumentSnapshot> docs = [];
-        if (snapshot.hasData) {
-          docs = snapshot.data!.docs;
-        }
+    if (_viewingTimerId != null) {
+      final found = _localTimers.where((doc) => doc['id'] == _viewingTimerId);
+      if (found.isNotEmpty) {
+        _viewingTimerData = found.first;
+      } else {
+        _viewingTimerId = null;
+        _viewingTimerData = null;
+      }
+    }
 
-        // Synka data om vi tittar på en timer
-        if (_viewingTimerId != null) {
-          final found = docs.where((doc) => doc.id == _viewingTimerId);
-          if (found.isNotEmpty) {
-            _viewingTimerData = found.first.data() as Map<String, dynamic>;
-          } else {
-            // Om den raderades externt
-            _viewingTimerId = null;
-            _viewingTimerData = null;
-          }
-        }
-
-        return Scaffold(
-          extendBodyBehindAppBar: true,
-          appBar: AppBar(
-            title: const Text(
-              "Tid & Nedräkning",
-              style: TextStyle(color: Colors.black87),
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: const Text(
+          "Tid & Nedräkning",
+          style: TextStyle(color: Colors.black87),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
+        actions: [
+          if (_viewingTimerId != null)
+            TextButton.icon(
+              icon: const Icon(
+                Icons.add_circle_outline,
+                color: Colors.black87,
+              ),
+              label: const Text(
+                "Ny Timer",
+                style: TextStyle(color: Colors.black87),
+              ),
+              onPressed: () {
+                setState(() {
+                  _viewingTimerId = null;
+                  _viewingTimerData = null;
+                });
+              },
             ),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            iconTheme: const IconThemeData(color: Colors.black87),
-            actions: [
-              if (_viewingTimerId != null)
-                TextButton.icon(
-                  icon: const Icon(
-                    Icons.add_circle_outline,
-                    color: Colors.black87,
+        ],
+      ),
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+        decoration: _getDailyBackground(),
+        child: SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(
+                  _viewingTimerId != null
+                      ? "Fokus: ${_viewingTimerData?['title'] ?? 'Timer'}"
+                      : "Dra i klockan för att ställa in",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black54,
                   ),
-                  label: const Text(
-                    "Ny Timer",
-                    style: TextStyle(color: Colors.black87),
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _viewingTimerId = null;
-                      _viewingTimerData = null;
-                    });
-                  },
                 ),
-            ],
-          ),
-          body: Center(child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 430),
-            child: Container(
-            decoration: _getDailyBackground(),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  const SizedBox(height: 10),
+              ),
+              const SizedBox(height: 20),
 
-                  // Rubrik
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Text(
-                      _viewingTimerId != null
-                          ? "Fokus: ${_viewingTimerData?['title'] ?? 'Timer'}"
-                          : "Dra för att ställa in",
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black54,
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  _buildClockLogic(isFullScreen: false),
+                  if (_viewingTimerId != null)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: IconButton(
+                        icon: const Icon(
+                          Icons.fullscreen,
+                          size: 32,
+                          color: Colors.black54,
+                        ),
+                        tooltip: "Helskärm (Fokusläge)",
+                        onPressed: () => setState(() => _isFullScreen = true),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // KLOCKAN (Normal storlek)
-                  // Vi skickar med en knapp för att aktivera helskärm om vi tittar på en timer
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      _buildClockLogic(isFullScreen: false),
-
-                      // Helskärmsknapp (visas bara om vi tittar på en aktiv timer)
-                      if (_viewingTimerId != null)
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: IconButton(
-                            icon: const Icon(
-                              Icons.fullscreen,
-                              size: 32,
-                              color: Colors.black54,
-                            ),
-                            tooltip: "Helskärm (Fokusläge)",
-                            onPressed: () {
-                              setState(() {
-                                _isFullScreen = true;
-                              });
-                            },
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Kontroller (Starta/Stoppa)
-                  _buildControlButtons(),
-
-                  const SizedBox(height: 20),
-                  const Divider(indent: 40, endIndent: 40),
-                  const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: Text(
-                      "Aktiva timers",
-                      style: TextStyle(fontSize: 14, color: Colors.black54),
-                    ),
-                  ),
-
-                  // Lista
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        final doc = docs[index];
-                        final isSelected = (doc.id == _viewingTimerId);
-
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _viewingTimerId = doc.id;
-                              _viewingTimerData =
-                                  doc.data() as Map<String, dynamic>;
-                            });
-                          },
-                          child: _buildActiveTimerRow(doc, isSelected),
-                        );
-                      },
-                    ),
-                  ),
                 ],
               ),
-            ),
+
+              const SizedBox(height: 20),
+              _buildControlButtons(),
+              const SizedBox(height: 20),
+              const Divider(indent: 40, endIndent: 40),
+              const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: Text(
+                  "Aktiva timers",
+                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                ),
+              ),
+
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _localTimers.length,
+                  itemBuilder: (context, index) {
+                    final timerData = _localTimers[index];
+                    final isSelected = (timerData['id'] == _viewingTimerId);
+
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _viewingTimerId = timerData['id'];
+                          _viewingTimerData = timerData;
+                        });
+                      },
+                      child: _buildActiveTimerRow(timerData, isSelected),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ))),
-      );
-      },
+        ),
+      ))),
     );
   }
 
-  // --- KLOCK-LOGIKEN (Återanvändbar) ---
   Widget _buildClockLogic({required bool isFullScreen}) {
-    // Storlek beroende på läge
     double size = isFullScreen
-        ? MediaQuery.of(context).size.width *
-              0.9 // 90% av bredden i helskärm
+        ? MediaQuery.of(context).size.width * 0.9 
         : 300;
 
     double secondsToShow = 0;
     bool isInteractive = true;
 
     if (_viewingTimerId != null && _viewingTimerData != null) {
-      // -- VISA TIMER --
       isInteractive = false;
-      final targetTime = (_viewingTimerData!['targetTime'] as Timestamp)
-          .toDate();
+      final targetTime = _viewingTimerData!['targetTime'] as DateTime;
       final now = DateTime.now();
       final diff = targetTime.difference(now).inSeconds;
 
       if (diff <= 0) {
         secondsToShow = 0;
       } else {
-        // Om mer än 60 min, visa fullt varv, annars exakt tid
         secondsToShow = (diff > 3600) ? 3600 : diff.toDouble();
       }
     } else {
-      // -- INPUT (Dra i klockan) --
       isInteractive = true;
       secondsToShow = _dragSeconds;
     }
@@ -425,11 +363,8 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     if (_viewingTimerId != null) {
       return ElevatedButton.icon(
         onPressed: () {
-          FirebaseFirestore.instance
-              .collection('countdowns')
-              .doc(_viewingTimerId)
-              .delete();
           setState(() {
+            _localTimers.removeWhere((t) => t['id'] == _viewingTimerId);
             _viewingTimerId = null;
             _viewingTimerData = null;
           });
@@ -486,10 +421,9 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
     return const SizedBox(height: 48);
   }
 
-  Widget _buildActiveTimerRow(DocumentSnapshot doc, bool isSelected) {
-    final data = doc.data() as Map<String, dynamic>;
+  Widget _buildActiveTimerRow(Map<String, dynamic> timerData, bool isSelected) {
     final now = DateTime.now();
-    final targetTime = (data['targetTime'] as Timestamp).toDate();
+    final targetTime = timerData['targetTime'] as DateTime;
     final remainingSeconds = targetTime.difference(now).inSeconds;
 
     String timeString;
@@ -526,7 +460,7 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
           color: remainingSeconds <= 0 ? Colors.green : Colors.blueAccent,
         ),
         title: Text(
-          data['title'] ?? 'Timer',
+          timerData['title'] ?? 'Timer',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text(
@@ -535,10 +469,15 @@ class _PersonalCountdownScreenState extends State<PersonalCountdownScreen> {
         ),
         trailing: IconButton(
           icon: const Icon(Icons.close, color: Colors.grey),
-          onPressed: () => FirebaseFirestore.instance
-              .collection('countdowns')
-              .doc(doc.id)
-              .delete(),
+          onPressed: () {
+            setState(() {
+              _localTimers.removeWhere((t) => t['id'] == timerData['id']);
+              if (_viewingTimerId == timerData['id']) {
+                _viewingTimerId = null;
+                _viewingTimerData = null;
+              }
+            });
+          },
         ),
       ),
     );
@@ -553,7 +492,7 @@ class InteractiveTimeTimerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius =
-        (size.width / 2) - (size.width * 0.13); // Skala radien dynamiskt
+        (size.width / 2) - (size.width * 0.13); 
 
     // 1. URTAVLA
     final tickPaint = Paint()
@@ -566,7 +505,7 @@ class InteractiveTimeTimerPainter extends CustomPainter {
       textAlign: TextAlign.center,
     );
 
-    double fontSize = size.width * 0.08; // Dynamisk textstorlek
+    double fontSize = size.width * 0.08; 
 
     for (int i = 0; i < 60; i++) {
       final angle = (2 * math.pi * (i / 60)) - (math.pi / 2);

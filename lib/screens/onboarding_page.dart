@@ -61,10 +61,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
         }
       }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Fel: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fel: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -111,10 +110,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
         }
       }
     } catch (e) {
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Fel: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fel: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -123,113 +121,180 @@ class _OnboardingPageState extends State<OnboardingPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: AppTheme.getBackground(),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Container(
-                padding: const EdgeInsets.all(32),
-                decoration: BoxDecoration(
-                  color: AppTheme.getCardColor(),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.family_restroom,
-                      size: 60,
-                      color: Colors.blueAccent,
+      backgroundColor: const Color(0xFFF5F0E8),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 400),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    'assets/images/logo.png',
+                    width: 180,
+                    fit: BoxFit.contain,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    "Välkommen!",
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.getTextColor(),
                     ),
-                    const SizedBox(height: 20),
-                    Text(
-                      "Välkommen till La Familia",
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.getTextColor(),
-                      ),
-                      textAlign: TextAlign.center,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    "Innan vi börjar behöver du skapa eller ansluta till en familj.",
+                    style: TextStyle(
+                      color: AppTheme.getSubTextColor(),
                     ),
-                    const SizedBox(height: 10),
-                    Text(
-                      "Innan vi börjar behöver du ansluta till en familj.",
-                      style: TextStyle(
-                        color: AppTheme.getSubTextColor(),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 30),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
 
-                    TextField(
-                      controller: _userNameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Ditt förnamn",
+                  TextField(
+                    controller: _userNameCtrl,
+                    decoration: InputDecoration(
+                      labelText: "Ditt förnamn",
+                      prefixIcon: const Icon(Icons.person),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
                     ),
-                    const SizedBox(height: 30),
-                    const Divider(),
-                    const SizedBox(height: 10),
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
 
-                    Text(
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
                       "Skapa ny familj",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
+                        fontSize: 16,
                         color: AppTheme.getTextColor(),
                       ),
                     ),
-                    TextField(
-                      controller: _familyNameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Familjens namn (t.ex. Familjen Svensson)",
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _familyNameCtrl,
+                    decoration: InputDecoration(
+                      labelText: "Familjens namn (t.ex. Svensson)",
+                      prefixIcon: const Icon(Icons.home),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  if (_isLoading)
+                    const CircularProgressIndicator()
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: _createFamily,
+                        style: ElevatedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          backgroundColor: AppTheme.getDayAccentColor(),
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text(
+                          "Skapa familj",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: _isLoading ? null : _createFamily,
-                      child: const Text("Skapa familj"),
-                    ),
 
-                    const SizedBox(height: 30),
-                    const Divider(),
-                    const SizedBox(height: 10),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
 
-                    Text(
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
                       "Gå med i befintlig familj",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
+                        fontSize: 16,
                         color: AppTheme.getTextColor(),
                       ),
                     ),
-                    TextField(
-                      controller: _inviteCodeCtrl,
-                      decoration: const InputDecoration(
-                        labelText: "Inbjudningskod",
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _inviteCodeCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: "Inbjudningskod",
+                      prefixIcon: const Icon(Icons.vpn_key),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      textCapitalization: TextCapitalization.characters,
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
                     ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: _isLoading ? null : _joinFamily,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  if (!_isLoading)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: _joinFamily,
+                        style: ElevatedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          backgroundColor: Colors.green[600],
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text(
+                          "Gå med",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                      child: const Text("Gå med"),
                     ),
-                  ],
-                ),
+                ],
               ),
             ),
           ),
         ),
-      ))),
+      ),
     );
   }
 }

@@ -23,27 +23,22 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Initiera svenska datuminställningar
-  await initializeDateFormatting('sv', null);
+  await initializeDateFormatting('sv_SE', null);
   
   // Initiera Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase init error: $e');
+  }
 
   // Aktivera offline-cache för Firestore
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
-
-  // Tvinga 120Hz på Android-enheter (som din S25)
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-    try {
-      await FlutterDisplayMode.setHighRefreshRate();
-    } catch (e) {
-      debugPrint('Kunde inte aktivera 120Hz: $e');
-    }
-  }
 
   runApp(const MyApp());
 }
@@ -63,6 +58,21 @@ class _MyAppState extends State<MyApp> {
   void initState() {
     super.initState();
     _scheduleMidnightRebuild();
+    
+    // Aktivera 120Hz efter att första framen ritats
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _enableHighRefreshRate();
+    });
+  }
+
+  Future<void> _enableHighRefreshRate() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await FlutterDisplayMode.setHighRefreshRate();
+      } catch (e) {
+        debugPrint('Kunde inte aktivera 120Hz: $e');
+      }
+    }
   }
 
   void _scheduleMidnightRebuild() {
@@ -96,10 +106,7 @@ class _MyAppState extends State<MyApp> {
       ],
       supportedLocales: const [
         Locale('sv', 'SE'),
-        Locale('en', 'US'),
       ],
-      localeResolutionCallback: (locale, supportedLocales) =>
-          const Locale('sv', 'SE'),
 
       themeMode: ThemeMode.light,
       theme: ThemeData(

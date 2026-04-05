@@ -13,6 +13,7 @@ import 'timer_page.dart';
 import 'shopping_list_page.dart';
 import 'screen_rules_page.dart';
 import 'family_status_page.dart';
+import 'work_schedule_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -37,25 +38,28 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   void initState() {
     super.initState();
-    _userStream = UserService.getCurrentUserStream();
-    _familyStream = FamilyService.getCurrentFamilyStream();
-    _eventsStream = _buildEventsStream(null);
+    // LÖSNINGEN PÅ KRASCHEN: .asBroadcastStream() gör att vi kan byta vy hur många gånger vi vill!
+    _userStream = UserService.getCurrentUserStream().asBroadcastStream();
+    _familyStream = FamilyService.getCurrentFamilyStream().asBroadcastStream();
+    
+    // Starta med en tom ström för att inte läcka data innan vi har ett familyId
+    _eventsStream = const Stream.empty(); 
     _loadData();
   }
 
   Stream<QuerySnapshot> _buildEventsStream(String? familyId) {
+    if (familyId == null || familyId.isEmpty) {
+      return const Stream.empty(); // Säkerhetsspärr
+    }
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
-    var query = FirebaseFirestore.instance
+    return FirebaseFirestore.instance
         .collection('planner_events')
-        .where('date', isEqualTo: todayStr);
-    if (familyId != null && familyId.isNotEmpty) {
-      query = query.where('familyId', isEqualTo: familyId);
-    }
-    return query.snapshots();
+        .where('date', isEqualTo: todayStr)
+        .where('familyId', isEqualTo: familyId)
+        .snapshots();
   }
 
-  // Hanterar både Timestamp och String "yyyy-M-d"
   static DateTime? _parseDate(dynamic v) {
     try {
       if (v is Timestamp) return v.toDate();
@@ -67,7 +71,6 @@ class _DashboardPageState extends State<DashboardPage>
     return null;
   }
 
-  // Kombinerar 'date' och 'time' fält till ett DateTime med korrekt tid
   static DateTime? _parseDateTime(Map<String, dynamic> d) {
     try {
       final base = _parseDate(d['date']);
@@ -85,14 +88,13 @@ class _DashboardPageState extends State<DashboardPage>
     return null;
   }
 
-  // Hjälpmetod för att sortera aktiviteterna i rätt tidsordning
   List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
     final list = rawDocs.toList();
     list.sort((a, b) {
       final dA = _parseDateTime(a.data() as Map<String, dynamic>);
       final dB = _parseDateTime(b.data() as Map<String, dynamic>);
       if (dA == null && dB == null) return 0;
-      if (dA == null) return 1; // Sätter aktiviteter utan tid sist
+      if (dA == null) return 1;
       if (dB == null) return -1;
       return dA.compareTo(dB);
     });
@@ -146,7 +148,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── PARENT VIEW ───────────────────────────────────────────────────────────
   Widget _buildParentView(UserModel? user) {
     return StreamBuilder<List<UserModel>>(
       stream: _familyStream,
@@ -189,7 +190,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── FOCUS VIEW ────────────────────────────────────────────────────────────
   Widget _buildFocusView(UserModel? user) {
     final name = user?.name.split(' ').first ?? '';
     return StreamBuilder<QuerySnapshot>(
@@ -201,7 +201,6 @@ class _DashboardPageState extends State<DashboardPage>
                 style: const TextStyle(color: Colors.red)),
           );
         }
-        // Använd vår sorteringsfunktion här
         final docs = _getSortedDocs(snap.data?.docs ?? []);
         
         return CustomScrollView(
@@ -260,7 +259,7 @@ class _DashboardPageState extends State<DashboardPage>
     final data = doc.data() as Map<String, dynamic>;
     final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDate(data['date']);
+    final date = _parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     final dayColor = AppTheme.getDayAccentColor();
 
@@ -295,7 +294,7 @@ class _DashboardPageState extends State<DashboardPage>
     final data = doc.data() as Map<String, dynamic>;
     final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDate(data['date']);
+    final date = _parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     return Container(
       width: 130,
@@ -321,7 +320,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── HEADER ────────────────────────────────────────────────────────────────
   Widget _buildHeader(UserModel? user, List<UserModel> members) {
     final dayColor = AppTheme.getDayAccentColor();
     final now = DateTime.now();
@@ -389,10 +387,9 @@ class _DashboardPageState extends State<DashboardPage>
             Text('God morgon, $firstName! ☀️',
                 style: TextStyle(fontSize: 15, color: textColor)),
           const SizedBox(height: 16),
-          // Family avatars
           if (members.isNotEmpty || _loading)
             SizedBox(
-              height: 86, // ÖKAD HÖJD HÄR för att slippa pixel-overflow!
+              height: 86,
               child: _loading
                   ? const ShimmerListPlaceholder()
                   : ListView.builder(
@@ -477,7 +474,7 @@ class _DashboardPageState extends State<DashboardPage>
             Text(member.name.split(' ').first,
                 style: TextStyle(
                     fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9), // Anpassad färg
+                    color: textColor.withValues(alpha: 0.9), 
                     fontWeight: FontWeight.w600)),
           ],
         ),
@@ -498,7 +495,6 @@ class _DashboardPageState extends State<DashboardPage>
     }
   }
 
-  // ─── TIMELINE ──────────────────────────────────────────────────────────────
   Widget _buildTimeline() {
     return StreamBuilder<QuerySnapshot>(
       stream: _eventsStream,
@@ -535,9 +531,11 @@ class _DashboardPageState extends State<DashboardPage>
               children: [
                 const Text('📅', style: TextStyle(fontSize: 20)),
                 const SizedBox(width: 10),
-                Text(
-                  'Inga aktiviteter idag — lägg till i Planering!',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                Flexible(
+                  child: Text(
+                    'Inga aktiviteter idag — lägg till i Planering!',
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+                  ),
                 ),
               ],
             ),
@@ -545,7 +543,7 @@ class _DashboardPageState extends State<DashboardPage>
         }
         final now = DateTime.now();
         return SizedBox(
-          height: 125, // ÖKAD HÖJD HÄR för att slippa pixel-overflow på tidslinjen när "NU"-kortet zoomar in!
+          height: 125,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -568,7 +566,7 @@ class _DashboardPageState extends State<DashboardPage>
                   margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
                   padding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 10),
-                  transformAlignment: Alignment.center, // Skala från mitten för att undvika overflow nedåt
+                  transformAlignment: Alignment.center,
                   transform: isCurrent
                       ? (Matrix4.identity()..scale(1.05))
                       : Matrix4.identity(),
@@ -638,7 +636,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── NEXT CARD ─────────────────────────────────────────────────────────────
   Widget _buildNextCard() {
     return StreamBuilder<QuerySnapshot>(
       stream: _eventsStream,
@@ -782,7 +779,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── ENERGY SECTION ────────────────────────────────────────────────────────
   Widget _buildEnergySection(List<UserModel> members) {
     if (members.isEmpty) {
       return Container(
@@ -840,13 +836,14 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── CHORE SUMMARY ─────────────────────────────────────────────────────────
   Widget _buildChoreSummary() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const SizedBox.shrink();
+    if (_currentUser?.familyId == null || _currentUser!.familyId!.isEmpty) {
+      return const SizedBox.shrink(); // Säkerhetsspärr
+    }
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('chores')
+          .where('familyId', isEqualTo: _currentUser!.familyId) // HÄR ÄR FILTRET SÄKERT!
           .snapshots(),
       builder: (ctx, snap) {
         if (snap.hasError) {
@@ -868,9 +865,7 @@ class _DashboardPageState extends State<DashboardPage>
         final progress = total > 0 ? done / total : 0.0;
 
         return GestureDetector(
-          onTap: () {
-            // Navigate to chores tab via bottom nav
-          },
+          onTap: () {},
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             padding: const EdgeInsets.all(20),
@@ -908,20 +903,12 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── QUICK TOOLS ───────────────────────────────────────────────────────────
   Widget _buildQuickTools() {
     final tools = [
       {'emoji': '⏱️', 'label': 'Timer', 'page': const TimerPage()},
-      {
-        'emoji': '📱',
-        'label': 'Skärmtid',
-        'page': const ScreenRulesPage()
-      },
-      {
-        'emoji': '🛒',
-        'label': 'Inköp',
-        'page': const ShoppingListPage()
-      },
+      {'emoji': '📱', 'label': 'Skärmtid', 'page': const ScreenRulesPage()},
+      {'emoji': '🛒', 'label': 'Inköp', 'page': const ShoppingListPage()},
+      {'emoji': '💼', 'label': 'Arbete', 'page': const WorkSchedulePage()},
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -934,19 +921,20 @@ class _DashboardPageState extends State<DashboardPage>
                         MaterialPageRoute(
                             builder: (_) => t['page'] as Widget)),
                     child: Container(
-                      margin: const EdgeInsets.only(right: 8),
+                      margin: const EdgeInsets.only(right: 6),
                       height: 80,
                       decoration: AppTheme.cardDecoration(radius: 16),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(t['emoji'] as String,
-                              style: const TextStyle(fontSize: 28)),
+                              style: const TextStyle(fontSize: 26)),
                           const SizedBox(height: 4),
                           Text(t['label'] as String,
                               style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis),
                         ],
                       ),
                     ),
@@ -957,7 +945,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  // ─── SECTION WRAPPER ───────────────────────────────────────────────────────
   Widget _buildSection(String title, Widget child) {
     return Padding(
       padding: const EdgeInsets.only(top: 24),
@@ -993,7 +980,6 @@ class _DashboardPageState extends State<DashboardPage>
   }
 }
 
-// ─── ENERGY SHEET ───────────────────────────────────────────────────────────
 class _EnergySheet extends StatelessWidget {
   final UserModel user;
   const _EnergySheet({required this.user});
@@ -1072,7 +1058,6 @@ class _EnergySheet extends StatelessWidget {
   }
 }
 
-// ─── CHECKLIST TILE ─────────────────────────────────────────────────────────
 class _ChecklistTile extends StatefulWidget {
   final Map<String, dynamic> item;
   final String docId;
@@ -1114,7 +1099,6 @@ class _ChecklistTileState extends State<_ChecklistTile>
   void _toggle() {
     setState(() => _isDone = !_isDone);
     _anim.forward().then((_) => _anim.reverse());
-    // Persist to Firestore (update checklist item)
     FirebaseFirestore.instance
         .collection('planner_events')
         .doc(widget.docId)

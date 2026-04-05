@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Moln-koppling
+import 'package:cloud_firestore/cloud_firestore.dart'; 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class WorkSchedulePage extends StatefulWidget {
@@ -11,6 +12,8 @@ class WorkSchedulePage extends StatefulWidget {
 }
 
 class _WorkSchedulePageState extends State<WorkSchedulePage> {
+  String _familyId = '';
+  
   // Familjemedlemmar och deras färger
   final Map<String, Color> familyColors = {
     "Mamma": Colors.purpleAccent,
@@ -31,6 +34,17 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
   void initState() {
     super.initState();
     _loadFamilySettings();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final fid = doc.data()?['familyId'] as String? ?? '';
+      if (mounted) setState(() => _familyId = fid);
+    } catch (_) {}
   }
 
   // Ladda om man ändrat namn i inställningar (men behåll färg-logiken enkel nu)
@@ -128,6 +142,16 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
       );
       return;
     }
+    
+    if (_familyId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Laddar familjedata, försök igen..."),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     // Spara varje datum som en egen post i databasen
     for (var date in _selectedDates) {
@@ -138,24 +162,27 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
         'who': _selectedPerson,
         'startTime': _formatTime(startTime),
         'endTime': _formatTime(endTime),
+        'familyId': _familyId, // NYTT FÄLT
         'timestamp': FieldValue.serverTimestamp(),
       });
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("Sparat $_selectedPerson:s pass!"),
-        backgroundColor: Colors.green,
-      ),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Sparat $_selectedPerson:s pass!"),
+          backgroundColor: Colors.green,
+        ),
+      );
 
-    // Rensa formuläret
-    setState(() {
-      _selectedDates.clear();
-      startTime = null;
-      endTime = null;
-      // Vi behåller vald person ifall man ska lägga in fler pass för samma
-    });
+      // Rensa formuläret
+      setState(() {
+        _selectedDates.clear();
+        startTime = null;
+        endTime = null;
+        // Vi behåller vald person ifall man ska lägga in fler pass för samma
+      });
+    }
   }
 
   @override

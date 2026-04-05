@@ -13,10 +13,7 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
   final _ctrl = TextEditingController();
   String _familyId = '';
 
-  // Stream — no composite index required: sort client-side
-  final Stream<QuerySnapshot> _stream = FirebaseFirestore.instance
-      .collection('shopping_items')
-      .snapshots();
+  Stream<QuerySnapshot>? _stream;
 
   @override
   void initState() {
@@ -30,7 +27,18 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
       if (uid == null) return;
       final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
       final fid = doc.data()?['familyId'] as String? ?? '';
-      if (mounted) setState(() => _familyId = fid);
+      
+      if (mounted) {
+        setState(() {
+          _familyId = fid;
+          if (_familyId.isNotEmpty) {
+            _stream = FirebaseFirestore.instance
+                .collection('shopping_items')
+                .where('familyId', isEqualTo: _familyId) // HÄR ÄR FILTRET FIXAT
+                .snapshots();
+          }
+        });
+      }
     } catch (_) {}
   }
 
@@ -147,118 +155,126 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
                 ]),
               ),
             ),
-            StreamBuilder<QuerySnapshot>(
-              stream: _stream,
-              builder: (ctx, snap) {
-                if (snap.hasError) {
-                  return SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Center(
-                        child: Text('Fel: ${snap.error}',
-                            style: const TextStyle(color: Colors.red)),
-                      ),
-                    ),
-                  );
-                }
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.only(top: 80),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
-                  );
-                }
-
-                final docs = (snap.data?.docs ?? [])
-                  ..sort((a, b) {
-                    // Not-done items first
-                    final aDone = (a.data() as Map)['isDone'] == true ? 1 : 0;
-                    final bDone = (b.data() as Map)['isDone'] == true ? 1 : 0;
-                    return aDone.compareTo(bDone);
-                  });
-
-                if (docs.isEmpty) {
-                  return SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.all(48),
-                      child: Column(children: [
-                        const Text('🛒', style: TextStyle(fontSize: 52)),
-                        const SizedBox(height: 16),
-                        Text('Listan är tom!',
-                            style: AppTheme.sectionTitleStyle),
-                        const SizedBox(height: 8),
-                        Text('Tryck + för att lägga till en vara.',
-                            style: TextStyle(
-                                color: Colors.grey.shade500, fontSize: 13)),
-                      ]),
-                    ),
-                  );
-                }
-
-                return SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (_, i) {
-                      final doc = docs[i];
-                      final d = doc.data() as Map<String, dynamic>;
-                      final title = d['title'] as String? ?? '';
-                      final isDone = d['isDone'] == true;
-
-                      return Container(
-                        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        decoration: AppTheme.cardDecoration(radius: 16),
-                        child: ListTile(
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 16),
-                          leading: GestureDetector(
-                            onTap: () => _toggle(doc.id, isDone),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              width: 26,
-                              height: 26,
-                              decoration: BoxDecoration(
-                                color: isDone ? dayColor : Colors.transparent,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isDone
-                                      ? dayColor
-                                      : Colors.grey.shade400,
-                                  width: 2,
-                                ),
-                              ),
-                              child: isDone
-                                  ? const Icon(Icons.check,
-                                      color: Colors.white, size: 16)
-                                  : null,
-                            ),
-                          ),
-                          title: Text(
-                            title,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              decoration: isDone
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                              color: isDone
-                                  ? Colors.grey.shade400
-                                  : AppTheme.getTextColor(),
-                            ),
-                          ),
-                          trailing: IconButton(
-                            icon: Icon(Icons.delete_outline_rounded,
-                                color: Colors.grey.shade400, size: 20),
-                            onPressed: () => _delete(doc.id),
-                          ),
-                          onTap: () => _toggle(doc.id, isDone),
+            
+            if (_stream == null)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.only(top: 80),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              )
+            else
+              StreamBuilder<QuerySnapshot>(
+                stream: _stream,
+                builder: (ctx, snap) {
+                  if (snap.hasError) {
+                    return SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Center(
+                          child: Text('Fel: ${snap.error}',
+                              style: const TextStyle(color: Colors.red)),
                         ),
-                      );
-                    },
-                    childCount: docs.length,
-                  ),
-                );
-              },
-            ),
+                      ),
+                    );
+                  }
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 80),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    );
+                  }
+
+                  final docs = (snap.data?.docs ?? [])
+                    ..sort((a, b) {
+                      final aDone = (a.data() as Map)['isDone'] == true ? 1 : 0;
+                      final bDone = (b.data() as Map)['isDone'] == true ? 1 : 0;
+                      return aDone.compareTo(bDone);
+                    });
+
+                  if (docs.isEmpty) {
+                    return SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(48),
+                        child: Column(children: [
+                          const Text('🛒', style: TextStyle(fontSize: 52)),
+                          const SizedBox(height: 16),
+                          Text('Listan är tom!',
+                              style: AppTheme.sectionTitleStyle),
+                          const SizedBox(height: 8),
+                          Text('Tryck + för att lägga till en vara.',
+                              style: TextStyle(
+                                  color: Colors.grey.shade500, fontSize: 13)),
+                        ]),
+                      ),
+                    );
+                  }
+
+                  return SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) {
+                        final doc = docs[i];
+                        final d = doc.data() as Map<String, dynamic>;
+                        final title = d['title'] as String? ?? '';
+                        final isDone = d['isDone'] == true;
+
+                        return Container(
+                          margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                          decoration: AppTheme.cardDecoration(radius: 16),
+                          child: ListTile(
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            leading: GestureDetector(
+                              onTap: () => _toggle(doc.id, isDone),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                width: 26,
+                                height: 26,
+                                decoration: BoxDecoration(
+                                  color: isDone ? dayColor : Colors.transparent,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isDone
+                                        ? dayColor
+                                        : Colors.grey.shade400,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: isDone
+                                    ? const Icon(Icons.check,
+                                        color: Colors.white, size: 16)
+                                    : null,
+                              ),
+                            ),
+                            title: Text(
+                              title,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                decoration: isDone
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                                color: isDone
+                                    ? Colors.grey.shade400
+                                    : AppTheme.getTextColor(),
+                              ),
+                            ),
+                            trailing: IconButton(
+                              icon: Icon(Icons.delete_outline_rounded,
+                                  color: Colors.grey.shade400, size: 20),
+                              onPressed: () => _delete(doc.id),
+                            ),
+                            onTap: () => _toggle(doc.id, isDone),
+                          ),
+                        );
+                      },
+                      childCount: docs.length,
+                    ),
+                  );
+                },
+              ),
             const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
         ),

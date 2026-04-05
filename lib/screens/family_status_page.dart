@@ -24,33 +24,59 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     _loadData();
   }
 
+  DateTime? _parseDate(dynamic v) {
+    if (v is Timestamp) return v.toDate();
+    if (v is String) {
+      final p = v.split('-');
+      if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+    }
+    return null;
+  }
+
+  DateTime? _parseDateTime(Map<String, dynamic> d) {
+    final base = _parseDate(d['date']);
+    if (base == null) return null;
+    final timeStr = d['time'] as String? ?? '';
+    if (timeStr.isNotEmpty) {
+      final tp = timeStr.split(':');
+      if (tp.length >= 2) {
+        return DateTime(base.year, base.month, base.day, int.parse(tp[0]), int.parse(tp[1]));
+      }
+    }
+    return base;
+  }
+
   Future<void> _loadData() async {
     try {
+      final currentUser = await FamilyService.getCurrentUserModel();
+      final familyId = currentUser?.familyId;
+
       final members = await _familyStream.first
           .timeout(const Duration(seconds: 6), onTimeout: () => []);
       if (!mounted) return;
 
       final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
+      // Använd samma sträng-format som när vi sparar eventen!
+      final todayStr = '${now.year}-${now.month}-${now.day}';
 
       final Map<String, List<QueryDocumentSnapshot>> eventsMap = {};
-      for (final m in members) {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('planner_events')
-              .where('date',
-                  isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
-              .where('date', isLessThan: Timestamp.fromDate(todayEnd))
-              .get()
-              .timeout(const Duration(seconds: 5));
-          eventsMap[m.uid] = snap.docs.where((doc) {
-            final persons =
-                ((doc.data())['persons'] as List? ?? []).cast<String>();
-            return persons.contains(m.name);
-          }).toList();
-        } catch (_) {
-          eventsMap[m.uid] = [];
+      if (familyId != null && familyId.isNotEmpty) {
+        for (final m in members) {
+          try {
+            final snap = await FirebaseFirestore.instance
+                .collection('planner_events')
+                .where('familyId', isEqualTo: familyId) // <--- HÄR LÄCKTE DATAN
+                .where('date', isEqualTo: todayStr)
+                .get()
+                .timeout(const Duration(seconds: 5));
+            
+            eventsMap[m.uid] = snap.docs.where((doc) {
+              final persons = ((doc.data())['persons'] as List? ?? []).cast<String>();
+              return persons.contains(m.name);
+            }).toList();
+          } catch (_) {
+            eventsMap[m.uid] = [];
+          }
         }
       }
 
@@ -67,19 +93,17 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     }
   }
 
-  // Status based on current events
   _MemberStatus _getStatus(UserModel m) {
     final now = DateTime.now();
     final events = _memberEvents[m.uid] ?? [];
     for (final doc in events) {
       final d = doc.data() as Map<String, dynamic>;
-      final date = (d['date'] as Timestamp?)?.toDate();
-      if (date == null) continue;
-      final end = date.add(const Duration(hours: 1));
+      final start = _parseDateTime(d);
+      if (start == null) continue;
+      final end = start.add(const Duration(hours: 1));
       final title = (d['title'] as String? ?? '').toLowerCase();
 
-      if (date.isBefore(now) && end.isAfter(now)) {
-        // Currently in event
+      if (start.isBefore(now) && end.isAfter(now)) {
         if (title.contains('möte') || title.contains('outlook')) {
           return _MemberStatus.busy;
         }
@@ -97,16 +121,15 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
     final events = _memberEvents[m.uid] ?? [];
     for (final doc in events) {
       final d = doc.data() as Map<String, dynamic>;
-      final date = (d['date'] as Timestamp?)?.toDate();
-      if (date == null) continue;
-      final end = date.add(const Duration(hours: 1));
-      if (date.isBefore(now) && end.isAfter(now)) return doc;
+      final start = _parseDateTime(d);
+      if (start == null) continue;
+      final end = start.add(const Duration(hours: 1));
+      if (start.isBefore(now) && end.isAfter(now)) return doc;
     }
-    // Next upcoming
     for (final doc in events) {
       final d = doc.data() as Map<String, dynamic>;
-      final date = (d['date'] as Timestamp?)?.toDate();
-      if (date != null && date.isAfter(now)) return doc;
+      final start = _parseDateTime(d);
+      if (start != null && start.isAfter(now)) return doc;
     }
     return null;
   }
@@ -189,7 +212,6 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(children: [
-          // Avatar with status ring
           Stack(children: [
             CircleAvatar(
               radius: 26, backgroundColor: mc,
@@ -219,12 +241,12 @@ class _FamilyStatusPageState extends State<FamilyStatusPage> {
                 final d = currentEvent.data() as Map<String, dynamic>;
                 final pik = d['piktogram'] as String? ?? '📅';
                 final title = d['title'] as String? ?? '';
-                final date = (d['date'] as Timestamp?)?.toDate();
+                final start = _parseDateTime(d);
                 final now = DateTime.now();
-                final end = date?.add(const Duration(hours: 1));
+                final end = start?.add(const Duration(hours: 1));
                 String timeInfo = '';
-                if (date != null && date.isAfter(now)) {
-                  final mins = date.difference(now).inMinutes;
+                if (start != null && start.isAfter(now)) {
+                  final mins = start.difference(now).inMinutes;
                   timeInfo = 'Om $mins min';
                 } else if (end != null && end.isAfter(now)) {
                   final mins = end.difference(now).inMinutes;

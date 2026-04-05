@@ -397,122 +397,124 @@ class _SettingsPageState extends State<SettingsPage>
           title: const Text('Lägg till kalender'),
           content: SizedBox(
             width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Kalendernamn',
-                    hintText: 'T.ex. Mammas kalender',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Alternativ 1 — ICS-länk:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: urlCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'ICS-URL',
-                    hintText: 'https://calendar.google.com/calendar/ical/...',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.link_rounded, size: 18),
-                    label: const Text('Hämta från URL'),
-                    onPressed: loading
-                        ? null
-                        : () async {
-                            final url = urlCtrl.text.trim();
-                            final name = nameCtrl.text.trim().isEmpty
-                                ? 'Importerad kalender'
-                                : nameCtrl.text.trim();
-                            if (url.isEmpty) return;
-                            setS(() { loading = true; errorMsg = null; });
-                            try {
-                              final resp = await http.get(Uri.parse(url))
-                                  .timeout(const Duration(seconds: 10));
-                              final content = utf8.decode(resp.bodyBytes);
-                              final count = await _parseAndSaveIcs(content, name, url);
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              _showImportResult(count, name);
-                              await _loadData();
-                            } catch (e) {
-                              setS(() {
-                                loading = false;
-                                errorMsg =
-                                    'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
-                              });
-                            }
-                          },
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Alternativ 2 — Ladda upp .ics-fil:',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.upload_file_rounded, size: 18),
-                    label: const Text('Välj .ics-fil'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.getDayAccentColor(),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'Kalendernamn',
+                      hintText: 'T.ex. Mammas kalender',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      isDense: true,
                     ),
-                    onPressed: loading
-                        ? null
-                        : () async {
-                            final name = nameCtrl.text.trim().isEmpty
-                                ? 'Importerad kalender'
-                                : nameCtrl.text.trim();
-                            setS(() { loading = true; errorMsg = null; });
-                            try {
-                              final result = await FilePicker.platform.pickFiles(
-                                type: FileType.custom,
-                                allowedExtensions: ['ics'],
-                                withData: true,
-                              );
-                              if (result == null || result.files.isEmpty) {
-                                setS(() => loading = false);
-                                return;
-                              }
-                              final bytes = result.files.first.bytes;
-                              if (bytes == null) {
-                                setS(() { loading = false; errorMsg = 'Kunde inte läsa filen.'; });
-                                return;
-                              }
-                              final content = utf8.decode(bytes);
-                              final count = await _parseAndSaveIcs(content, name, '');
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              _showImportResult(count, name);
-                              await _loadData();
-                            } catch (e) {
-                              setS(() { loading = false; errorMsg = 'Fel: $e'; });
-                            }
-                          },
                   ),
-                ),
-                if (loading) ...[
                   const SizedBox(height: 16),
-                  const Center(child: CircularProgressIndicator()),
-                ],
-                if (errorMsg != null) ...[
+                  const Text('Alternativ 1 — ICS-länk:',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: urlCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'ICS-URL',
+                      hintText: 'https://calendar.google.com/calendar/ical/...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      isDense: true,
+                    ),
+                  ),
                   const SizedBox(height: 12),
-                  Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.link_rounded, size: 18),
+                      label: const Text('Hämta från URL'),
+                      onPressed: loading
+                          ? null
+                          : () async {
+                              final url = urlCtrl.text.trim();
+                              final name = nameCtrl.text.trim().isEmpty
+                                  ? 'Importerad kalender'
+                                  : nameCtrl.text.trim();
+                              if (url.isEmpty) return;
+                              setS(() { loading = true; errorMsg = null; });
+                              try {
+                                final resp = await http.get(Uri.parse(url))
+                                    .timeout(const Duration(seconds: 10));
+                                final content = utf8.decode(resp.bodyBytes);
+                                final count = await _parseAndSaveIcs(content, name, url);
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                _showImportResult(count, name);
+                                await _loadData();
+                              } catch (e) {
+                                setS(() {
+                                  loading = false;
+                                  errorMsg =
+                                      'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
+                                });
+                              }
+                            },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Alternativ 2 — Ladda upp .ics-fil:',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.upload_file_rounded, size: 18),
+                      label: const Text('Välj .ics-fil'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.getDayAccentColor(),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: loading
+                          ? null
+                          : () async {
+                              final name = nameCtrl.text.trim().isEmpty
+                                  ? 'Importerad kalender'
+                                  : nameCtrl.text.trim();
+                              setS(() { loading = true; errorMsg = null; });
+                              try {
+                                final result = await FilePicker.platform.pickFiles(
+                                  type: FileType.custom,
+                                  allowedExtensions: ['ics'],
+                                  withData: true,
+                                );
+                                if (result == null || result.files.isEmpty) {
+                                  setS(() => loading = false);
+                                  return;
+                                }
+                                final bytes = result.files.first.bytes;
+                                if (bytes == null) {
+                                  setS(() { loading = false; errorMsg = 'Kunde inte läsa filen.'; });
+                                  return;
+                                }
+                                final content = utf8.decode(bytes);
+                                final count = await _parseAndSaveIcs(content, name, '');
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                _showImportResult(count, name);
+                                await _loadData();
+                              } catch (e) {
+                                setS(() { loading = false; errorMsg = 'Fel: $e'; });
+                              }
+                            },
+                    ),
+                  ),
+                  if (loading) ...[
+                    const SizedBox(height: 16),
+                    const Center(child: CircularProgressIndicator()),
+                  ],
+                  if (errorMsg != null) ...[
+                    const SizedBox(height: 12),
+                    Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
           actions: [

@@ -49,26 +49,32 @@ class _ChoresPageState extends State<ChoresPage>
   Future<void> _loadUser() async {
     final user = await FamilyService.getCurrentUserModel();
     final members = <UserModel>[];
-    if (user?.familyId != null) {
+    
+    // Hämta bara medlemmar om vi har ett familyId!
+    if (user?.familyId != null && user!.familyId!.isNotEmpty) {
       final snap = await FirebaseFirestore.instance
-          .collection('users').where('familyId', isEqualTo: user!.familyId).get();
+          .collection('users').where('familyId', isEqualTo: user.familyId).get();
       for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
     }
+    
     if (mounted) {
       setState(() {
         _currentUser = user;
         _familyMembers = members;
-        // Query without familyId filter so existing chores are always visible.
-        // familyId is saved on every new chore for future filtering.
-        _choresStream =
-            FirebaseFirestore.instance.collection('chores').snapshots();
+        
+        // HÄR ÄR FILTRET SOM STÄNGER DATA-LÄCKAN
+        if (user?.familyId != null && user!.familyId!.isNotEmpty) {
+          _choresStream = FirebaseFirestore.instance
+              .collection('chores')
+              .where('familyId', isEqualTo: user.familyId) 
+              .snapshots();
+        }
       });
     }
   }
 
   void _toggleReading() {
     if (_readingActive) {
-      // Stop — award points
       final minutes = _readingSeconds ~/ 60;
       final points = (minutes / 5).floor();
       if (points > 0 && _currentUser != null) {
@@ -133,7 +139,6 @@ class _ChoresPageState extends State<ChoresPage>
                 return _buildParentView(docs, filtered, dayColor);
               },
             ),
-          // FABs — placerade ovanför BottomNavigationBar
           Positioned(
             right: 16,
             bottom: MediaQuery.of(context).padding.bottom + 16,
@@ -190,7 +195,6 @@ class _ChoresPageState extends State<ChoresPage>
               ],
             ),
           ),
-          // Confetti
           ConfettiWidget(
             confettiController: _confettiController,
             blastDirectionality: BlastDirectionality.explosive,
@@ -216,7 +220,6 @@ class _ChoresPageState extends State<ChoresPage>
       });
   }
 
-  // ─── PARENT VIEW ─────────────────────────────────────────────────────────
   Widget _buildParentView(List<QueryDocumentSnapshot> all,
       List<QueryDocumentSnapshot> filtered, Color dayColor) {
     return CustomScrollView(
@@ -245,7 +248,6 @@ class _ChoresPageState extends State<ChoresPage>
       );
   }
 
-  // ─── FOCUS VIEW ──────────────────────────────────────────────────────────
   Widget _buildFocusView(List<QueryDocumentSnapshot> filtered, Color dayColor) {
     final name = _currentUser?.name.split(' ').first ?? '';
     final total = filtered.length;
@@ -405,7 +407,6 @@ class _ChoresPageState extends State<ChoresPage>
   }
 }
 
-// ─── PILL ────────────────────────────────────────────────────────────────────
 class _PlannerPill extends StatelessWidget {
   final String label; final bool selected; final Color color; final VoidCallback onTap;
   const _PlannerPill({required this.label, required this.selected, required this.color, required this.onTap});
@@ -427,7 +428,6 @@ class _PlannerPill extends StatelessWidget {
   );
 }
 
-// ─── CHORE CARD ──────────────────────────────────────────────────────────────
 class _ChoreCard extends StatefulWidget {
   final QueryDocumentSnapshot doc;
   final Color dayColor;
@@ -527,7 +527,6 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
                   decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(10)),
                   child: Text('+$points ⭐', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber)),
                 ),
-                // Tre prickar för att Redigera eller Ta bort
                 PopupMenuButton<String>(
                   icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
                   padding: EdgeInsets.zero,
@@ -592,7 +591,6 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
   }
 }
 
-// ─── FOCUS CHORE CARD ────────────────────────────────────────────────────────
 class _FocusChoreCard extends StatelessWidget {
   final QueryDocumentSnapshot doc; final Color dayColor; final VoidCallback onComplete;
   const _FocusChoreCard({required this.doc, required this.dayColor, required this.onComplete});
@@ -641,7 +639,6 @@ class _FocusChoreCard extends StatelessWidget {
   }
 }
 
-// ─── ADD CHORE SHEET ─────────────────────────────────────────────────────────
 class _AddChoreSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String? familyId;
@@ -664,7 +661,6 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
   @override
   void initState() {
     super.initState();
-    // Fyll i formuläret automatiskt om vi redigerar en existerande syssla
     if (widget.choreToEdit != null) {
       final d = widget.choreToEdit!.data() as Map<String, dynamic>;
       _title.text = d['chore'] as String? ?? d['title'] as String? ?? '';
@@ -674,7 +670,7 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
       _points = (d['points'] as int?) ?? 10;
       final subs = (d['substeps'] as List? ?? []).cast<Map<String, dynamic>>();
       _substeps.addAll(subs.map((s) => s['title'] as String? ?? ''));
-      _step = 1; // Hoppa direkt till det sista formuläret när man redigerar
+      _step = 1;
     }
   }
 
@@ -696,7 +692,6 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
       }
 
       if (widget.choreToEdit != null) {
-        // Uppdatera existerande syssla
         await widget.choreToEdit!.reference.update({
           'chore': _title.text.trim(),
           'piktogram': _pik,
@@ -706,7 +701,6 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
           'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
         });
       } else {
-        // Skapa ny syssla
         await FirebaseFirestore.instance.collection('chores').add({
           'chore': _title.text.trim(),
           'piktogram': _pik,
@@ -715,7 +709,7 @@ class _AddChoreSheetState extends State<_AddChoreSheet> {
           'isDone': false,
           'points': _points,
           'isRecurring': false,
-          'familyId': widget.familyId ?? '',
+          'familyId': widget.familyId ?? '', // Här sparades tidigare sysslor fel
           'weekOf': weekOf,
           'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
         });

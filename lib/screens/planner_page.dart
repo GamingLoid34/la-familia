@@ -39,14 +39,11 @@ class _PlannerPageState extends State<PlannerPage>
   List<UserModel> _familyMembers = [];
   String? _filterPerson;
 
-  late final Stream<QuerySnapshot> _eventsStream;
+  Stream<QuerySnapshot>? _eventsStream;
 
   @override
   void initState() {
     super.initState();
-    _eventsStream = FirebaseFirestore.instance
-        .collection('planner_events')
-        .snapshots();
     _loadUser();
   }
 
@@ -60,7 +57,19 @@ class _PlannerPageState extends State<PlannerPage>
           .get();
       for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
     }
-    if (mounted) setState(() { _currentUser = user; _familyMembers = members; });
+    if (mounted) {
+      setState(() { 
+        _currentUser = user; 
+        _familyMembers = members; 
+        
+        if (user?.familyId != null && user!.familyId!.isNotEmpty) {
+          _eventsStream = FirebaseFirestore.instance
+              .collection('planner_events')
+              .where('familyId', isEqualTo: user.familyId) // HÄR ÄR FILTRET FIXAT
+              .snapshots();
+        }
+      });
+    }
   }
 
   List<QueryDocumentSnapshot> _getEventsForDay(
@@ -117,23 +126,26 @@ class _PlannerPageState extends State<PlannerPage>
       decoration: AppTheme.getBackground(),
       child: Stack(
         children: [
-          StreamBuilder<QuerySnapshot>(
-            stream: _eventsStream,
-            builder: (ctx, snap) {
-              if (snap.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text('Fel: ${snap.error}',
-                        style: const TextStyle(color: Colors.red)),
-                  ),
-                );
-              }
-              final all = snap.data?.docs ?? [];
-              if (isFocus) return _buildFocusView(all);
-              return _buildParentView(all, dayColor);
-            },
-          ),
+          if (_eventsStream == null)
+             _buildParentView([], dayColor)
+          else
+            StreamBuilder<QuerySnapshot>(
+              stream: _eventsStream,
+              builder: (ctx, snap) {
+                if (snap.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text('Fel: ${snap.error}',
+                          style: const TextStyle(color: Colors.red)),
+                    ),
+                  );
+                }
+                final all = snap.data?.docs ?? [];
+                if (isFocus) return _buildFocusView(all);
+                return _buildParentView(all, dayColor);
+              },
+            ),
           Positioned(
             right: 16,
             bottom: bottomPad + 16,
@@ -259,7 +271,7 @@ class _PlannerPageState extends State<PlannerPage>
       child: TableCalendar(
         firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
-        availableGestures: AvailableGestures.horizontalSwipe, // Tillåter vertikal scroll
+        availableGestures: AvailableGestures.horizontalSwipe, 
         selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
         calendarFormat: CalendarFormat.month,
         availableCalendarFormats: const {CalendarFormat.month: 'Månad'},
@@ -375,7 +387,7 @@ class _ActivityCard extends StatelessWidget {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '📅';
-    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
+    final timeStr = d['time'] as String? ?? '';
     final date = _parseEventDate(d['date']);
     final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
     final isPending = d['isPending'] == true;
@@ -399,7 +411,6 @@ class _ActivityCard extends StatelessWidget {
               if (isPending) const Text('⏳ Väntar på godkännande',
                   style: TextStyle(fontSize: 11, color: Colors.orange)),
             ])),
-            // Lägg till popup-menyn här
             PopupMenuButton<String>(
               icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
               padding: EdgeInsets.zero,
@@ -471,7 +482,7 @@ class _FocusCard extends StatelessWidget {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '📅';
-    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
+    final timeStr = d['time'] as String? ?? '';
     final date = _parseEventDate(d['date']);
     final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
 
@@ -543,15 +554,14 @@ class _AddEventSheetState extends State<_AddEventSheet> {
   final _clCtrl = TextEditingController();
   
   bool _saving = false;
-  bool _saveAsTemplate = false; // NY! Switch för att spara mall
-  List<QueryDocumentSnapshot> _templates = []; // Håller inlästa mallar
+  bool _saveAsTemplate = false;
+  List<QueryDocumentSnapshot> _templates = [];
 
   @override
   void initState() {
     super.initState();
     _loadTemplates();
 
-    // Ladda in befintlig data om vi redigerar!
     if (widget.eventToEdit != null) {
       final d = widget.eventToEdit!.data() as Map<String, dynamic>;
       _pik = d['piktogram'] as String? ?? '📅';
@@ -580,7 +590,6 @@ class _AddEventSheetState extends State<_AddEventSheet> {
       final snap = await FirebaseFirestore.instance.collection('activity_templates').get();
       if (mounted) {
         setState(() {
-          // Filtrera ut de mallar som tillhör familjen, eller saknar familj-ID
           _templates = snap.docs.where((doc) {
             final d = doc.data() as Map<String, dynamic>;
             final fid = d['familyId'] as String? ?? '';
@@ -597,7 +606,7 @@ class _AddEventSheetState extends State<_AddEventSheet> {
       _title.text = data['title'] ?? '';
       _checklist.clear();
       _checklist.addAll((data['checklist'] as List<dynamic>? ?? []).map((e) => e.toString()));
-      _step = 1; // Hoppa direkt till formuläret!
+      _step = 1;
     });
   }
 
@@ -621,7 +630,6 @@ class _AddEventSheetState extends State<_AddEventSheet> {
         'date': '${d.year}-${d.month}-${d.day}',
         'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
         'persons': _persons,
-        // Behåll tidigare checklista-status om vi redigerar
         'checklist': _checklist.map((i) {
           bool isDone = false;
           if (widget.eventToEdit != null) {
@@ -640,14 +648,12 @@ class _AddEventSheetState extends State<_AddEventSheet> {
         'familyId': widget.familyId ?? '',
       };
 
-      // 1. Spara aktiviteten
       if (widget.eventToEdit != null) {
         await widget.eventToEdit!.reference.update(data);
       } else {
         await FirebaseFirestore.instance.collection('planner_events').add(data);
       }
 
-      // 2. Spara som mall om checkboxen är ikryssad
       if (_saveAsTemplate) {
         await FirebaseFirestore.instance.collection('activity_templates').add({
           'title': titleStr,
@@ -712,7 +718,6 @@ class _AddEventSheetState extends State<_AddEventSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-      // --- MALLAR ---
       if (_templates.isNotEmpty) ...[
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
@@ -756,7 +761,6 @@ class _AddEventSheetState extends State<_AddEventSheet> {
         ),
       ],
 
-      // --- SÖK PIKTOGRAM ---
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: TextField(
@@ -848,7 +852,6 @@ class _AddEventSheetState extends State<_AddEventSheet> {
           trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: Colors.red),
             onPressed: () => setState(() => _checklist.remove(item))))),
         
-        // --- SPARA SOM MALL SWITCH ---
         if (widget.eventToEdit == null) ...[
           const SizedBox(height: 16),
           Container(

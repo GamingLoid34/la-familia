@@ -31,13 +31,7 @@ class _LoginPageState extends State<LoginPage> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const MainPage()),
-        );
-      }
+      // AuthWrapper i main.dart känner av inloggningen och tar oss vidare automatiskt.
     } on FirebaseAuthException catch (e) {
       String message = "Inloggning misslyckades.";
       if (e.code == 'user-not-found') message = "Användaren finns inte.";
@@ -122,6 +116,99 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  void _showRegisterDialog() {
+    final _nameCtrl = TextEditingController();
+    final _emailCtrl = TextEditingController();
+    final _pwdCtrl = TextEditingController();
+    bool _isRegistering = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateBuilder) {
+            return AlertDialog(
+              title: const Text('Skapa nytt konto'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Skapa ett konto för att starta en helt ny familj.",
+                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _nameCtrl,
+                      decoration: const InputDecoration(labelText: 'Ditt förnamn'),
+                    ),
+                    TextField(
+                      controller: _emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(labelText: 'Din e-post'),
+                    ),
+                    TextField(
+                      controller: _pwdCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Lösenord (minst 6 tecken)'),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Avbryt'),
+                ),
+                _isRegistering
+                    ? const CircularProgressIndicator()
+                    : ElevatedButton(
+                        onPressed: () async {
+                          if (_emailCtrl.text.isEmpty ||
+                              _pwdCtrl.text.isEmpty ||
+                              _nameCtrl.text.isEmpty) return;
+
+                          // Spara navigatorn innan vi gör något asynkront!
+                          final navigator = Navigator.of(context);
+                          setStateBuilder(() => _isRegistering = true);
+                          
+                          try {
+                            UserCredential uc = await FirebaseAuth.instance
+                                .createUserWithEmailAndPassword(
+                              email: _emailCtrl.text.trim(),
+                              password: _pwdCtrl.text.trim(),
+                            );
+
+                            if (uc.user != null) {
+                              await FirebaseFirestore.instance
+                                  .collection('users')
+                                  .doc(uc.user!.uid)
+                                  .set({
+                                'email': _emailCtrl.text.trim(),
+                                'name': _nameCtrl.text.trim(),
+                                'role': 'parent', 
+                                'createdAt': FieldValue.serverTimestamp(),
+                              });
+
+                              // Stäng dialogen med den sparade navigatorn oavsett "mounted"-status
+                              navigator.pop();
+                            }
+                          } catch (e) {
+                            ScaffoldMessenger.of(context)
+                                .showSnackBar(SnackBar(content: Text('Fel: $e')));
+                            setStateBuilder(() => _isRegistering = false);
+                          }
+                        },
+                        child: const Text('Skapa konto'),
+                      ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _showInviteDialog() {
     final _inviteCodeCtrl = TextEditingController();
     final _nameCtrl = TextEditingController();
@@ -186,7 +273,10 @@ class _LoginPageState extends State<LoginPage> {
                               _nameCtrl.text.isEmpty)
                             return;
 
+                          // Spara navigatorn innan async
+                          final navigator = Navigator.of(context);
                           setStateBuilder(() => _isRegistering = true);
+                          
                           try {
                             // Hitta familjen
                             var snapshot = await FirebaseFirestore.instance
@@ -227,19 +317,12 @@ class _LoginPageState extends State<LoginPage> {
                                     'email': _emailCtrl.text.trim(),
                                     'name': _nameCtrl.text.trim(),
                                     'familyId': familyId,
-                                    'role': 'member', // Default roll
+                                    'role': 'member',
                                     'createdAt': FieldValue.serverTimestamp(),
                                   });
 
-                              if (mounted) {
-                                Navigator.pop(context);
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const MainPage(),
-                                  ),
-                                );
-                              }
+                              // Stäng dialogen
+                              navigator.pop();
                             }
                           } catch (e) {
                             ScaffoldMessenger.of(
@@ -353,6 +436,16 @@ class _LoginPageState extends State<LoginPage> {
                   ),
 
                   const Divider(),
+
+                  TextButton.icon(
+                    onPressed: _showRegisterDialog,
+                    icon: const Icon(Icons.person_add),
+                    label: const Text("Skapa nytt konto (Ny familj)"),
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.getDayAccentColor(),
+                      textStyle: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
 
                   TextButton.icon(
                     onPressed: _showInviteDialog,

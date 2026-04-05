@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../app_theme.dart';
 
 class ScreenRulesPage extends StatefulWidget {
@@ -10,6 +11,24 @@ class ScreenRulesPage extends StatefulWidget {
 }
 
 class _ScreenRulesPageState extends State<ScreenRulesPage> {
+  String _familyId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final fid = doc.data()?['familyId'] as String? ?? '';
+      if (mounted) setState(() => _familyId = fid);
+    } catch (_) {}
+  }
+
   Future<void> _updateTime(String docId, TimeOfDay limit) async {
     await FirebaseFirestore.instance
         .collection('screen_rules')
@@ -119,7 +138,7 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    if (_appNameCtrl.text.isNotEmpty) {
+                    if (_appNameCtrl.text.isNotEmpty && _familyId.isNotEmpty) {
                       FirebaseFirestore.instance.collection('screen_rules').add(
                         {
                           'appName': _appNameCtrl.text,
@@ -128,6 +147,7 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
                           'limitMinute': _limit.minute,
                           'isAllowed': _isAllowed,
                           'memberId': _memberCtrl.text,
+                          'familyId': _familyId, // NYTT FÄLT
                         },
                       );
                       Navigator.pop(context);
@@ -180,9 +200,12 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
         width: double.infinity,
         height: double.infinity,
         child: SafeArea(
-          child: StreamBuilder<QuerySnapshot>(
+          child: _familyId.isEmpty 
+            ? const Center(child: CircularProgressIndicator())
+            : StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance
                 .collection('screen_rules')
+                .where('familyId', isEqualTo: _familyId)
                 .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -332,4 +355,3 @@ class _ScreenRulesPageState extends State<ScreenRulesPage> {
     );
   }
 }
-
