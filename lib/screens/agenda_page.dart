@@ -49,7 +49,14 @@ DateTime? _parseDateTime(Map<String, dynamic> d) {
 
 class AgendaPage extends StatefulWidget {
   final AgendaTab initialTab;
-  const AgendaPage({super.key, this.initialTab = AgendaTab.all});
+  /// Filtrera på fullständigt namn (samma som i Firestore `persons` / `who`).
+  final String? initialPersonFilter;
+
+  const AgendaPage({
+    super.key,
+    this.initialTab = AgendaTab.all,
+    this.initialPersonFilter,
+  });
 
   @override
   State<AgendaPage> createState() => _AgendaPageState();
@@ -69,6 +76,7 @@ class _AgendaPageState extends State<AgendaPage>
   void initState() {
     super.initState();
     _tab = widget.initialTab;
+    _filterPerson = widget.initialPersonFilter;
   }
 
   List<QueryDocumentSnapshot> _eventsForDay(
@@ -320,17 +328,48 @@ class _AgendaPageState extends State<AgendaPage>
   }
 
   Widget _buildTabs(Color dayColor) {
+    final narrow = MediaQuery.sizeOf(context).width < 380;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 0),
       child: SegmentedButton<AgendaTab>(
-        segments: const [
-          ButtonSegment(value: AgendaTab.all, label: Text('Alla')),
-          ButtonSegment(value: AgendaTab.activities, label: Text('Aktiviteter')),
-          ButtonSegment(value: AgendaTab.chores, label: Text('Sysslor')),
+        showSelectedIcon: false,
+        segments: [
+          ButtonSegment(
+            value: AgendaTab.all,
+            label: Text(
+              'Alla',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: narrow ? 11 : 13),
+            ),
+          ),
+          ButtonSegment(
+            value: AgendaTab.activities,
+            label: Text(
+              narrow ? 'Aktivitet' : 'Aktiviteter',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: narrow ? 11 : 13),
+            ),
+          ),
+          ButtonSegment(
+            value: AgendaTab.chores,
+            label: Text(
+              'Sysslor',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: narrow ? 11 : 13),
+            ),
+          ),
         ],
         selected: {_tab},
         onSelectionChanged: (s) => setState(() => _tab = s.first),
         style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: WidgetStateProperty.all(
+            const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          ),
           backgroundColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) return dayColor;
             return Colors.white;
@@ -368,6 +407,7 @@ class _AgendaPageState extends State<AgendaPage>
         onPageChanged: (f) => setState(() => _focusedDay = f),
         locale: 'sv',
         calendarStyle: CalendarStyle(
+          cellMargin: EdgeInsets.zero,
           selectedDecoration:
               BoxDecoration(color: dayColor, shape: BoxShape.circle),
           todayDecoration: BoxDecoration(
@@ -375,7 +415,9 @@ class _AgendaPageState extends State<AgendaPage>
               shape: BoxShape.circle),
           markerDecoration:
               BoxDecoration(color: dayColor, shape: BoxShape.circle),
-          markersMaxCount: 3,
+          markersMaxCount: 1,
+          markerSize: 5,
+          markerMargin: const EdgeInsets.only(top: 2),
           outsideDaysVisible: false,
         ),
         headerStyle: const HeaderStyle(
@@ -390,10 +432,10 @@ class _AgendaPageState extends State<AgendaPage>
   Widget _buildPersonFilter(List<UserModel> familyMembers, Color dayColor) {
     if (familyMembers.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: 48,
+      height: 52,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
         children: [
           _Pill(
             label: 'Alla',
@@ -564,15 +606,19 @@ class _ChoreRowState extends State<_ChoreRow> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Text(pik, style: const TextStyle(fontSize: 24)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       title,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
@@ -583,6 +629,8 @@ class _ChoreRowState extends State<_ChoreRow> {
                     if (who.isNotEmpty)
                       Text(
                         who,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey.shade500,
@@ -591,29 +639,35 @@ class _ChoreRowState extends State<_ChoreRow> {
                   ],
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '+$points ⭐',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.amber,
+              const SizedBox(width: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '+$points ⭐',
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.amber,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 6),
               GestureDetector(
                 onTap: _saving ? null : () => _toggleDone(isDone),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
-                  width: 30,
-                  height: 30,
+                  width: 32,
+                  height: 32,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: isDone ? widget.dayColor : Colors.transparent,
                     shape: BoxShape.circle,
@@ -624,8 +678,9 @@ class _ChoreRowState extends State<_ChoreRow> {
                     ),
                   ),
                   child: _saving
-                      ? const Padding(
-                          padding: EdgeInsets.all(7),
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : (isDone

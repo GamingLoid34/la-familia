@@ -217,8 +217,7 @@ class _MainPageState extends State<MainPage> {
 
   final List<Widget> _pages = [
     const DashboardPage(),
-    const AgendaPage(initialTab: AgendaTab.activities),
-    const AgendaPage(initialTab: AgendaTab.chores),
+    const AgendaPage(initialTab: AgendaTab.all),
     const SettingsPage(),
   ];
 
@@ -319,10 +318,6 @@ class _MainPageState extends State<MainPage> {
             BottomNavigationBarItem(
               icon: Icon(Icons.calendar_month_rounded),
               label: 'Planering',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.cleaning_services_rounded),
-              label: 'Sysslor',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.settings_rounded),

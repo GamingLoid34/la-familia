@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../app_theme.dart';
 import '../firebase_options.dart';
 
@@ -22,6 +25,8 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
   String? _editingId;
   String? _familyId;
   bool _isLoading = false;
+  String? _avatarUrl;
+  bool _uploadingAvatar = false;
 
   final List<String> _colors = [
     'ff2196f3',
@@ -62,6 +67,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
       _selectedColor = 'ff2196f3';
       _selectedRole = 'Barn';
       _editingId = null;
+      _avatarUrl = null;
     });
     FocusScope.of(context).unfocus();
   }
@@ -74,6 +80,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     setState(() {
       _editingId = doc.id;
       _selectedColor = data['color'] ?? 'ff2196f3';
+      _avatarUrl = data['avatarUrl'] as String?;
       
       // Översätt databas-roll till rullgardin
       final r = data['role'] ?? 'child';
@@ -200,6 +207,51 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     }
   }
 
+  Future<void> _pickAndUploadAvatar() async {
+    final uid = _editingId;
+    if (uid == null) return;
+
+    final picker = ImagePicker();
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+    if (x == null) return;
+
+    setState(() => _uploadingAvatar = true);
+    try {
+      final bytes = await x.readAsBytes();
+      final ref = FirebaseStorage.instance.ref().child('user_avatars/$uid.jpg');
+      await ref.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+      final url = await ref.getDownloadURL();
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'avatarUrl': url,
+      });
+      if (mounted) {
+        setState(() => _avatarUrl = url);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profilbild uppdaterad')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kunde inte ladda upp bild: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     Color textColor = AppTheme.getTextColor();
@@ -266,6 +318,70 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                         )).toList(),
                       ),
                       const SizedBox(height: 20),
+                      if (_editingId != null) ...[
+                        const Text(
+                          'Profilbild',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: _uploadingAvatar ? null : _pickAndUploadAvatar,
+                              child: CircleAvatar(
+                                radius: 36,
+                                backgroundColor: Color(int.parse(
+                                  _selectedColor.startsWith('0x')
+                                      ? _selectedColor
+                                      : '0xFF$_selectedColor',
+                                )),
+                                backgroundImage: _avatarUrl != null &&
+                                        _avatarUrl!.isNotEmpty
+                                    ? CachedNetworkImageProvider(_avatarUrl!)
+                                    : null,
+                                child: _uploadingAvatar
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : (_avatarUrl == null || _avatarUrl!.isEmpty)
+                                        ? const Icon(Icons.add_a_photo_rounded,
+                                            color: Colors.white, size: 28)
+                                        : null,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _uploadingAvatar
+                                        ? null
+                                        : _pickAndUploadAvatar,
+                                    icon: const Icon(Icons.photo_library_rounded),
+                                    label: const Text('Välj foto'),
+                                  ),
+                                  Text(
+                                    'Visas på hem-skärmen och i familjevyn.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ],
 
                       _input("Namn", _nameController, Icons.person),
                       const SizedBox(height: 10),
@@ -347,6 +463,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                           var name = data['name'] ?? 'Okänd';
                           var email = data['email'] ?? '';
                           var colorStr = data['color'] ?? 'ff2196f3';
+                          final avatarUrl = data['avatarUrl'] as String?;
                           Color avatarColor;
                           try {
                             avatarColor = Color(int.parse(colorStr.startsWith('0x') ? colorStr : '0xFF$colorStr'));
@@ -364,8 +481,13 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: avatarColor,
-                                child: Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?', 
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                                    ? CachedNetworkImageProvider(avatarUrl)
+                                    : null,
+                                child: avatarUrl != null && avatarUrl.isNotEmpty
+                                    ? null
+                                    : Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?',
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                               ),
                               title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Text(email, style: const TextStyle(fontSize: 12)),

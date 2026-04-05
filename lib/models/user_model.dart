@@ -9,6 +9,8 @@ class UserModel {
   final int weeklyPoints;
   final DateTime? pointsResetDate;
   final String? familyId;
+  /// Valfri profilbild (Firebase Storage URL).
+  final String? avatarUrl;
 
   const UserModel({
     required this.uid,
@@ -21,6 +23,7 @@ class UserModel {
     required this.weeklyPoints,
     this.pointsResetDate,
     this.familyId,
+    this.avatarUrl,
   });
 
   factory UserModel.fromMap(String uid, Map<String, dynamic> data) {
@@ -39,6 +42,7 @@ class UserModel {
           ? (data['pointsResetDate'] as dynamic).toDate()
           : null,
       familyId: data['familyId'] as String?,
+      avatarUrl: data['avatarUrl'] as String?,
     );
   }
 
@@ -53,6 +57,7 @@ class UserModel {
       'weeklyPoints': weeklyPoints,
       'pointsResetDate': pointsResetDate,
       'familyId': familyId,
+      if (avatarUrl != null) 'avatarUrl': avatarUrl,
     };
   }
 
@@ -66,6 +71,7 @@ class UserModel {
     int? weeklyPoints,
     DateTime? pointsResetDate,
     String? familyId,
+    String? avatarUrl,
   }) {
     return UserModel(
       uid: uid,
@@ -78,6 +84,7 @@ class UserModel {
       weeklyPoints: weeklyPoints ?? this.weeklyPoints,
       pointsResetDate: pointsResetDate ?? this.pointsResetDate,
       familyId: familyId ?? this.familyId,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 

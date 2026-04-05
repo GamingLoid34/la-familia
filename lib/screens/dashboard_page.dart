@@ -5,9 +5,9 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
-import '../services/user_service.dart';
-import '../widgets/shimmer_list_placeholder.dart';
 import '../widgets/activity_detail_sheet.dart';
+import '../widgets/member_day_sheet.dart';
+import '../widgets/member_avatar.dart';
 import 'agenda_page.dart';
 import 'timer_page.dart';
 import 'shopping_list_page.dart';
@@ -68,11 +68,36 @@ class _DashboardPageState extends State<DashboardPage>
     return list;
   }
 
-  void _showEnergyDialog(UserModel user) {
-    showModalBottomSheet(
+  void _openMemberDaySheet(FamilyProvider provider, UserModel member) {
+    final events = provider.todayEvents.where((doc) {
+      final persons = ((doc.data() as Map<String, dynamic>)['persons'] as List? ?? [])
+          .cast<String>();
+      return persons.contains(member.name);
+    }).toList();
+    events.sort((a, b) {
+      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      if (dA == null && dB == null) return 0;
+      if (dA == null) return 1;
+      if (dB == null) return -1;
+      return dA.compareTo(dB);
+    });
+    final chores = provider.chores.where((doc) {
+      final who =
+          (doc.data() as Map<String, dynamic>)['who'] as String? ?? '';
+      return who == member.name;
+    }).toList();
+
+    showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _EnergySheet(user: user),
+      builder: (_) => MemberDaySheet(
+        member: member,
+        currentUser: provider.currentUser,
+        memberEvents: events,
+        memberChores: chores,
+      ),
     );
   }
 
@@ -103,14 +128,14 @@ class _DashboardPageState extends State<DashboardPage>
 
   Widget _buildParentView(FamilyProvider provider) {
     final user = provider.currentUser;
-    final members = provider.familyMembers;
     final todayEvents = provider.todayEvents;
     final chores = provider.chores;
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(child: _buildHeader(user, members)),
+        SliverToBoxAdapter(child: _buildHeader(user)),
+        SliverToBoxAdapter(child: _buildFamilyStrip(context, provider)),
         SliverToBoxAdapter(
           child: _buildSection(
             'DAGSTIDSLINJE',
@@ -119,10 +144,6 @@ class _DashboardPageState extends State<DashboardPage>
         ),
         SliverToBoxAdapter(
           child: _buildSection('HÄRNÄST', _buildNextCard(todayEvents)),
-        ),
-        SliverToBoxAdapter(
-          child: _buildSection(
-              'FAMILJENS ENERGI', _buildEnergySection(members)),
         ),
         SliverToBoxAdapter(
           child: _buildSection('SYSSLOR IDAG', _buildChoreSummary(chores)),
@@ -143,7 +164,7 @@ class _DashboardPageState extends State<DashboardPage>
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(child: _buildHeader(user, provider.familyMembers)),
+        SliverToBoxAdapter(child: _buildHeader(user)),
         if (docs.isNotEmpty) ...[
           SliverToBoxAdapter(child: _buildFocusMainCard(docs.first)),
           if (docs.length > 1)
@@ -255,7 +276,137 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildHeader(UserModel? user, List<UserModel> members) {
+  Widget _buildFamilyStrip(BuildContext context, FamilyProvider provider) {
+    final members = provider.familyMembers;
+    if (members.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                Text('FAMILJEN', style: AppTheme.sectionLabelStyle),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Tryck för aktiviteter, sysslor och energi',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade500,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 124,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              itemCount: members.length,
+              itemBuilder: (_, i) =>
+                  _buildFamilyMemberCard(context, provider, members[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFamilyMemberCard(
+    BuildContext context,
+    FamilyProvider provider,
+    UserModel member,
+  ) {
+    Color mc;
+    try {
+      mc = Color(member.colorValue as int);
+    } catch (_) {
+      mc = AppTheme.getDayAccentColor();
+    }
+    final energyColor = _energyColor(member.energy);
+    final first = member.name.split(' ').first;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openMemberDaySheet(provider, member),
+          borderRadius: BorderRadius.circular(22),
+          child: SizedBox(
+            width: 108,
+            child: Ink(
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+              decoration: AppTheme.cardDecoration(radius: 22).copyWith(
+                border:
+                    Border.all(color: mc.withValues(alpha: 0.35), width: 1.5),
+              ),
+              child: Column(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      FamilyMemberAvatar(member: member, size: 46),
+                      Positioned(
+                        right: -2,
+                        bottom: -2,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: energyColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    first,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: mc,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Visa dag',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Icon(Icons.expand_more_rounded,
+                          size: 12, color: Colors.grey.shade400),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(UserModel? user) {
     final dayColor = AppTheme.getDayAccentColor();
     final now = DateTime.now();
     final weekday = now.weekday;
@@ -321,96 +472,7 @@ class _DashboardPageState extends State<DashboardPage>
           if (firstName.isNotEmpty)
             Text('God morgon, $firstName! ☀️',
                 style: TextStyle(fontSize: 15, color: textColor)),
-          const SizedBox(height: 16),
-          if (members.isNotEmpty)
-            SizedBox(
-              height: 86,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: members.length,
-                itemBuilder: (_, i) =>
-                    _buildAvatarWidget(members[i], textColor, user),
-              ),
-            ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAvatarWidget(
-      UserModel member, Color textColor, UserModel? currentUser) {
-    final isMe = member.uid == currentUser?.uid;
-    Color avatarColor;
-    try {
-      avatarColor = Color(member.colorValue as int);
-    } catch (_) {
-      avatarColor = AppTheme.getDayAccentColor();
-    }
-    final energyColor = _energyColor(member.energy);
-    final initial =
-        member.name.isNotEmpty ? member.name[0].toUpperCase() : '?';
-
-    return GestureDetector(
-      onTap: () {
-        if (isMe) {
-          _showEnergyDialog(member);
-        }
-      },
-      child: Padding(
-        padding: const EdgeInsets.only(right: 16),
-        child: Column(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: avatarColor,
-                  child: Text(initial,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18)),
-                ),
-                Positioned(
-                  right: -2,
-                  bottom: -2,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: energyColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-                if (isMe)
-                  Positioned(
-                    top: -4,
-                    right: -4,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.grey.shade200)),
-                      child: Icon(Icons.edit,
-                          size: 10,
-                          color: AppTheme.getTextColor()),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(member.name.split(' ').first,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9), 
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
       ),
     );
   }
@@ -663,63 +725,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildEnergySection(List<UserModel> members) {
-    if (members.isEmpty) {
-      return Container(
-        height: 110,
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        child: const ShimmerListPlaceholder(),
-      );
-    }
-    return SizedBox(
-      height: 110,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: members.length,
-        itemBuilder: (_, i) {
-          final m = members[i];
-          Color avatarColor;
-          try {
-            avatarColor = Color(m.colorValue as int);
-          } catch (_) {
-            avatarColor = AppTheme.getDayAccentColor();
-          }
-          final energyText = ['', '😔 Låg', '😌 OK', '😊 Bra', '🚀 Topp'][
-              m.energy.clamp(1, 4)];
-          return Container(
-            width: 85,
-            margin: const EdgeInsets.only(right: 10),
-            padding: const EdgeInsets.all(10),
-            decoration: AppTheme.cardDecoration(radius: 16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: avatarColor,
-                  child: Text(
-                      m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 4),
-                Text(m.name.split(' ').first,
-                    style: const TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis),
-                Text(energyText,
-                    style: const TextStyle(fontSize: 10),
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   Widget _buildChoreSummary(List<QueryDocumentSnapshot> chores) {
     final total = chores.length;
     final done = chores.where((d) {
@@ -845,84 +850,6 @@ class _DashboardPageState extends State<DashboardPage>
       'Fredag', 'Lördag', 'Söndag'
     ];
     return days[weekday.clamp(1, 7)];
-  }
-}
-
-class _EnergySheet extends StatelessWidget {
-  final UserModel user;
-  const _EnergySheet({required this.user});
-
-  @override
-  Widget build(BuildContext context) {
-    final levels = [
-      {'energy': 1, 'emoji': '😔', 'label': 'Låg energi'},
-      {'energy': 2, 'emoji': '😌', 'label': 'Lite trött'},
-      {'energy': 3, 'emoji': '😊', 'label': 'Bra energi'},
-      {'energy': 4, 'emoji': '🚀', 'label': 'Full energi!'},
-    ];
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40, height: 4,
-            decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(height: 16),
-          Text('Hur mår du idag?',
-              style: AppTheme.sectionTitleStyle),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: levels.map((l) {
-              final selected = user.energy == l['energy'];
-              return GestureDetector(
-                onTap: () {
-                  UserService.updateEnergy(
-                      user.uid, l['energy'] as int);
-                  Navigator.pop(context);
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? AppTheme.getDayAccentColor()
-                            .withValues(alpha: 0.15)
-                        : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(16),
-                    border: selected
-                        ? Border.all(
-                            color: AppTheme.getDayAccentColor(),
-                            width: 2)
-                        : null,
-                  ),
-                  child: Column(
-                    children: [
-                      Text(l['emoji'] as String,
-                          style: const TextStyle(fontSize: 32)),
-                      const SizedBox(height: 4),
-                      Text(l['label'] as String,
-                          style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
   }
 }
 
