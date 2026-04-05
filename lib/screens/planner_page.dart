@@ -106,7 +106,7 @@ class _PlannerPageState extends State<PlannerPage>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _AddEventSheet(
+      builder: (_) => AddEventSheet(
         selectedDay: _selectedDay,
         familyMembers: _familyMembers,
         familyId: _currentUser?.familyId ?? '',
@@ -268,7 +268,11 @@ class _PlannerPageState extends State<PlannerPage>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       decoration: AppTheme.cardDecoration(),
-      child: TableCalendar(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Material(
+          color: Colors.transparent,
+          child: TableCalendar(
         firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
         availableGestures: AvailableGestures.horizontalSwipe, 
@@ -295,6 +299,8 @@ class _PlannerPageState extends State<PlannerPage>
         headerStyle: const HeaderStyle(
           formatButtonVisible: false, titleCentered: true,
           titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
         ),
       ),
     );
@@ -420,7 +426,7 @@ class _ActivityCard extends StatelessWidget {
                     context: context,
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
-                    builder: (_) => _AddEventSheet(
+                    builder: (_) => AddEventSheet(
                       selectedDay: date ?? DateTime.now(),
                       familyMembers: familyMembers,
                       familyId: currentUser?.familyId,
@@ -510,7 +516,7 @@ class _FocusCard extends StatelessWidget {
                   context: context,
                   isScrollControlled: true,
                   backgroundColor: Colors.transparent,
-                  builder: (_) => _AddEventSheet(
+                  builder: (_) => AddEventSheet(
                     selectedDay: date ?? DateTime.now(),
                     familyMembers: familyMembers,
                     familyId: currentUser?.familyId,
@@ -532,17 +538,17 @@ class _FocusCard extends StatelessWidget {
   }
 }
 
-class _AddEventSheet extends StatefulWidget {
+class AddEventSheet extends StatefulWidget {
   final DateTime selectedDay;
   final List<UserModel> familyMembers;
   final String? familyId;
   final QueryDocumentSnapshot? eventToEdit;
-  const _AddEventSheet({required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
+  const AddEventSheet({super.key, required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
   @override
-  State<_AddEventSheet> createState() => _AddEventSheetState();
+  State<AddEventSheet> createState() => _AddEventSheetState();
 }
 
-class _AddEventSheetState extends State<_AddEventSheet> {
+class _AddEventSheetState extends State<AddEventSheet> {
   int _step = 0;
   String _pik = '📅';
   String _cat = 'Alla';

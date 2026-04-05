@@ -25,7 +25,7 @@ class NotificationService {
       iOS: initializationSettingsIOS,
     );
 
-    await _notificationsPlugin.initialize(initializationSettings);
+    await _notificationsPlugin.initialize(settings: initializationSettings);
   }
 
   static Future<void> scheduleActivityNotification(
@@ -37,11 +37,9 @@ class NotificationService {
     if (scheduledTime.isBefore(DateTime.now())) return;
 
     await _notificationsPlugin.zonedSchedule(
-      id,
-      'Aktivitet börjar snart! ⏰',
-      '$title börjar om 15 minuter.',
-      tz.TZDateTime.from(scheduledTime, tz.local),
-      const NotificationDetails(
+      id: id,
+      scheduledDate: tz.TZDateTime.from(scheduledTime, tz.local),
+      notificationDetails: const NotificationDetails(
         android: AndroidNotificationDetails(
           'activity_channel',
           'Aktiviteter',
@@ -51,12 +49,12 @@ class NotificationService {
         ),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
+      title: 'Aktivitet börjar snart! ⏰',
+      body: '$title börjar om 15 minuter.',
     );
   }
 
   static Future<void> cancelNotification(int id) async {
-    await _notificationsPlugin.cancel(id);
+    await _notificationsPlugin.cancel(id: id);
   }
 }

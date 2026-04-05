@@ -351,7 +351,7 @@ class _ChoresPageState extends State<ChoresPage>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _AddChoreSheet(
+      builder: (_) => AddChoreSheet(
         familyMembers: provider.familyMembers,
         familyId: provider.currentUser?.familyId ?? '',
       ),
@@ -472,29 +472,75 @@ class _ChoreCardState extends State<_ChoreCard> with SingleTickerProviderStateMi
           child: Column(children: [
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              child: Row(children: [
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
                 Text(pik, style: const TextStyle(fontSize: 24)),
                 const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
-                      decoration: isDone ? TextDecoration.lineThrough : null)),
-                  if (who.isNotEmpty) Text(who, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                ])),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(10)),
-                  child: Text('+$points ⭐', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          decoration:
+                              isDone ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                      if (who.isNotEmpty)
+                        Text(
+                          who,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '+$points ⭐',
+                      maxLines: 1,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.amber,
+                      ),
+                    ),
+                  ),
                 ),
                 PopupMenuButton<String>(
                   icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
                   padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 36,
+                    minHeight: 36,
+                  ),
                   onSelected: (val) {
                     if (val == 'edit') {
                       showModalBottomSheet(
                         context: context,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,
-                        builder: (_) => _AddChoreSheet(
+                        builder: (_) => AddChoreSheet(
                           familyMembers: widget.familyMembers,
                           familyId: widget.currentUser?.familyId,
                           choreToEdit: widget.doc,
@@ -597,16 +643,16 @@ class _FocusChoreCard extends StatelessWidget {
   }
 }
 
-class _AddChoreSheet extends StatefulWidget {
+class AddChoreSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String? familyId;
   final QueryDocumentSnapshot? choreToEdit;
-  const _AddChoreSheet({required this.familyMembers, this.familyId, this.choreToEdit});
+  const AddChoreSheet({super.key, required this.familyMembers, this.familyId, this.choreToEdit});
   @override
-  State<_AddChoreSheet> createState() => _AddChoreSheetState();
+  State<AddChoreSheet> createState() => _AddChoreSheetState();
 }
 
-class _AddChoreSheetState extends State<_AddChoreSheet> {
+class _AddChoreSheetState extends State<AddChoreSheet> {
   String _pik = '✅'; String _cat = 'Alla'; String _q = '';
   int _step = 0;
   final _title = TextEditingController();
