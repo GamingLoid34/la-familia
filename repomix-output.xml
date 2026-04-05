@@ -53,15 +53,22 @@ android/.gitignore
 android/app/build.gradle.kts
 android/app/src/debug/AndroidManifest.xml
 android/app/src/main/AndroidManifest.xml
-android/app/src/main/kotlin/com/example/myapp/MainActivity.kt
+android/app/src/main/kotlin/com/lafamilia/app/MainActivity.kt
+android/app/src/main/res/drawable-hdpi/ic_launcher_foreground.png
+android/app/src/main/res/drawable-mdpi/ic_launcher_foreground.png
 android/app/src/main/res/drawable-v21/launch_background.xml
+android/app/src/main/res/drawable-xhdpi/ic_launcher_foreground.png
+android/app/src/main/res/drawable-xxhdpi/ic_launcher_foreground.png
+android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png
 android/app/src/main/res/drawable/launch_background.xml
+android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 android/app/src/main/res/values-night/styles.xml
+android/app/src/main/res/values/colors.xml
 android/app/src/main/res/values/styles.xml
 android/app/src/profile/AndroidManifest.xml
 android/build.gradle.kts
@@ -72,6 +79,7 @@ assets/images/logo.png
 assets/images/valladares.png
 firebase.json
 firestore.rules
+fix_context.js
 GEMINI.md
 lib/app_theme.dart
 lib/data/piktogram.dart
@@ -116,6 +124,47 @@ web/manifest.json
 <files>
 This section contains the contents of the repository's files.
 
+<file path="android/app/src/main/kotlin/com/lafamilia/app/MainActivity.kt">
+package com.lafamilia.app
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity: FlutterActivity() {
+}
+</file>
+
+<file path="fix_context.js">
+const fs = require('fs');
+const path = require('path');
+
+function walk(dir) {
+    let results = [];
+    const list = fs.readdirSync(dir);
+    list.forEach(function(file) {
+        file = dir + '/' + file;
+        const stat = fs.statSync(file);
+        if (stat && stat.isDirectory()) { 
+            results = results.concat(walk(file));
+        } else { 
+            if (file.endsWith('.dart')) results.push(file);
+        }
+    });
+    return results;
+}
+
+const files = walk('./lib');
+files.forEach(f => {
+    let raw = fs.readFileSync(f, 'utf8');
+    let oldRaw = raw;
+    raw = raw.replace(/AppTheme\.([A-Za-z]+)\(context\)/g, 'AppTheme.$1()');
+    raw = raw.replace(/AppTheme\.([A-Za-z]+)\(context, /g, 'AppTheme.$1(');
+    if (raw !== oldRaw) {
+        fs.writeFileSync(f, raw, 'utf8');
+        console.log('Fixed: ' + f);
+    }
+});
+</file>
+
 <file path=".claude/settings.local.json">
 {
   "permissions": {
@@ -139,46 +188,6 @@ This section contains the contents of the repository's files.
     ]
   }
 }
-</file>
-
-<file path=".firebase/hosting.YnVpbGRcd2Vi.cache">
-version.json,1775324230798,f3a853216516e6cef2dca480d161b278b5706a7462b14ed6f9208d4d03fbd638
-manifest.json,1775298517416,2204546c94b076c5975f57c6e20523744bc6c417c6695692eda5326860b6bbc2
-flutter_service_worker.js,1775324237171,c73b271847ffc78c576de35e95f6b46187eefb1d97dcb08eb9d84c45954ff310
-index.html,1775324174150,99380a45e203533401acdec53cce2ef962a90fe9ea1eb967b425226b745f340b
-flutter.js,1775306664517,f18220d166d49cbef02491208c46f2c5e54db9739184e304fc55b199b5724407
-favicon.png,1775298517411,19880e004e8357a51f6a64f5d1fdc8828a6432fe9c781f8acb6b730eced2cd13
-icons/Icon-512.png,1775298517413,1de493563deb283e6ad70f0d5a89cfd61e37343df3b919c9862c5a41699ac5bc
-icons/Icon-maskable-192.png,1775298517413,f7ac56197638aec92f195c5344d15395c2cbf8a5ae74e846c5b4156b64f05e38
-icons/Icon-192.png,1775298517412,5fd961c51d8eb53baacac01f8e53743a76f66a43390a11f5df042e8c618ad64a
-assets/FontManifest.json,1775324231086,e38b95988f5d060cf9b7ce97cb5ac9236d6f4cc04a11d69567df97b2b4cbc5e5
-assets/AssetManifest.bin,1775324231085,6a8e13dda1992abdb92de7939bf36de221d021a672e065dfe9bbeb0cad9c8086
-assets/AssetManifest.bin.json,1775324231086,c0d3e5a34fa15b9ff6541d10a785e9a20eaaeaafb2ed99f901b249e37c9a590c
-assets/packages/cupertino_icons/assets/CupertinoIcons.ttf,1775324233152,d41473de1f7708a0702d7f19327693486512db442f6ab0cf7774e6d6576f9fcb
-assets/shaders/stretch_effect.frag,1775324231410,df37894a7ac7854986bfa5d515e9af03d9138bb77be4d027db848785ebe9e357
-assets/fonts/MaterialIcons-Regular.otf,1775324233153,ae2207622b449bb19d48b772eeee025d3ea492cd58f6a37e849c77da8ae95b15
-assets/shaders/ink_sparkle.frag,1775324231404,9d529f4d93e5dabf338537416221237a0042f9cee61c98a357340d0273c67293
-flutter_bootstrap.js,1775324174132,3ee6fbbc060affcf634ccea6468cb4ea16ad3495b8b31eaa1c5c37e3787aa4cc
-icons/Icon-maskable-512.png,1775298517414,ea58e5c49bc4dcdc5db0a9fe2f25b2a3152f85ef9094f0d020de0aa318451a1d
-canvaskit/wimp.js,1775306664175,23db45b93eec24dd6db46ac5a6fafbf0063eb50c0dcd7d253f774e050ab1baa3
-canvaskit/skwasm.js,1775306663834,91ea675d523ad0a19696479888658953e290f9798a43dae6b87d9ab60cc40c1a
-canvaskit/skwasm_heavy.js,1775306663999,dd3642e247a1ea4a8c519b76278011bb194471c590373ae2659f1d3cb793287c
-canvaskit/canvaskit.js,1775306663646,e0e67f4b85a07ff9b9861c9f49bf88860368ec96fb4115c0d4684f54596f9700
-canvaskit/chromium/canvaskit.js,1775306664350,ed67753aa5382460fefd96876bf5dc40c5d242d56b37664abc8468a6772478df
-assets/assets/images/logo.png,1775298517379,f5a84d97fe6bd080986230552cb400de95987d8f4d7d079fd4404688b44c658e
-assets/assets/images/valladares.png,1775298517382,a266ffc1ea6d5ef6e8585c78311311b3556e690887dda56e6845df3d3bd0b114
-assets/NOTICES,1775324231086,abc191a14967f61c7eccfe521648cb6648ba367f35385ac250405e14264528ab
-canvaskit/chromium/canvaskit.js.symbols,1775306664384,17bdb78398d7be0b2662ad813c7f9387f79014aee6f1e3b7bf39dfe81e6b8b90
-canvaskit/canvaskit.js.symbols,1775306663681,a03cf8cdedf01be4a751225fa1bceadf8a783cb512ff87336bf76bb329fb29db
-canvaskit/skwasm.js.symbols,1775306663871,91b787a0cd397c3cd089dc81519200c5bc35bfafa2996bb5ed4b1159553973f5
-canvaskit/wimp.js.symbols,1775306664210,cb643fbb407efb3d6735f5909c4ffd84bed8c3d8ce4840f72eb06471b18d8454
-canvaskit/skwasm_heavy.js.symbols,1775306664037,d43798c11b7dbd26872e27d20df1c6c43637ebb95b4cc41fd19ff092ab2565bd
-canvaskit/wimp.wasm,1775306664267,77abd773ba1776b6ce7b029866621aa42ec8a22dc43dd220af4896049260cb0a
-canvaskit/skwasm.wasm,1775306663929,ad393be86fb17a251e0af39e56bcae5c26a4b9f20adbce626e0b7df796d89368
-main.dart.js,1775324216602,77b08f2127d4f070d0ba77d30b8b5f3ecbaedf929253b650035515e4ad6cb77c
-canvaskit/chromium/canvaskit.wasm,1775306664460,b3c17e127e4e8e4912409c050050f6f63a718b6f9618a7ec388948f2493174a6
-canvaskit/skwasm_heavy.wasm,1775306664111,acebd34ce89ba97c086405163d12ce74336e41bb7cca4e2fcd5011ecfabd945c
-canvaskit/canvaskit.wasm,1775306663768,67768ebd7649dfe70c348374dc34b732152d42467c2c335701958ba1be0949c8
 </file>
 
 <file path=".firebase/hosting.YnVpbGQvd2Vi.cache">
@@ -214,6 +223,46 @@ canvaskit/skwasm.wasm,1767871335207,d00915baf5d50c49441aaba33a702fdaf8b34fb3a5a9
 canvaskit/skwasm_heavy.wasm,1767871335182,e1eccbaee5bf3f880c3d6f69fe132d6b915b6e8871113b582fe40f7072e54e5d
 canvaskit/chromium/canvaskit.wasm,1767871335051,168318227f6e74b3cfe56cc07c24a60f3054010b48138c4a0997c7c4ccc9f2cf
 canvaskit/canvaskit.wasm,1767871335246,cf0ee02cc5909efb4d2f07f036e8d59e679af612f51e2bce2a0d9f82e044842a
+</file>
+
+<file path=".firebase/hosting.YnVpbGRcd2Vi.cache">
+manifest.json,1775298517416,2204546c94b076c5975f57c6e20523744bc6c417c6695692eda5326860b6bbc2
+flutter.js,1775306664517,f18220d166d49cbef02491208c46f2c5e54db9739184e304fc55b199b5724407
+favicon.png,1775298517411,19880e004e8357a51f6a64f5d1fdc8828a6432fe9c781f8acb6b730eced2cd13
+icons/Icon-maskable-512.png,1775298517414,ea58e5c49bc4dcdc5db0a9fe2f25b2a3152f85ef9094f0d020de0aa318451a1d
+icons/Icon-maskable-192.png,1775298517413,f7ac56197638aec92f195c5344d15395c2cbf8a5ae74e846c5b4156b64f05e38
+icons/Icon-512.png,1775298517413,1de493563deb283e6ad70f0d5a89cfd61e37343df3b919c9862c5a41699ac5bc
+icons/Icon-192.png,1775298517412,5fd961c51d8eb53baacac01f8e53743a76f66a43390a11f5df042e8c618ad64a
+canvaskit/wimp.wasm,1775306664267,77abd773ba1776b6ce7b029866621aa42ec8a22dc43dd220af4896049260cb0a
+canvaskit/wimp.js.symbols,1775306664210,cb643fbb407efb3d6735f5909c4ffd84bed8c3d8ce4840f72eb06471b18d8454
+canvaskit/wimp.js,1775306664175,23db45b93eec24dd6db46ac5a6fafbf0063eb50c0dcd7d253f774e050ab1baa3
+canvaskit/skwasm_heavy.wasm,1775306664111,acebd34ce89ba97c086405163d12ce74336e41bb7cca4e2fcd5011ecfabd945c
+canvaskit/skwasm_heavy.js.symbols,1775306664037,d43798c11b7dbd26872e27d20df1c6c43637ebb95b4cc41fd19ff092ab2565bd
+canvaskit/skwasm_heavy.js,1775306663999,dd3642e247a1ea4a8c519b76278011bb194471c590373ae2659f1d3cb793287c
+canvaskit/skwasm.wasm,1775306663929,ad393be86fb17a251e0af39e56bcae5c26a4b9f20adbce626e0b7df796d89368
+canvaskit/skwasm.js.symbols,1775306663871,91b787a0cd397c3cd089dc81519200c5bc35bfafa2996bb5ed4b1159553973f5
+canvaskit/skwasm.js,1775306663834,91ea675d523ad0a19696479888658953e290f9798a43dae6b87d9ab60cc40c1a
+canvaskit/canvaskit.wasm,1775306663768,67768ebd7649dfe70c348374dc34b732152d42467c2c335701958ba1be0949c8
+canvaskit/canvaskit.js.symbols,1775306663681,a03cf8cdedf01be4a751225fa1bceadf8a783cb512ff87336bf76bb329fb29db
+canvaskit/canvaskit.js,1775306663646,e0e67f4b85a07ff9b9861c9f49bf88860368ec96fb4115c0d4684f54596f9700
+canvaskit/chromium/canvaskit.wasm,1775306664460,b3c17e127e4e8e4912409c050050f6f63a718b6f9618a7ec388948f2493174a6
+canvaskit/chromium/canvaskit.js.symbols,1775306664384,17bdb78398d7be0b2662ad813c7f9387f79014aee6f1e3b7bf39dfe81e6b8b90
+canvaskit/chromium/canvaskit.js,1775306664350,ed67753aa5382460fefd96876bf5dc40c5d242d56b37664abc8468a6772478df
+assets/assets/images/valladares.png,1775298517382,a266ffc1ea6d5ef6e8585c78311311b3556e690887dda56e6845df3d3bd0b114
+assets/assets/images/logo.png,1775298517379,f5a84d97fe6bd080986230552cb400de95987d8f4d7d079fd4404688b44c658e
+version.json,1775325641623,f3a853216516e6cef2dca480d161b278b5706a7462b14ed6f9208d4d03fbd638
+index.html,1775325593867,99380a45e203533401acdec53cce2ef962a90fe9ea1eb967b425226b745f340b
+assets/FontManifest.json,1775325641868,e38b95988f5d060cf9b7ce97cb5ac9236d6f4cc04a11d69567df97b2b4cbc5e5
+flutter_service_worker.js,1775325647548,c73b271847ffc78c576de35e95f6b46187eefb1d97dcb08eb9d84c45954ff310
+assets/AssetManifest.bin,1775325641868,6a8e13dda1992abdb92de7939bf36de221d021a672e065dfe9bbeb0cad9c8086
+assets/AssetManifest.bin.json,1775325641868,c0d3e5a34fa15b9ff6541d10a785e9a20eaaeaafb2ed99f901b249e37c9a590c
+flutter_bootstrap.js,1775325593857,39250813fbd014bf1de741ff6e6c71359d56ac159c0308670ceb9b088dbdbda9
+assets/shaders/stretch_effect.frag,1775325642034,df37894a7ac7854986bfa5d515e9af03d9138bb77be4d027db848785ebe9e357
+assets/shaders/ink_sparkle.frag,1775325642039,9d529f4d93e5dabf338537416221237a0042f9cee61c98a357340d0273c67293
+assets/packages/cupertino_icons/assets/CupertinoIcons.ttf,1775325643667,d41473de1f7708a0702d7f19327693486512db442f6ab0cf7774e6d6576f9fcb
+assets/fonts/MaterialIcons-Regular.otf,1775325643670,ae2207622b449bb19d48b772eeee025d3ea492cd58f6a37e849c77da8ae95b15
+assets/NOTICES,1775325641869,abc191a14967f61c7eccfe521648cb6648ba367f35385ac250405e14264528ab
+main.dart.js,1775325630109,e37e3eab533f30615f46987b2f0e5cfe43cf0dfcc28e3a1bfb91dabfa3064dd0
 </file>
 
 <file path=".firebaserc">
@@ -381,14 +430,6 @@ key.properties
 </manifest>
 </file>
 
-<file path="android/app/src/main/kotlin/com/example/myapp/MainActivity.kt">
-package com.example.myapp
-
-import io.flutter.embedding.android.FlutterActivity
-
-class MainActivity : FlutterActivity()
-</file>
-
 <file path="android/app/src/main/res/drawable-v21/launch_background.xml">
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
@@ -419,6 +460,18 @@ class MainActivity : FlutterActivity()
 </layer-list>
 </file>
 
+<file path="android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <background android:drawable="@color/ic_launcher_background"/>
+  <foreground>
+      <inset
+          android:drawable="@drawable/ic_launcher_foreground"
+          android:inset="16%" />
+  </foreground>
+</adaptive-icon>
+</file>
+
 <file path="android/app/src/main/res/values-night/styles.xml">
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -437,6 +490,13 @@ class MainActivity : FlutterActivity()
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+</resources>
+</file>
+
+<file path="android/app/src/main/res/values/colors.xml">
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>
 </file>
 
@@ -2773,557 +2833,6 @@ lib/firebase_options.dart
 android/app/google-services.json
 </file>
 
-<file path="android/app/build.gradle.kts">
-plugins {
-    id("com.android.application")
-    // START: FlutterFire Configuration
-    id("com.google.gms.google-services")
-    // END: FlutterFire Configuration
-    id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id("dev.flutter.flutter-gradle-plugin")
-}
-
-android {
-    namespace = "com.lafamilia.app"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
-
-    defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.lafamilia.app"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
-    }
-
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
-        }
-    }
-}
-
-flutter {
-    source = "../.."
-}
-</file>
-
-<file path="android/app/src/main/AndroidManifest.xml">
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application
-        android:label="La Familia"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:taskAffinity=""
-            android:theme="@style/LaunchTheme"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-            android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
-            <meta-data
-              android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
-              />
-            <!-- Enable high refresh rate (120Hz) on supported devices -->
-            <meta-data
-              android:name="io.flutter.embedding.android.EnableVulkan"
-              android:value="true"
-              />
-            <meta-data
-              android:name="io.flutter.embedding.android.RequestedRefreshRate"
-              android:value="auto"
-              />
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
-        <meta-data
-            android:name="flutterEmbedding"
-            android:value="2" />
-    </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
-
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
-        </intent>
-    </queries>
-</manifest>
-</file>
-
-<file path="firebase.json">
-{
-  "firestore": {
-    "rules": "firestore.rules"
-  },
-  "hosting": {
-    "public": "build/web",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  },
-  "flutter": {
-    "platforms": {
-      "android": {
-        "default": {
-          "projectId": "la-familia-5d9f5",
-          "appId": "1:1062436758460:android:d753e6aee97cca85bb81b9",
-          "fileOutput": "android/app/google-services.json"
-        }
-      },
-      "dart": {
-        "lib/firebase_options.dart": {
-          "projectId": "la-familia-5d9f5",
-          "configurations": {
-            "android": "1:1062436758460:android:d753e6aee97cca85bb81b9",
-            "web": "1:1062436758460:web:df4155c095ec2692bb81b9"
-          }
-        }
-      }
-    }
-  }
-}
-</file>
-
-<file path="lib/app_theme.dart">
-import 'package:flutter/material.dart';
-
-class AppTheme {
-  // ─── NPF Day Colors ────────────────────────────────────────────────────────
-  static Color getNpfDayColor(int weekday) {
-    switch (weekday) {
-      case 1:
-        return const Color(0xFF6BAE75); // Monday  — sage green
-      case 2:
-        return const Color(0xFF7EB5D6); // Tuesday — slate blue
-      case 3:
-        return const Color(0xFFBDBDBD); // Wednesday — silver grey
-      case 4:
-        return const Color(0xFFA0714F); // Thursday — cognac brown
-      case 5:
-        return const Color(0xFFEDD87A); // Friday  — honey gold
-      case 6:
-        return const Color(0xFFE8A5B0); // Saturday — dusty rose
-      case 7:
-        return const Color(0xFFD95F4B); // Sunday  — brick red
-      default:
-        return const Color(0xFF6BAE75);
-    }
-  }
-
-  /// Returns dark text for light NPF days, white for saturated days.
-  static Color getNpfTextColor(int weekday) {
-    switch (weekday) {
-      case 3: // Wednesday grey
-      case 5: // Friday yellow
-      case 6: // Saturday rose
-        return const Color(0xFF1A1A2E);
-      default:
-        return Colors.white;
-    }
-  }
-
-  static Color getDayAccentColor([int? weekday]) =>
-      getNpfDayColor(weekday ?? DateTime.now().weekday);
-
-  // ─── App Background ────────────────────────────────────────────────────────
-  static BoxDecoration getBackground() {
-    final color = getNpfDayColor(DateTime.now().weekday);
-    return BoxDecoration(
-      color: Color.alphaBlend(
-        color.withValues(alpha: 0.08),
-        const Color(0xFFF5F0EB),
-      ),
-    );
-  }
-
-  // ─── Colors ────────────────────────────────────────────────────────────────
-  static Color getCardColor() => Colors.white;
-  static Color getTextColor() => const Color(0xFF1A1A2E);
-  static Color getSubTextColor() => Colors.grey.shade500;
-
-  // ─── Card Decoration ───────────────────────────────────────────────────────
-  static BoxDecoration cardDecoration({
-    double radius = 20,
-    Color? color,
-  }) =>
-      BoxDecoration(
-        color: color ?? Colors.white,
-        borderRadius: BorderRadius.circular(radius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      );
-
-  // ─── Event Icons ───────────────────────────────────────────────────────────
-  static IconData getEventIcon(String title, String type) {
-    final t = title.toLowerCase();
-    if (t.contains('läkare') || t.contains('bup') || t.contains('sjukhus'))
-      return Icons.local_hospital_rounded;
-    if (t.contains('skola') || t.contains('läxa')) return Icons.school_rounded;
-    if (t.contains('tandläkare') || t.contains('tand'))
-      return Icons.medical_services_rounded;
-    if (type == 'work' || t.contains('jobb')) return Icons.work_rounded;
-    if (type == 'food' || t.contains('middag') || t.contains('lunch'))
-      return Icons.restaurant_rounded;
-    if (t.contains('sport') || t.contains('fotboll') || t.contains('simning'))
-      return Icons.sports_rounded;
-    if (t.contains('möte')) return Icons.handshake_rounded;
-    return Icons.event_rounded;
-  }
-
-  // ─── Typography ────────────────────────────────────────────────────────────
-  static TextStyle get pageTitleStyle => const TextStyle(
-        fontSize: 28,
-        fontWeight: FontWeight.w700,
-        color: Color(0xFF1A1A2E),
-      );
-
-  static TextStyle get sectionLabelStyle => TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        color: Colors.grey.shade500,
-        letterSpacing: 0.08 * 11,
-      );
-
-  static TextStyle get sectionTitleStyle => const TextStyle(
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
-        color: Color(0xFF1A1A2E),
-      );
-
-  static TextStyle get cardTitleStyle => const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
-        color: Color(0xFF1A1A2E),
-      );
-
-  static TextStyle get bodyStyle => const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w400,
-        color: Color(0xFF1A1A2E),
-      );
-
-  static TextStyle get captionStyle => TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w400,
-        color: Colors.grey.shade500,
-      );
-}
-</file>
-
-<file path="lib/main.dart">
-import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'firebase_options.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-// Import av dina sidor
-import 'screens/dashboard_page.dart';
-import 'screens/planner_page.dart';
-import 'screens/chores_page.dart';
-import 'screens/settings_page.dart';
-import 'screens/login_page.dart';
-import 'screens/onboarding_page.dart';
-import 'screens/splash_screen.dart';
-import 'app_theme.dart';
-
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('sv');
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  FirebaseFirestore.instance.settings = const Settings(
-    persistenceEnabled: true,
-    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-  );
-
-  runApp(const MyApp());
-}
-
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  int _weekday = DateTime.now().weekday;
-  Timer? _midnightTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _scheduleMidnightRebuild();
-  }
-
-  void _scheduleMidnightRebuild() {
-    final now = DateTime.now();
-    final tomorrow = DateTime(now.year, now.month, now.day + 1);
-    _midnightTimer = Timer(tomorrow.difference(now), () {
-      if (mounted) {
-        setState(() => _weekday = DateTime.now().weekday);
-        _scheduleMidnightRebuild();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _midnightTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'La Familia',
-      debugShowCheckedModeBanner: false,
-      // --- Språkinställningar för svenska datum mm ---
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: const [Locale('sv', 'SE')],
-
-      themeMode: ThemeMode.light,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF5F0ED),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: AppTheme.getNpfDayColor(_weekday),
-          brightness: Brightness.light,
-        ),
-      ),
-      // Show splash screen first, it navigates to AuthWrapper when done
-      home: const SplashScreen(),
-    );
-  }
-}
-
-class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (snapshot.hasData) {
-          return const FamilyCheckWrapper();
-        }
-        return const LoginPage();
-      },
-    );
-  }
-}
-
-class FamilyCheckWrapper extends StatelessWidget {
-  const FamilyCheckWrapper({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return const LoginPage();
-
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (snapshot.hasData && snapshot.data!.exists) {
-          final data = snapshot.data!.data() as Map<String, dynamic>;
-          if (data['familyId'] != null &&
-              data['familyId'].toString().isNotEmpty) {
-            return const MainPage();
-          }
-        }
-
-        return const OnboardingPage();
-      },
-    );
-  }
-}
-
-class MainPage extends StatefulWidget {
-  const MainPage({super.key});
-
-  @override
-  State<MainPage> createState() => _MainPageState();
-}
-
-class _MainPageState extends State<MainPage> {
-  int _selectedIndex = 0;
-
-  // Listan över sidor
-  final List<Widget> _pages = [
-    const DashboardPage(), // Index 0: Hem
-    const PlannerPage(), // Index 1: Planering
-    const ChoresPage(), // Index 2: Sysslor
-    const SettingsPage(), // Index 3: Inställningar
-  ];
-
-  // När man klickar i menyn
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    int weekday = DateTime.now().weekday;
-    Color activeColor = AppTheme.getDayAccentColor(weekday);
-
-    final width = MediaQuery.of(context).size.width;
-    final isWide = width > 600;
-
-    Widget bodyContent = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 300),
-      child: _pages[_selectedIndex],
-    );
-
-    Widget bottomNav = Container(
-      margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BottomNavigationBar(
-          items: const <BottomNavigationBarItem>[
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
-              label: 'Hem',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.calendar_month_rounded),
-              label: 'Planering',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.cleaning_services_rounded),
-              label: 'Sysslor',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.settings_rounded),
-              label: 'Inställningar',
-            ),
-          ],
-          currentIndex: _selectedIndex,
-          backgroundColor: Colors.white,
-          selectedItemColor: activeColor,
-          unselectedItemColor: Colors.grey.shade400,
-          selectedIconTheme: const IconThemeData(
-            size: 28,
-          ), // Slight scale up (approx 1.1x from 24)
-          unselectedIconTheme: const IconThemeData(size: 24),
-          type: BottomNavigationBarType.fixed,
-          showUnselectedLabels: true,
-          onTap: _onItemTapped,
-          elevation: 0,
-        ),
-      ),
-    );
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
-      extendBody: true,
-      body: Center(
-        child: Container(
-          width: isWide ? 430 : double.infinity,
-          decoration: isWide
-              ? const BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                )
-              : null,
-          child: ClipRect(child: bodyContent),
-        ),
-      ),
-      bottomNavigationBar: isWide
-          ? SafeArea(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [SizedBox(width: 430, child: bottomNav)],
-              ),
-            )
-          : bottomNav,
-    );
-  }
-}
-</file>
-
 <file path="lib/screens/login_page.dart">
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -3697,643 +3206,6 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
-    );
-  }
-}
-</file>
-
-<file path="lib/screens/manage_members_page.dart">
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
-import '../app_theme.dart';
-import '../firebase_options.dart';
-
-class ManageMembersPage extends StatefulWidget {
-  const ManageMembersPage({super.key});
-
-  @override
-  State<ManageMembersPage> createState() => _ManageMembersPageState();
-}
-
-class _ManageMembersPageState extends State<ManageMembersPage> {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-
-  String _selectedColor = 'ff2196f3';
-  String _selectedRole = 'Barn';
-  String? _editingId;
-  bool _isLoading = false;
-
-  final List<String> _colors = [
-    'ff2196f3',
-    'fff44336',
-    'ff4caf50',
-    'ffff9800',
-    'ff9c27b0',
-    'ffe91e63',
-    'ff795548',
-    'ff607d8b',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  void _resetForm() {
-    _nameController.clear();
-    _emailController.clear();
-    _passwordController.clear();
-    setState(() {
-      _selectedColor = 'ff2196f3';
-      _selectedRole = 'Barn';
-      _editingId = null;
-    });
-  }
-
-  Future<void> _saveMember() async {
-    if (_nameController.text.isEmpty || _emailController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Fyll i namn och e-post!")));
-      return;
-    }
-
-    if (_editingId == null && _passwordController.text.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Lösenordet måste vara minst 6 tecken.")),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    // Användardata som ska sparas i Firestore. INGET LÖSENORD HÄR!
-    Map<String, dynamic> userData = {
-      'name': _nameController.text.trim(),
-      'email': _emailController.text.trim(),
-      'color': _selectedColor,
-      'role': _selectedRole,
-    };
-
-    try {
-      if (_editingId == null) {
-        // **SÄKERHETSFIX: Skapa användare via Firebase Auth istället för att spara lösenord.**
-        // En temporär Firebase-app används för att skapa en ny användare utan att logga ut den nuvarande admin-användaren.
-
-        FirebaseApp secondaryApp;
-        try {
-          secondaryApp = Firebase.app('SecondaryApp');
-        } catch (e) {
-          secondaryApp = await Firebase.initializeApp(
-            name: 'SecondaryApp',
-            options: DefaultFirebaseOptions.currentPlatform,
-          );
-        }
-
-        UserCredential userCredential =
-            await FirebaseAuth.instanceFor(
-              app: secondaryApp,
-            ).createUserWithEmailAndPassword(
-              email: _emailController.text.trim(),
-              password: _passwordController.text.trim(),
-            );
-
-        final uid = userCredential.user?.uid;
-        if (uid == null) {
-          throw Exception("Kunde inte hämta UID från Firebase Auth.");
-        }
-
-        // **FÖRBÄTTRING: Använd UID från Auth som dokument-ID i Firestore.**
-        // Detta skapar en direkt koppling mellan autentiseringsprofilen och användardatat.
-        userData['created_at'] = FieldValue.serverTimestamp();
-        userData['uid'] = uid; // Behålls för enkel åtkomst i regler och querys.
-
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .set(userData);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Medlem skapad säkert!")));
-      } else {
-        // Vid uppdatering ändras bara Firestore-datan, inte lösenordet.
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(_editingId)
-            .update(userData);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Medlem uppdaterad!")));
-      }
-      _resetForm();
-    } on FirebaseAuthException catch (e) {
-      String msg = "Ett fel uppstod vid skapandet av kontot.";
-      if (e.code == 'email-already-in-use')
-        msg = "Denna e-postadress används redan.";
-      if (e.code == 'invalid-email')
-        msg = "E-postadressen är felaktigt formaterad.";
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Något gick helt fel: $e"),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Color textColor = AppTheme.getTextColor();
-
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: Text(
-          "Hantera Medlemmar",
-          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: IconThemeData(color: textColor),
-      ),
-      body: Center(child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Container(
-        height: double.infinity,
-        decoration: AppTheme.getBackground(),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black12,
-                        blurRadius: 10,
-                        offset: Offset(0, 5),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _editingId == null
-                            ? "Lägg till ny medlem"
-                            : "Redigera medlem",
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-                      const Text(
-                        "Profilfärg",
-                        style: TextStyle(color: Colors.black54),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 12,
-                        children: _colors
-                            .map(
-                              (colorHex) => GestureDetector(
-                                onTap: () =>
-                                    setState(() => _selectedColor = colorHex),
-                                child: CircleAvatar(
-                                  backgroundColor: Color(
-                                    int.parse(colorHex, radix: 16),
-                                  ),
-                                  radius: 18,
-                                  child: _selectedColor == colorHex
-                                      ? const Icon(
-                                          Icons.check,
-                                          color: Colors.white,
-                                          size: 16,
-                                        )
-                                      : null,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                      const SizedBox(height: 20),
-
-                      _input("Namn", _nameController, Icons.person),
-                      const SizedBox(height: 10),
-
-                      _input("E-post", _emailController, Icons.email),
-                      const SizedBox(height: 10),
-
-                      if (_editingId == null) ...[
-                        _input(
-                          "Lösenord (minst 6 tecken)",
-                          _passwordController,
-                          Icons.lock,
-                          isObscure: true,
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedRole,
-                            isExpanded: true,
-                            items: ['Barn', 'Förälder', 'Admin'].map((
-                              String value,
-                            ) {
-                              return DropdownMenuItem<String>(
-                                value: value,
-                                child: Text(value),
-                              );
-                            }).toList(),
-                            onChanged: (newValue) {
-                              setState(() {
-                                _selectedRole = newValue!;
-                              });
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: _isLoading ? null : _saveMember,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: _isLoading
-                              ? const CircularProgressIndicator(
-                                  color: Colors.white,
-                                )
-                              : Text(
-                                  _editingId == null
-                                      ? "Lägg till"
-                                      : "Spara ändringar",
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ))),
-    );
-  }
-
-  Widget _input(
-    String label,
-    TextEditingController controller,
-    IconData icon, {
-    bool isObscure = false,
-  }) {
-    return TextField(
-      controller: controller,
-      obscureText: isObscure,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon, color: Colors.blueAccent),
-        filled: true,
-        fillColor: Colors.grey[100],
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide.none,
-        ),
-      ),
-    );
-  }
-}
-</file>
-
-<file path="lib/screens/manage_templates_page.dart">
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../app_theme.dart';
-
-class ManageTemplatesPage extends StatefulWidget {
-  const ManageTemplatesPage({super.key});
-
-  @override
-  State<ManageTemplatesPage> createState() => _ManageTemplatesPageState();
-}
-
-class _ManageTemplatesPageState extends State<ManageTemplatesPage> {
-  // För att lägga till ny mall
-  final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _stepController = TextEditingController();
-  List<String> _currentSteps = [];
-  String? _editingId; // Om vi redigerar en befintlig
-
-  void _addStep() {
-    if (_stepController.text.isNotEmpty) {
-      setState(() {
-        _currentSteps.add(_stepController.text);
-        _stepController.clear();
-      });
-    }
-  }
-
-  void _removeStep(int index) {
-    setState(() {
-      _currentSteps.removeAt(index);
-    });
-  }
-
-  Future<void> _saveTemplate() async {
-    if (_titleController.text.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Mallen måste ha ett namn")));
-      return;
-    }
-
-    Map<String, dynamic> data = {
-      'title': _titleController.text, // T.ex. "Städa"
-      'steps': _currentSteps, // T.ex. ["Plocka golv", "Bädda"]
-    };
-
-    if (_editingId == null) {
-      await FirebaseFirestore.instance.collection('chore_templates').add(data);
-    } else {
-      await FirebaseFirestore.instance
-          .collection('chore_templates')
-          .doc(_editingId)
-          .update(data);
-    }
-
-    _resetForm();
-  }
-
-  void _editTemplate(DocumentSnapshot doc) {
-    var data = doc.data() as Map;
-    setState(() {
-      _editingId = doc.id;
-      _titleController.text = data['title'];
-      _currentSteps = List<String>.from(data['steps'] ?? []);
-    });
-  }
-
-  Future<void> _deleteTemplate(String docId) async {
-    await FirebaseFirestore.instance
-        .collection('chore_templates')
-        .doc(docId)
-        .delete();
-  }
-
-  void _resetForm() {
-    setState(() {
-      _editingId = null;
-      _titleController.clear();
-      _stepController.clear();
-      _currentSteps = [];
-    });
-    FocusScope.of(context).unfocus(); // Stäng tangentbordet
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Color textColor = AppTheme.getTextColor();
-
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: Text(
-          "Hantera Mallar",
-          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        iconTheme: IconThemeData(color: textColor),
-      ),
-      body: Center(child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 430),
-        child: Container(
-        height: double.infinity,
-        decoration: AppTheme.getBackground(),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // --- FORMULÄR ---
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(color: Colors.black12, blurRadius: 10),
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _editingId == null ? "Skapa ny mall" : "Redigera mall",
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-                      TextField(
-                        controller: _titleController,
-                        decoration: InputDecoration(
-                          labelText: "Rubrik (t.ex. Städa rummet)",
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-                      const Text(
-                        "Delmoment:",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      ..._currentSteps.asMap().entries.map(
-                        (entry) => ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(
-                            Icons.check_box_outline_blank,
-                            size: 18,
-                          ),
-                          title: Text(entry.value),
-                          trailing: IconButton(
-                            icon: const Icon(
-                              Icons.close,
-                              color: Colors.red,
-                              size: 18,
-                            ),
-                            onPressed: () => _removeStep(entry.key),
-                          ),
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _stepController,
-                              decoration: const InputDecoration(
-                                hintText: "Lägg till steg...",
-                                isDense: true,
-                              ),
-                              onSubmitted: (_) => _addStep(),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.add_circle,
-                              color: Colors.blue,
-                            ),
-                            onPressed: _addStep,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        children: [
-                          if (_editingId != null)
-                            Expanded(
-                              child: TextButton(
-                                onPressed: _resetForm,
-                                child: const Text("Avbryt"),
-                              ),
-                            ),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: _saveTemplate,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blueAccent,
-                              ),
-                              child: const Text(
-                                "SPARA",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 30),
-                Text(
-                  "Dina Mallar",
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                  ),
-                ),
-                const SizedBox(height: 10),
-
-                // --- LISTA PÅ BEFINTLIGA MALLAR ---
-                StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('chore_templates')
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData)
-                      return const Center(child: CircularProgressIndicator());
-                    var docs = snapshot.data!.docs;
-
-                    return ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        var data = docs[index].data() as Map;
-                        List steps = data['steps'] ?? [];
-
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.9),
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: ListTile(
-                            title: Text(
-                              data['title'],
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            subtitle: Text("${steps.length} delmoment"),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.edit,
-                                    color: Colors.blue,
-                                  ),
-                                  onPressed: () => _editTemplate(docs[index]),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () =>
-                                      _deleteTemplate(docs[index].id),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-                const SizedBox(height: 50),
-              ],
-            ),
-          ),
-        ),
-      ))),
     );
   }
 }
@@ -7218,6 +6090,1125 @@ class _AnimatedCheckItemState extends State<_AnimatedCheckItem>
 }
 </file>
 
+<file path="web/index.html">
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="La Familia">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>La Familia</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>
+</file>
+
+<file path="web/manifest.json">
+{
+    "name": "La Familia",
+    "short_name": "La Familia",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0175C2",
+    "theme_color": "#0175C2",
+    "description": "La Familia app.",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}
+</file>
+
+<file path="android/app/build.gradle.kts">
+plugins {
+    id("com.android.application")
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services")
+    // END: FlutterFire Configuration
+    id("kotlin-android")
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+android {
+    namespace = "com.lafamilia.app"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_11.toString()
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "com.lafamilia.app"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+</file>
+
+<file path="android/app/src/main/AndroidManifest.xml">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:label="La Familia"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+    </queries>
+</manifest>
+</file>
+
+<file path="firebase.json">
+{"firestore":{"rules":"firestore.rules"},"hosting":{"public":"build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"android":{"default":{"projectId":"la-familia-5d9f5","appId":"1:1062436758460:android:582e05e37d8cadccbb81b9","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"la-familia-5d9f5","configurations":{"android":"1:1062436758460:android:582e05e37d8cadccbb81b9","web":"1:1062436758460:web:4c46764483a57ab7bb81b9"}}}}}}
+</file>
+
+<file path="lib/app_theme.dart">
+import 'package:flutter/material.dart';
+
+class AppTheme {
+  // ─── NPF Day Colors ────────────────────────────────────────────────────────
+  static Color getNpfDayColor(int weekday) {
+    switch (weekday) {
+      case 1:
+        return const Color(0xFF6BAE75); // Monday  — sage green
+      case 2:
+        return const Color(0xFF7EB5D6); // Tuesday — slate blue
+      case 3:
+        return const Color(0xFFBDBDBD); // Wednesday — silver grey
+      case 4:
+        return const Color(0xFFA0714F); // Thursday — cognac brown
+      case 5:
+        return const Color(0xFFEDD87A); // Friday  — honey gold
+      case 6:
+        return const Color(0xFFE8A5B0); // Saturday — dusty rose
+      case 7:
+        return const Color(0xFFD95F4B); // Sunday  — brick red
+      default:
+        return const Color(0xFF6BAE75);
+    }
+  }
+
+  /// Används om man fortfarande har en färgad bakgrundsyta någonstans
+  static Color getNpfTextColor(int weekday) {
+    switch (weekday) {
+      case 3: // Wednesday grey
+      case 5: // Friday yellow
+      case 6: // Saturday rose
+        return const Color(0xFF1A1A2E);
+      default:
+        return Colors.white;
+    }
+  }
+
+  static Color getDayAccentColor([int? weekday]) =>
+      getNpfDayColor(weekday ?? DateTime.now().weekday);
+
+  // ─── App Background ────────────────────────────────────────────────────────
+  static BoxDecoration getBackground() {
+    // DESIGNUPPDATERING: En helt ren och fräsch ljusgrå/benvit bakgrund!
+    return const BoxDecoration(
+      color: Color(0xFFF4F6F8),
+    );
+  }
+
+  // ─── Colors ────────────────────────────────────────────────────────────────
+  static Color getCardColor() => Colors.white;
+  static Color getTextColor() => const Color(0xFF1A1A2E);
+  static Color getSubTextColor() => Colors.grey.shade500;
+
+  // ─── Card Decoration ───────────────────────────────────────────────────────
+  static BoxDecoration cardDecoration({
+    double radius = 24, // Lite rundare hörn för modernare look
+    Color? color,
+  }) =>
+      BoxDecoration(
+        color: color ?? Colors.white,
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          // DESIGNUPPDATERING: Mycket mjukare och bredare skugga för svävande känsla
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+        // Diskret ram för att separera ljusa ytor
+        border: Border.all(color: Colors.black.withValues(alpha: 0.02)),
+      );
+
+  // ─── Event Icons ───────────────────────────────────────────────────────────
+  static IconData getEventIcon(String title, String type) {
+    final t = title.toLowerCase();
+    if (t.contains('läkare') || t.contains('bup') || t.contains('sjukhus'))
+      return Icons.local_hospital_rounded;
+    if (t.contains('skola') || t.contains('läxa')) return Icons.school_rounded;
+    if (t.contains('tandläkare') || t.contains('tand'))
+      return Icons.medical_services_rounded;
+    if (type == 'work' || t.contains('jobb')) return Icons.work_rounded;
+    if (type == 'food' || t.contains('middag') || t.contains('lunch'))
+      return Icons.restaurant_rounded;
+    if (t.contains('sport') || t.contains('fotboll') || t.contains('simning'))
+      return Icons.sports_rounded;
+    if (t.contains('möte')) return Icons.handshake_rounded;
+    return Icons.event_rounded;
+  }
+
+  // ─── Typography ────────────────────────────────────────────────────────────
+  static TextStyle get pageTitleStyle => const TextStyle(
+        fontSize: 32,
+        fontWeight: FontWeight.w800,
+        color: Color(0xFF1A1A2E),
+        letterSpacing: -0.5,
+      );
+
+  static TextStyle get sectionLabelStyle => TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: Colors.grey.shade500,
+        letterSpacing: 1.2,
+      );
+
+  static TextStyle get sectionTitleStyle => const TextStyle(
+        fontSize: 20,
+        fontWeight: FontWeight.bold,
+        color: Color(0xFF1A1A2E),
+        letterSpacing: -0.3,
+      );
+
+  static TextStyle get cardTitleStyle => const TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        color: Color(0xFF1A1A2E),
+      );
+
+  static TextStyle get bodyStyle => const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w400,
+        color: Color(0xFF1A1A2E),
+      );
+
+  static TextStyle get captionStyle => TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w400,
+        color: Colors.grey.shade500,
+      );
+}
+</file>
+
+<file path="lib/screens/manage_members_page.dart">
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import '../app_theme.dart';
+import '../firebase_options.dart';
+
+class ManageMembersPage extends StatefulWidget {
+  const ManageMembersPage({super.key});
+
+  @override
+  State<ManageMembersPage> createState() => _ManageMembersPageState();
+}
+
+class _ManageMembersPageState extends State<ManageMembersPage> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
+  String _selectedColor = 'ff2196f3';
+  String _selectedRole = 'Barn';
+  String? _editingId;
+  String? _familyId;
+  bool _isLoading = false;
+
+  final List<String> _colors = [
+    'ff2196f3',
+    'fff44336',
+    'ff4caf50',
+    'ffff9800',
+    'ff9c27b0',
+    'ffe91e63',
+    'ff795548',
+    'ff607d8b',
+    'ff6bae75', // NPF Grön
+    'ffedd87a', // NPF Gul
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (mounted) {
+        setState(() {
+          _familyId = doc.data()?['familyId'] as String?;
+        });
+      }
+    }
+  }
+
+  void _resetForm() {
+    _nameController.clear();
+    _emailController.clear();
+    _passwordController.clear();
+    setState(() {
+      _selectedColor = 'ff2196f3';
+      _selectedRole = 'Barn';
+      _editingId = null;
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  void _editMember(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    _nameController.text = data['name'] ?? '';
+    _emailController.text = data['email'] ?? '';
+    
+    setState(() {
+      _editingId = doc.id;
+      _selectedColor = data['color'] ?? 'ff2196f3';
+      
+      // Översätt databas-roll till rullgardin
+      final r = data['role'] ?? 'child';
+      if (r == 'parent') {
+        _selectedRole = 'Förälder';
+      } else if (r == 'admin') {
+        _selectedRole = 'Admin';
+      } else if (r == 'youth') {
+        _selectedRole = 'Ungdom';
+      } else {
+        _selectedRole = 'Barn';
+      }
+    });
+  }
+
+  Future<void> _deleteMember(String uid, String name) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort medlem?'),
+        content: Text('Är du säker på att du vill ta bort $name från familjen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true), 
+            child: const Text('Ta bort')
+          ),
+        ],
+      )
+    );
+
+    if (confirm == true) {
+      // Tar bort användarens koppling till familjen genom att radera dokumentet.
+      // (Observera att auth-inloggningen tekniskt sett ligger kvar i Firebase Auth, men de är borta från appen).
+      await FirebaseFirestore.instance.collection('users').doc(uid).delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Medlem borttagen.')));
+      }
+    }
+  }
+
+  Future<void> _saveMember() async {
+    if (_nameController.text.isEmpty || _emailController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fyll i namn och e-post!")));
+      return;
+    }
+
+    if (_editingId == null && _passwordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lösenordet måste vara minst 6 tecken.")));
+      return;
+    }
+
+    if (_familyId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laddar familjedata, försök igen om en sekund...")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // Översätt rullgardin till databas-roll
+    String dbRole = 'child';
+    if (_selectedRole == 'Förälder') dbRole = 'parent';
+    if (_selectedRole == 'Admin') dbRole = 'admin';
+    if (_selectedRole == 'Ungdom') dbRole = 'youth';
+
+    Map<String, dynamic> userData = {
+      'name': _nameController.text.trim(),
+      'email': _emailController.text.trim(),
+      'color': _selectedColor,
+      'role': dbRole,
+    };
+
+    try {
+      if (_editingId == null) {
+        FirebaseApp secondaryApp;
+        try {
+          secondaryApp = Firebase.app('SecondaryApp');
+        } catch (e) {
+          secondaryApp = await Firebase.initializeApp(
+            name: 'SecondaryApp',
+            options: DefaultFirebaseOptions.currentPlatform,
+          );
+        }
+
+        UserCredential userCredential = await FirebaseAuth.instanceFor(app: secondaryApp)
+            .createUserWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: _passwordController.text.trim(),
+            );
+
+        final uid = userCredential.user?.uid;
+        if (uid == null) {
+          throw Exception("Kunde inte hämta UID från Firebase Auth.");
+        }
+
+        // --- VIKTIGT: Spara familyId och standardvärden på NYA konton ---
+        userData['uid'] = uid;
+        userData['familyId'] = _familyId; // Det var denna som saknades förut!
+        userData['createdAt'] = FieldValue.serverTimestamp();
+        userData['energy'] = 3;
+        userData['weeklyPoints'] = 0;
+        userData['points'] = 0;
+        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin') ? 'parent' : 'child';
+
+        await FirebaseFirestore.instance.collection('users').doc(uid).set(userData);
+        
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medlem skapad! ✅")));
+      } else {
+        // Uppdatera befintlig medlem
+        await FirebaseFirestore.instance.collection('users').doc(_editingId).update(userData);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medlem uppdaterad! ✅")));
+      }
+      _resetForm();
+    } on FirebaseAuthException catch (e) {
+      String msg = "Ett fel uppstod.";
+      if (e.code == 'email-already-in-use') msg = "Denna e-postadress används redan.";
+      if (e.code == 'invalid-email') msg = "E-postadressen är felaktigt formaterad.";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Color textColor = AppTheme.getTextColor();
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: Text(
+          "Hantera Medlemmar",
+          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
+      ),
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+        height: double.infinity,
+        decoration: AppTheme.getBackground(),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // --- FORMULÄRET ---
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 15, offset: const Offset(0, 5)),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _editingId == null ? "Lägg till medlem" : "Redigera medlem",
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                          ),
+                          if (_editingId != null)
+                            TextButton(onPressed: _resetForm, child: const Text('Avbryt'))
+                        ],
+                      ),
+                      const SizedBox(height: 15),
+                      const Text("Profilfärg", style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: _colors.map((colorHex) => GestureDetector(
+                          onTap: () => setState(() => _selectedColor = colorHex),
+                          child: CircleAvatar(
+                            backgroundColor: Color(int.parse(colorHex, radix: 16)),
+                            radius: 18,
+                            child: _selectedColor == colorHex ? const Icon(Icons.check, color: Colors.white, size: 18) : null,
+                          ),
+                        )).toList(),
+                      ),
+                      const SizedBox(height: 20),
+
+                      _input("Namn", _nameController, Icons.person),
+                      const SizedBox(height: 10),
+
+                      _input("E-post", _emailController, Icons.email),
+                      const SizedBox(height: 10),
+
+                      if (_editingId == null) ...[
+                        _input("Lösenord (minst 6 tecken)", _passwordController, Icons.lock, isObscure: true),
+                        const SizedBox(height: 10),
+                      ],
+
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedRole,
+                            isExpanded: true,
+                            items: ['Barn', 'Ungdom', 'Förälder', 'Admin'].map((String value) {
+                              return DropdownMenuItem<String>(value: value, child: Text(value));
+                            }).toList(),
+                            onChanged: (newValue) => setState(() => _selectedRole = newValue!),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _saveMember,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.getDayAccentColor(),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: _isLoading
+                              ? const CircularProgressIndicator(color: Colors.white)
+                              : Text(
+                                  _editingId == null ? "Spara ny medlem" : "Uppdatera",
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 32),
+                
+                // --- LISTA PÅ AKTUELLA MEDLEMMAR ---
+                Text("Familjemedlemmar", style: AppTheme.sectionTitleStyle),
+                const SizedBox(height: 12),
+                
+                if (_familyId == null)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .where('familyId', isEqualTo: _familyId)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                      
+                      var docs = snapshot.data!.docs;
+                      if (docs.isEmpty) return const Text("Inga medlemmar hittades.");
+
+                      return ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: docs.length,
+                        itemBuilder: (context, index) {
+                          var data = docs[index].data() as Map<String, dynamic>;
+                          var name = data['name'] ?? 'Okänd';
+                          var email = data['email'] ?? '';
+                          var colorStr = data['color'] ?? 'ff2196f3';
+                          Color avatarColor;
+                          try {
+                            avatarColor = Color(int.parse(colorStr.startsWith('0x') ? colorStr : '0xFF$colorStr'));
+                          } catch (_) {
+                            avatarColor = Colors.blue;
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
+                            ),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: avatarColor,
+                                child: Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?', 
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              ),
+                              title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text(email, style: const TextStyle(fontSize: 12)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, color: Colors.blue),
+                                    onPressed: () => _editMember(docs[index]),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () => _deleteMember(docs[index].id, name),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 50),
+              ],
+            ),
+          ),
+        ),
+      ))),
+    );
+  }
+
+  Widget _input(String label, TextEditingController controller, IconData icon, {bool isObscure = false}) {
+    return TextField(
+      controller: controller,
+      obscureText: isObscure,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: Colors.grey.shade600),
+        filled: true,
+        fillColor: Colors.grey[100],
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+}
+</file>
+
+<file path="lib/screens/manage_templates_page.dart">
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../app_theme.dart';
+
+class ManageTemplatesPage extends StatefulWidget {
+  const ManageTemplatesPage({super.key});
+
+  @override
+  State<ManageTemplatesPage> createState() => _ManageTemplatesPageState();
+}
+
+class _ManageTemplatesPageState extends State<ManageTemplatesPage> {
+  String _templateType = 'chore'; // 'chore' eller 'activity'
+  String _familyId = '';
+
+  // Controllers för formuläret
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _stepController = TextEditingController();
+  final TextEditingController _pikController = TextEditingController(); // För aktiviteter
+
+  List<String> _currentSteps = []; // Används som checklist för aktiviteter eller steg för sysslor
+  String? _editingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _pikController.text = '📅'; // Standard-emoji
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final fid = doc.data()?['familyId'] as String? ?? '';
+      if (mounted) setState(() => _familyId = fid);
+    } catch (_) {}
+  }
+
+  void _addStep() {
+    if (_stepController.text.isNotEmpty) {
+      setState(() {
+        _currentSteps.add(_stepController.text.trim());
+        _stepController.clear();
+      });
+    }
+  }
+
+  void _removeStep(int index) {
+    setState(() {
+      _currentSteps.removeAt(index);
+    });
+  }
+
+  Future<void> _saveTemplate() async {
+    if (_titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Mallen måste ha ett namn"))
+      );
+      return;
+    }
+
+    final collection = _templateType == 'chore' ? 'chore_templates' : 'activity_templates';
+    
+    Map<String, dynamic> data = {
+      'title': _titleController.text.trim(),
+      'familyId': _familyId,
+    };
+
+    if (_templateType == 'chore') {
+      data['steps'] = _currentSteps;
+    } else {
+      data['piktogram'] = _pikController.text.trim().isEmpty ? '📅' : _pikController.text.trim();
+      data['checklist'] = _currentSteps;
+    }
+
+    if (_editingId == null) {
+      await FirebaseFirestore.instance.collection(collection).add(data);
+    } else {
+      await FirebaseFirestore.instance.collection(collection).doc(_editingId).update(data);
+    }
+
+    _resetForm();
+  }
+
+  void _editTemplate(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    setState(() {
+      _editingId = doc.id;
+      _titleController.text = data['title'] ?? '';
+      
+      if (_templateType == 'chore') {
+        _currentSteps = List<String>.from(data['steps'] ?? []);
+      } else {
+        _pikController.text = data['piktogram'] ?? '📅';
+        _currentSteps = List<String>.from(data['checklist'] ?? []);
+      }
+    });
+  }
+
+  Future<void> _deleteTemplate(String docId) async {
+    final collection = _templateType == 'chore' ? 'chore_templates' : 'activity_templates';
+    await FirebaseFirestore.instance.collection(collection).doc(docId).delete();
+  }
+
+  void _resetForm() {
+    setState(() {
+      _editingId = null;
+      _titleController.clear();
+      _stepController.clear();
+      _pikController.text = '📅';
+      _currentSteps = [];
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Color textColor = AppTheme.getTextColor();
+    final dayColor = AppTheme.getDayAccentColor();
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: Text(
+          "Hantera Mallar",
+          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
+      ),
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+        height: double.infinity,
+        decoration: AppTheme.getBackground(),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Välj typ av mall
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'chore', label: Text('Sysslor')),
+                      ButtonSegment(value: 'activity', label: Text('Aktiviteter')),
+                    ],
+                    selected: {_templateType},
+                    onSelectionChanged: (Set<String> newSelection) {
+                      setState(() {
+                        _templateType = newSelection.first;
+                        _resetForm();
+                      });
+                    },
+                    style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) return dayColor;
+                        return Colors.white;
+                      }),
+                      foregroundColor: WidgetStateProperty.resolveWith((states) {
+                        if (states.contains(WidgetState.selected)) return Colors.white;
+                        return AppTheme.getTextColor();
+                      }),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // --- FORMULÄR ---
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _editingId == null 
+                            ? "Skapa ny ${_templateType == 'chore' ? 'sysslomall' : 'aktivitetsmall'}" 
+                            : "Redigera mall",
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 15),
+
+                      if (_templateType == 'activity') ...[
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 80,
+                              child: TextField(
+                                controller: _pikController,
+                                decoration: InputDecoration(
+                                  labelText: "Emoji",
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                                style: const TextStyle(fontSize: 24),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _titleController,
+                                decoration: InputDecoration(
+                                  labelText: "Aktivitet (t.ex. Fotboll)",
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        TextField(
+                          controller: _titleController,
+                          decoration: InputDecoration(
+                            labelText: "Rubrik (t.ex. Städa rummet)",
+                            filled: true,
+                            fillColor: Colors.grey[100],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(height: 15),
+                      Text(
+                        _templateType == 'chore' ? "Delmoment:" : "Packlista / Förberedelser:",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      ..._currentSteps.asMap().entries.map(
+                        (entry) => ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.check_box_outline_blank, size: 18),
+                          title: Text(entry.value),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                            onPressed: () => _removeStep(entry.key),
+                          ),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _stepController,
+                              decoration: const InputDecoration(
+                                hintText: "Lägg till objekt...",
+                                isDense: true,
+                              ),
+                              onSubmitted: (_) => _addStep(),
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.add_circle, color: dayColor),
+                            onPressed: _addStep,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          if (_editingId != null)
+                            Expanded(
+                              child: TextButton(
+                                onPressed: _resetForm,
+                                child: const Text("Avbryt"),
+                              ),
+                            ),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _saveTemplate,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: dayColor,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text(
+                                "SPARA",
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 30),
+                Text(
+                  _templateType == 'chore' ? "Dina Sysslomallar" : "Dina Aktivitetsmallar",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textColor),
+                ),
+                const SizedBox(height: 10),
+
+                // --- LISTA PÅ BEFINTLIGA MALLAR ---
+                StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection(_templateType == 'chore' ? 'chore_templates' : 'activity_templates')
+                      // Hämta mallar som saknar familyId (gamla) ELLER som tillhör denna familj
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                    
+                    var docs = snapshot.data!.docs.where((doc) {
+                      final d = doc.data() as Map<String, dynamic>;
+                      final fid = d['familyId'] as String? ?? '';
+                      return fid.isEmpty || fid == _familyId;
+                    }).toList();
+
+                    if (docs.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Text("Inga mallar skapade ännu.", style: TextStyle(color: Colors.grey.shade600)),
+                      );
+                    }
+
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        var data = docs[index].data() as Map<String, dynamic>;
+                        List items = _templateType == 'chore' ? (data['steps'] ?? []) : (data['checklist'] ?? []);
+                        String pik = data['piktogram'] ?? '📋';
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                          child: ListTile(
+                            leading: _templateType == 'activity' 
+                              ? Text(pik, style: const TextStyle(fontSize: 24))
+                              : const Icon(Icons.list_alt),
+                            title: Text(
+                              data['title'] ?? '',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Text("${items.length} objekt"),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue),
+                                  onPressed: () => _editTemplate(docs[index]),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () => _deleteTemplate(docs[index].id),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+                const SizedBox(height: 50),
+              ],
+            ),
+          ),
+        ),
+      ))),
+    );
+  }
+}
+</file>
+
 <file path="pubspec.lock">
 # Generated by pub
 # See https://dart.dev/tools/pub/glossary#lockfile
@@ -7302,6 +7293,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  checked_yaml:
+    dependency: transitive
+    description:
+      name: checked_yaml
+      sha256: "959525d3162f249993882720d52b7e0c833978df229be20702b33d48d91de70f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.4"
+  cli_util:
+    dependency: transitive
+    description:
+      name: cli_util
+      sha256: ff6785f7e9e3c38ac98b2fb035701789de90154024a75b6cb926445e83197d1c
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.2"
   clock:
     dependency: transitive
     description:
@@ -7619,6 +7626,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.4.1"
+  flutter_displaymode:
+    dependency: "direct main"
+    description:
+      name: flutter_displaymode
+      sha256: ecd44b1e902b0073b42ff5b55bf283f38e088270724cdbb7f7065ccf54aa60a8
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.7.0"
+  flutter_launcher_icons:
+    dependency: "direct dev"
+    description:
+      name: flutter_launcher_icons
+      sha256: "10f13781741a2e3972126fae08393d3c4e01fa4cd7473326b94b72cf594195e7"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.14.4"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -7778,6 +7801,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.20.2"
+  json_annotation:
+    dependency: transitive
+    description:
+      name: json_annotation
+      sha256: cb09e7dac6210041fad964ed7fbee004f14258b4eca4040f72d1234062ace4c8
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.11.0"
   leak_tracker:
     dependency: transitive
     description:
@@ -8374,17 +8405,20 @@ dependencies:
   cached_network_image: ^3.3.1
   flutter_localizations:
     sdk: flutter
+  flutter_displaymode: ^0.7.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/images/logo.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/logo.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -8428,699 +8462,324 @@ flutter:
   # see https://flutter.dev/to/font-from-package
 </file>
 
-<file path="web/index.html">
-<!DOCTYPE html>
-<html>
-<head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
-
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="La Familia">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>La Familia</title>
-  <link rel="manifest" href="manifest.json">
-</head>
-<body>
-  <script src="flutter_bootstrap.js" async></script>
-</body>
-</html>
-</file>
-
-<file path="web/manifest.json">
-{
-    "name": "La Familia",
-    "short_name": "La Familia",
-    "start_url": ".",
-    "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "La Familia app.",
-    "orientation": "portrait-primary",
-    "prefer_related_applications": false,
-    "icons": [
-        {
-            "src": "icons/Icon-192.png",
-            "sizes": "192x192",
-            "type": "image/png"
-        },
-        {
-            "src": "icons/Icon-512.png",
-            "sizes": "512x512",
-            "type": "image/png"
-        },
-        {
-            "src": "icons/Icon-maskable-192.png",
-            "sizes": "192x192",
-            "type": "image/png",
-            "purpose": "maskable"
-        },
-        {
-            "src": "icons/Icon-maskable-512.png",
-            "sizes": "512x512",
-            "type": "image/png",
-            "purpose": "maskable"
-        }
-    ]
-}
-</file>
-
-<file path="lib/screens/planner_page.dart">
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+<file path="lib/main.dart">
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:table_calendar/table_calendar.dart';
-import '../app_theme.dart';
-import '../data/piktogram.dart';
-import '../models/user_model.dart';
-import '../services/family_service.dart';
-import '../widgets/activity_detail_sheet.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter_displaymode/flutter_displaymode.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'firebase_options.dart';
 
-DateTime? _parseEventDate(dynamic dateValue) {
+// Import av dina sidor
+import 'screens/dashboard_page.dart';
+import 'screens/planner_page.dart';
+import 'screens/chores_page.dart';
+import 'screens/settings_page.dart';
+import 'screens/login_page.dart';
+import 'screens/onboarding_page.dart';
+import 'screens/splash_screen.dart';
+import 'app_theme.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initiera svenska datuminställningar
+  await initializeDateFormatting('sv_SE', null);
+  
+  // Initiera Firebase
   try {
-    if (dateValue is Timestamp) return dateValue.toDate();
-    if (dateValue is String) {
-      final p = dateValue.split('-');
-      if (p.length >= 3) {
-        return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
-class PlannerPage extends StatefulWidget {
-  const PlannerPage({super.key});
-  @override
-  State<PlannerPage> createState() => _PlannerPageState();
-}
-
-class _PlannerPageState extends State<PlannerPage>
-    with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
-  DateTime _focusedDay = DateTime.now();
-  DateTime _selectedDay = DateTime.now();
-  UserModel? _currentUser;
-  List<UserModel> _familyMembers = [];
-  String? _filterPerson;
-
-  late final Stream<QuerySnapshot> _eventsStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _eventsStream = FirebaseFirestore.instance
-        .collection('planner_events')
-        .snapshots();
-    _loadUser();
-  }
-
-  Future<void> _loadUser() async {
-    final user = await FamilyService.getCurrentUserModel();
-    final members = <UserModel>[];
-    if (user?.familyId != null) {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('familyId', isEqualTo: user!.familyId)
-          .get();
-      for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
-    }
-    if (mounted) setState(() { _currentUser = user; _familyMembers = members; });
-  }
-
-  List<QueryDocumentSnapshot> _getEventsForDay(
-      List<QueryDocumentSnapshot> all, DateTime day) {
-    return all.where((doc) {
-      try {
-        final d = doc.data() as Map<String, dynamic>;
-        final date = _parseEventDate(d['date']);
-        if (date == null) return false;
-        if (!isSameDay(date, day)) return false;
-        if (_filterPerson != null) {
-          final persons = (d['persons'] as List? ?? []).cast<String>();
-          return persons.contains(_filterPerson);
-        }
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }).toList();
-  }
-
-  void _showAddSheet({QueryDocumentSnapshot? edit}) {
-    if (_currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Laddar familjedata... försök igen'),
-          duration: Duration(seconds: 2),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _AddEventSheet(
-        selectedDay: _selectedDay,
-        familyMembers: _familyMembers,
-        familyId: _currentUser?.familyId ?? '',
-        eventToEdit: edit,
-      ),
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
     );
+  } catch (e) {
+    debugPrint('Firebase init error: $e');
   }
 
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    final dayColor = AppTheme.getDayAccentColor();
-    final isFocus = _currentUser?.isFocusMode ?? false;
-    final bottomPad = MediaQuery.of(context).padding.bottom;
-
-    return Container(
-      decoration: AppTheme.getBackground(),
-      child: Stack(
-        children: [
-          StreamBuilder<QuerySnapshot>(
-            stream: _eventsStream,
-            builder: (ctx, snap) {
-              if (snap.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Text('Fel: ${snap.error}',
-                        style: const TextStyle(color: Colors.red)),
-                  ),
-                );
-              }
-              final all = snap.data?.docs ?? [];
-              if (isFocus) return _buildFocusView(all);
-              return _buildParentView(all, dayColor);
-            },
-          ),
-          Positioned(
-            right: 16,
-            bottom: bottomPad + 16,
-            child: FloatingActionButton.extended(
-              onPressed: _showAddSheet,
-              backgroundColor: dayColor,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Ny aktivitet',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildParentView(List<QueryDocumentSnapshot> all, Color dayColor) {
-    final selected = _getEventsForDay(all, _selectedDay);
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-          SliverToBoxAdapter(child: _buildHeader(dayColor)),
-          SliverToBoxAdapter(child: _buildCalendar(all, dayColor)),
-          SliverToBoxAdapter(child: _buildPersonFilter(dayColor)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-              child: Text(
-                  () {
-                    try {
-                      return DateFormat('EEEE d MMMM', 'sv').format(_selectedDay);
-                    } catch (_) {
-                      return DateFormat('d MMMM').format(_selectedDay);
-                    }
-                  }(),
-                  style: AppTheme.sectionTitleStyle),
-            ),
-          ),
-          if (selected.isEmpty)
-            SliverToBoxAdapter(
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                padding: const EdgeInsets.all(24),
-                decoration: AppTheme.cardDecoration(),
-                child: const Center(child: Text('Ingen planering — lägg till! ✨',
-                    style: TextStyle(color: Colors.grey))),
-              ),
-            )
-          else
-            SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (_, i) => _ActivityCard(doc: selected[i], dayColor: dayColor),
-                childCount: selected.length,
-              ),
-            ),
-          const SliverToBoxAdapter(child: SizedBox(height: 120)),
-        ],
-      );
-  }
-
-  Widget _buildFocusView(List<QueryDocumentSnapshot> all) {
-    final today = _getEventsForDay(all, DateTime.now());
-    final dayColor = AppTheme.getDayAccentColor();
-    return CustomScrollView(
-      physics: const BouncingScrollPhysics(),
-      slivers: [
-          SliverToBoxAdapter(child: _buildHeader(dayColor)),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-              child: Text('Min dag', style: AppTheme.sectionTitleStyle),
-            ),
-          ),
-          if (today.isEmpty)
-            SliverToBoxAdapter(
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16),
-                padding: const EdgeInsets.all(32),
-                decoration: AppTheme.cardDecoration(),
-                child: const Center(child: Text('Fri dag! 🌿')),
-              ),
-            )
-          else
-            SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (_, i) => _FocusCard(doc: today[i], dayColor: dayColor),
-                childCount: today.length,
-              ),
-            ),
-          const SliverToBoxAdapter(child: SizedBox(height: 120)),
-        ],
-      );
-  }
-
-  Widget _buildHeader(Color dayColor) {
-    final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
-    return Container(
-      decoration: BoxDecoration(
-        color: dayColor,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
-      child: Text('Planering',
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
-    );
-  }
-
-  Widget _buildCalendar(List<QueryDocumentSnapshot> all, Color dayColor) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      decoration: AppTheme.cardDecoration(),
-      child: TableCalendar(
-        firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
-        focusedDay: _focusedDay,
-        selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
-        calendarFormat: CalendarFormat.month,
-        availableCalendarFormats: const {CalendarFormat.month: 'Månad'},
-        eventLoader: (day) {
-          try {
-            return _getEventsForDay(all, day).map((e) => e.id).toList();
-          } catch (_) {
-            return [];
-          }
-        },
-        onDaySelected: (s, f) => setState(() { _selectedDay = s; _focusedDay = f; }),
-        onPageChanged: (f) => setState(() => _focusedDay = f),
-        locale: 'sv',
-        calendarStyle: CalendarStyle(
-          selectedDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
-          todayDecoration: BoxDecoration(color: dayColor.withValues(alpha: 0.3), shape: BoxShape.circle),
-          markerDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
-          markersMaxCount: 3,
-          outsideDaysVisible: false,
-        ),
-        headerStyle: const HeaderStyle(
-          formatButtonVisible: false, titleCentered: true,
-          titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPersonFilter(Color dayColor) {
-    if (_familyMembers.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 48,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        children: [
-          _Pill(label: 'Alla', selected: _filterPerson == null, color: dayColor,
-              onTap: () => setState(() => _filterPerson = null)),
-          ..._familyMembers.map((m) {
-            Color mc;
-            try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
-            return _Pill(
-              label: m.name.split(' ').first,
-              selected: _filterPerson == m.name,
-              color: mc,
-              onTap: () => setState(() => _filterPerson = _filterPerson == m.name ? null : m.name),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-}
-
-class _Pill extends StatelessWidget {
-  final String label; final bool selected; final Color color; final VoidCallback onTap;
-  const _Pill({required this.label, required this.selected, required this.color, required this.onTap});
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      decoration: BoxDecoration(
-        color: selected ? color : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: selected ? color : Colors.grey.shade300),
-      ),
-      child: Text(label, style: TextStyle(
-        color: selected ? Colors.white : AppTheme.getTextColor(),
-        fontWeight: FontWeight.w600, fontSize: 13)),
-    ),
+  // Aktivera offline-cache för Firestore
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
+
+  runApp(const MyApp());
 }
 
-class _ActivityCard extends StatelessWidget {
-  final QueryDocumentSnapshot doc; final Color dayColor;
-  const _ActivityCard({required this.doc, required this.dayColor});
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final d = doc.data() as Map<String, dynamic>;
-    final title = d['title'] as String? ?? '';
-    final pik = d['piktogram'] as String? ?? '📅';
-    final date = _parseEventDate(d['date']);
-    final time = date != null ? DateFormat('HH:mm').format(date) : '';
-    final isPending = d['isPending'] == true;
-
-    return GestureDetector(
-      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-        decoration: AppTheme.cardDecoration().copyWith(
-          border: Border(left: BorderSide(color: dayColor, width: 4))),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(children: [
-            Text(pik, style: const TextStyle(fontSize: 36)),
-            const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-              Text(time, style: TextStyle(fontSize: 13, color: dayColor, fontWeight: FontWeight.w600)),
-              if (isPending) const Text('⏳ Väntar på godkännande',
-                  style: TextStyle(fontSize: 11, color: Colors.orange)),
-            ])),
-          ]),
-        ),
-      ),
-    );
-  }
+  State<MyApp> createState() => _MyAppState();
 }
 
-class _FocusCard extends StatelessWidget {
-  final QueryDocumentSnapshot doc; final Color dayColor;
-  const _FocusCard({required this.doc, required this.dayColor});
-
-  @override
-  Widget build(BuildContext context) {
-    final d = doc.data() as Map<String, dynamic>;
-    final title = d['title'] as String? ?? '';
-    final pik = d['piktogram'] as String? ?? '📅';
-    final date = _parseEventDate(d['date']);
-    final time = date != null ? DateFormat('HH:mm').format(date) : '';
-
-    return GestureDetector(
-      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        padding: const EdgeInsets.all(20),
-        decoration: AppTheme.cardDecoration(),
-        child: Row(children: [
-          Text(pik, style: const TextStyle(fontSize: 44)),
-          const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Text(time, style: TextStyle(fontSize: 15, color: dayColor, fontWeight: FontWeight.w600)),
-          ])),
-          Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey.shade400),
-        ]),
-      ),
-    );
-  }
-}
-
-class _AddEventSheet extends StatefulWidget {
-  final DateTime selectedDay;
-  final List<UserModel> familyMembers;
-  final String? familyId;
-  final QueryDocumentSnapshot? eventToEdit;
-  const _AddEventSheet({required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
-  @override
-  State<_AddEventSheet> createState() => _AddEventSheetState();
-}
-
-class _AddEventSheetState extends State<_AddEventSheet> {
-  int _step = 0;
-  String _pik = '📅';
-  String _cat = 'Alla';
-  String _q = '';
-  final _title = TextEditingController();
-  TimeOfDay _start = TimeOfDay.now();
-  final List<String> _persons = [];
-  final List<String> _checklist = [];
-  final _clCtrl = TextEditingController();
-  bool _saving = false;
+class _MyAppState extends State<MyApp> {
+  int _weekday = DateTime.now().weekday;
+  Timer? _midnightTimer;
 
   @override
   void initState() {
     super.initState();
-    if (widget.eventToEdit != null) {
-      final d = widget.eventToEdit!.data() as Map<String, dynamic>;
-      _pik = d['piktogram'] as String? ?? '📅';
-      _title.text = d['title'] as String? ?? '';
-      _step = 1;
+    _scheduleMidnightRebuild();
+    
+    // Aktivera 120Hz efter att första framen ritats
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _enableHighRefreshRate();
+    });
+  }
+
+  Future<void> _enableHighRefreshRate() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        await FlutterDisplayMode.setHighRefreshRate();
+      } catch (e) {
+        debugPrint('Kunde inte aktivera 120Hz: $e');
+      }
     }
   }
 
-  List<PiktogramItem> get _filtered => piktogramLibrary.where((p) =>
-    (_cat == 'Alla' || p.category == _cat) &&
-    (_q.isEmpty || p.label.toLowerCase().contains(_q.toLowerCase()))
-  ).toList();
+  void _scheduleMidnightRebuild() {
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(tomorrow.difference(now), () {
+      if (mounted) {
+        setState(() => _weekday = DateTime.now().weekday);
+        _scheduleMidnightRebuild();
+      }
+    });
+  }
 
-  Future<void> _save() async {
-    if (_title.text.trim().isEmpty) return;
-    setState(() => _saving = true);
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      final d = widget.selectedDay;
-      final data = {
-        'title': _title.text.trim(),
-        'piktogram': _pik,
-        'type': 'activity',
-        'date': '${d.year}-${d.month}-${d.day}',
-        'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
-        'persons': _persons,
-        'checklist': _checklist.map((i) => {'item': i, 'isDone': false}).toList(),
-        'source': 'manual',
-        'createdBy': user?.uid,
-        'isPending': false,
-        'familyId': widget.familyId ?? '',
-      };
-      if (widget.eventToEdit != null) {
-        await widget.eventToEdit!.reference.update(data);
-      } else {
-        await FirebaseFirestore.instance.collection('planner_events').add(data);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Aktivitet sparad! ✅'),
-            backgroundColor: Color(0xFF6BAE75),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Fel vid sparande: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  @override
+  void dispose() {
+    _midnightTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final dayColor = AppTheme.getDayAccentColor();
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.92,
-      decoration: const BoxDecoration(color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      child: Column(children: [
-        Padding(padding: const EdgeInsets.only(top: 12),
-          child: Container(width: 40, height: 4,
-            decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: Row(children: [
-            Expanded(child: Text(_step == 0 ? 'Välj piktogram' : 'Aktivitetsdetaljer',
-                style: AppTheme.sectionTitleStyle)),
-            if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0),
-                child: const Text('← Byt piktogram')),
-          ]),
+    return MaterialApp(
+      title: 'La Familia',
+      debugShowCheckedModeBanner: false,
+      
+      // Språkstöd för svenska
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('sv', 'SE'),
+      ],
+
+      themeMode: ThemeMode.light,
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF4F6F8),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppTheme.getNpfDayColor(_weekday),
+          brightness: Brightness.light,
         ),
-        Expanded(child: _step == 0 ? _picker(dayColor) : _form(dayColor)),
-      ]),
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasData) {
+          return const FamilyCheckWrapper();
+        }
+        return const LoginPage();
+      },
+    );
+  }
+}
+
+class FamilyCheckWrapper extends StatelessWidget {
+  const FamilyCheckWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const LoginPage();
+
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data() as Map<String, dynamic>;
+          if (data['familyId'] != null &&
+              data['familyId'].toString().isNotEmpty) {
+            return const MainPage();
+          }
+        }
+
+        return const OnboardingPage();
+      },
+    );
+  }
+}
+
+class MainPage extends StatefulWidget {
+  const MainPage({super.key});
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  int _selectedIndex = 0;
+  late PageController _pageController;
+
+  final List<Widget> _pages = [
+    const DashboardPage(),
+    const PlannerPage(),
+    const ChoresPage(),
+    const SettingsPage(),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: _selectedIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
     );
   }
 
-  Widget _picker(Color dayColor) {
-    final items = _filtered;
-    return Column(children: [
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: TextField(
-          onChanged: (v) => setState(() => _q = v),
-          decoration: InputDecoration(hintText: 'Sök...', prefixIcon: const Icon(Icons.search),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            filled: true, fillColor: Colors.grey.shade100, contentPadding: const EdgeInsets.symmetric(vertical: 8)),
+  @override
+  Widget build(BuildContext context) {
+    int weekday = DateTime.now().weekday;
+    Color activeColor = AppTheme.getDayAccentColor(weekday);
+
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width > 600;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F7F7),
+      extendBody: true,
+      body: Center(
+        child: Container(
+          width: isWide ? 430 : double.infinity,
+          decoration: isWide
+              ? const BoxDecoration(
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 24,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                )
+              : null,
+          child: ClipRect(
+            child: PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              children: _pages,
+            ),
+          ),
         ),
       ),
-      SizedBox(height: 40, child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        children: piktogramCategories.map((c) => _Pill(label: c, selected: _cat == c,
-            color: dayColor, onTap: () => setState(() => _cat = c))).toList())),
-      const SizedBox(height: 8),
-      Expanded(child: GridView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 5, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.9),
-        itemCount: items.length,
-        itemBuilder: (_, i) {
-          final p = items[i];
-          final sel = p.emoji == _pik;
-          return GestureDetector(
-            onTap: () { setState(() { _pik = p.emoji; if (_title.text.isEmpty) _title.text = p.label; _step = 1; }); },
-            child: AnimatedContainer(duration: const Duration(milliseconds: 150),
-              decoration: BoxDecoration(
-                color: sel ? dayColor.withValues(alpha: 0.15) : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-                border: sel ? Border.all(color: dayColor, width: 2) : null),
-              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Text(p.emoji, style: const TextStyle(fontSize: 24)),
-                Text(p.label, style: const TextStyle(fontSize: 9), textAlign: TextAlign.center,
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
-              ])),
-          );
-        },
-      )),
-    ]);
+      bottomNavigationBar: isWide
+          ? SafeArea(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [SizedBox(width: 430, child: _buildBottomNav(activeColor))],
+              ),
+            )
+          : _buildBottomNav(activeColor),
+    );
   }
 
-  Widget _form(Color dayColor) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Center(child: GestureDetector(
-          onTap: () => setState(() => _step = 0),
-          child: Column(children: [
-            Text(_pik, style: const TextStyle(fontSize: 56)),
-            Text('Byt piktogram', style: TextStyle(fontSize: 12, color: dayColor)),
-          ]),
-        )),
-        const SizedBox(height: 16),
-        TextField(controller: _title,
-          decoration: InputDecoration(labelText: 'Aktivitetsnamn',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)))),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.access_time),
-          label: Text('Starttid: ${_start.format(context)}'),
-          onPressed: () async {
-            final t = await showTimePicker(context: context, initialTime: _start);
-            if (t != null) setState(() => _start = t);
-          },
+  Widget _buildBottomNav(Color activeColor) {
+    return Container(
+      margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BottomNavigationBar(
+          items: const <BottomNavigationBarItem>[
+            BottomNavigationBarItem(
+              icon: Icon(Icons.dashboard_rounded),
+              label: 'Hem',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.calendar_month_rounded),
+              label: 'Planering',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.cleaning_services_rounded),
+              label: 'Sysslor',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.settings_rounded),
+              label: 'Inställningar',
+            ),
+          ],
+          currentIndex: _selectedIndex,
+          backgroundColor: Colors.white,
+          selectedItemColor: activeColor,
+          unselectedItemColor: Colors.grey.shade400,
+          selectedIconTheme: const IconThemeData(size: 28),
+          unselectedIconTheme: const IconThemeData(size: 24),
+          type: BottomNavigationBarType.fixed,
+          showUnselectedLabels: true,
+          onTap: _onItemTapped,
+          elevation: 0,
         ),
-        const SizedBox(height: 16),
-        Text('Vem deltar?', style: AppTheme.sectionLabelStyle),
-        const SizedBox(height: 8),
-        Wrap(spacing: 8, children: widget.familyMembers.map((m) {
-          final sel = _persons.contains(m.name);
-          Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
-          return FilterChip(label: Text(m.name.split(' ').first), selected: sel,
-            selectedColor: mc.withValues(alpha: 0.2), checkmarkColor: mc,
-            onSelected: (v) => setState(() => v ? _persons.add(m.name) : _persons.remove(m.name)));
-        }).toList()),
-        const SizedBox(height: 16),
-        Text('Förberedelser', style: AppTheme.sectionLabelStyle),
-        const SizedBox(height: 8),
-        Row(children: [
-          Expanded(child: TextField(controller: _clCtrl,
-            decoration: InputDecoration(hintText: 'Lägg till...', contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
-            onSubmitted: (v) { if (v.trim().isNotEmpty) setState(() { _checklist.add(v.trim()); _clCtrl.clear(); }); })),
-          const SizedBox(width: 8),
-          IconButton(icon: Icon(Icons.add_circle_rounded, color: dayColor, size: 32),
-            onPressed: () { if (_clCtrl.text.trim().isNotEmpty) setState(() { _checklist.add(_clCtrl.text.trim()); _clCtrl.clear(); }); }),
-        ]),
-        ..._checklist.map((item) => ListTile(
-          leading: const Icon(Icons.check_circle_outline), title: Text(item), dense: true, contentPadding: EdgeInsets.zero,
-          trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: Colors.red),
-            onPressed: () => setState(() => _checklist.remove(item))))),
-        const SizedBox(height: 24),
-        SizedBox(width: double.infinity, height: 56, child: ElevatedButton(
-          onPressed: _saving ? null : _save,
-          style: ElevatedButton.styleFrom(backgroundColor: dayColor, foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
-          child: _saving ? const CircularProgressIndicator(color: Colors.white) :
-              const Text('Spara aktivitet', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        )),
-        const SizedBox(height: 40),
-      ]),
+      ),
     );
   }
 }
@@ -9430,7 +9089,7 @@ class _ChoresPageState extends State<ChoresPage>
         ]),
         const SizedBox(height: 12),
         SizedBox(
-          height: 80,
+          height: 100,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: _familyMembers.length,
@@ -10072,6 +9731,20 @@ class _DashboardPageState extends State<DashboardPage>
     return null;
   }
 
+  // Hjälpmetod för att sortera aktiviteterna i rätt tidsordning
+  List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
+    final list = rawDocs.toList();
+    list.sort((a, b) {
+      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      if (dA == null && dB == null) return 0;
+      if (dA == null) return 1; // Sätter aktiviteter utan tid sist
+      if (dB == null) return -1;
+      return dA.compareTo(dB);
+    });
+    return list;
+  }
+
   Future<void> _loadData() async {
     final user = await FamilyService.getCurrentUserModel();
     if (!mounted) return;
@@ -10174,7 +9847,9 @@ class _DashboardPageState extends State<DashboardPage>
                 style: const TextStyle(color: Colors.red)),
           );
         }
-        final docs = snap.data?.docs ?? [];
+        // Använd vår sorteringsfunktion här
+        final docs = _getSortedDocs(snap.data?.docs ?? []);
+        
         return CustomScrollView(
           physics: const BouncingScrollPhysics(),
           slivers: [
@@ -10193,7 +9868,7 @@ class _DashboardPageState extends State<DashboardPage>
               if (docs.length > 1)
                 SliverToBoxAdapter(
                   child: SizedBox(
-                    height: 100,
+                    height: 110,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -10363,7 +10038,7 @@ class _DashboardPageState extends State<DashboardPage>
           // Family avatars
           if (members.isNotEmpty || _loading)
             SizedBox(
-              height: 72,
+              height: 86, // ÖKAD HÖJD HÄR för att slippa pixel-overflow!
               child: _loading
                   ? const ShimmerListPlaceholder()
                   : ListView.builder(
@@ -10433,9 +10108,10 @@ class _DashboardPageState extends State<DashboardPage>
                     right: -4,
                     child: Container(
                       padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                           color: Colors.white,
-                          shape: BoxShape.circle),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.grey.shade200)),
                       child: Icon(Icons.edit,
                           size: 10,
                           color: AppTheme.getTextColor()),
@@ -10443,12 +10119,12 @@ class _DashboardPageState extends State<DashboardPage>
                   ),
               ],
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(member.name.split(' ').first,
                 style: TextStyle(
                     fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9),
-                    fontWeight: FontWeight.w500)),
+                    color: textColor.withValues(alpha: 0.9), // Anpassad färg
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -10492,27 +10168,14 @@ class _DashboardPageState extends State<DashboardPage>
             child: const Center(child: ShimmerListPlaceholder()),
           );
         }
-        final docs = snap.data!.docs;
+        
+        final docs = _getSortedDocs(snap.data!.docs);
+        
         if (docs.isEmpty) {
           return Container(
             margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.grey.shade300,
-                width: 1.5,
-                style: BorderStyle.solid,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
+            decoration: AppTheme.cardDecoration(),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -10528,10 +10191,10 @@ class _DashboardPageState extends State<DashboardPage>
         }
         final now = DateTime.now();
         return SizedBox(
-          height: 82,
+          height: 125, // ÖKAD HÖJD HÄR för att slippa pixel-overflow på tidslinjen när "NU"-kortet zoomar in!
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             itemCount: docs.length,
             itemBuilder: (_, i) {
               final d = docs[i].data() as Map<String, dynamic>;
@@ -10548,17 +10211,21 @@ class _DashboardPageState extends State<DashboardPage>
                 onTap: () => _openDetail(docs[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.only(right: 10),
+                  margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
                   padding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 10),
+                  transformAlignment: Alignment.center, // Skala från mitten för att undvika overflow nedåt
                   transform: isCurrent
                       ? (Matrix4.identity()..scale(1.05))
                       : Matrix4.identity(),
                   decoration: BoxDecoration(
                     color: isCurrent
                         ? dayColor
-                        : dayColor.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
+                        : dayColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: isCurrent 
+                        ? null 
+                        : Border.all(color: dayColor.withValues(alpha: 0.3)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -10638,7 +10305,9 @@ class _DashboardPageState extends State<DashboardPage>
             decoration: AppTheme.cardDecoration(),
           );
         }
-        final docs = snap.data!.docs;
+        
+        final docs = _getSortedDocs(snap.data!.docs);
+        
         if (docs.isEmpty) {
           return Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -10661,7 +10330,18 @@ class _DashboardPageState extends State<DashboardPage>
             ),
           );
         }
-        final doc = docs.first;
+
+        final now = DateTime.now();
+        QueryDocumentSnapshot? targetDoc;
+        for (var d in docs) {
+          final dt = _parseDateTime(d.data() as Map<String, dynamic>);
+          if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
+            targetDoc = d;
+            break;
+          }
+        }
+        final doc = targetDoc ?? docs.last;
+
         final d = doc.data() as Map<String, dynamic>;
         final title = d['title'] as String? ?? '';
         final piktogram = d['piktogram'] as String? ?? '📅';
@@ -10669,7 +10349,6 @@ class _DashboardPageState extends State<DashboardPage>
         final checklist =
             (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
         final dayColor = AppTheme.getDayAccentColor();
-        final now = DateTime.now();
         final diffMin = date != null
             ? date.difference(now).inMinutes
             : 0;
@@ -10687,7 +10366,7 @@ class _DashboardPageState extends State<DashboardPage>
             margin: const EdgeInsets.symmetric(horizontal: 16),
             decoration: AppTheme.cardDecoration().copyWith(
               border: Border(
-                left: BorderSide(color: dayColor, width: 4),
+                left: BorderSide(color: dayColor, width: 6),
               ),
             ),
             child: Padding(
@@ -10753,13 +10432,13 @@ class _DashboardPageState extends State<DashboardPage>
   Widget _buildEnergySection(List<UserModel> members) {
     if (members.isEmpty) {
       return Container(
-        height: 90,
+        height: 110,
         margin: const EdgeInsets.symmetric(horizontal: 16),
         child: const ShimmerListPlaceholder(),
       );
     }
     return SizedBox(
-      height: 90,
+      height: 110,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -10840,7 +10519,7 @@ class _DashboardPageState extends State<DashboardPage>
           },
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: AppTheme.cardDecoration(),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -11154,6 +10833,891 @@ class _ChecklistTileState extends State<_ChecklistTile>
           ],
         ),
       ),
+    );
+  }
+}
+</file>
+
+<file path="lib/screens/planner_page.dart">
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:table_calendar/table_calendar.dart';
+import '../app_theme.dart';
+import '../data/piktogram.dart';
+import '../models/user_model.dart';
+import '../services/family_service.dart';
+import '../widgets/activity_detail_sheet.dart';
+
+DateTime? _parseEventDate(dynamic dateValue) {
+  try {
+    if (dateValue is Timestamp) return dateValue.toDate();
+    if (dateValue is String) {
+      final p = dateValue.split('-');
+      if (p.length >= 3) {
+        return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+class PlannerPage extends StatefulWidget {
+  const PlannerPage({super.key});
+  @override
+  State<PlannerPage> createState() => _PlannerPageState();
+}
+
+class _PlannerPageState extends State<PlannerPage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  DateTime _focusedDay = DateTime.now();
+  DateTime _selectedDay = DateTime.now();
+  UserModel? _currentUser;
+  List<UserModel> _familyMembers = [];
+  String? _filterPerson;
+
+  late final Stream<QuerySnapshot> _eventsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _eventsStream = FirebaseFirestore.instance
+        .collection('planner_events')
+        .snapshots();
+    _loadUser();
+  }
+
+  Future<void> _loadUser() async {
+    final user = await FamilyService.getCurrentUserModel();
+    final members = <UserModel>[];
+    if (user?.familyId != null) {
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .where('familyId', isEqualTo: user!.familyId)
+          .get();
+      for (final d in snap.docs) members.add(UserModel.fromMap(d.id, d.data()));
+    }
+    if (mounted) setState(() { _currentUser = user; _familyMembers = members; });
+  }
+
+  List<QueryDocumentSnapshot> _getEventsForDay(
+      List<QueryDocumentSnapshot> all, DateTime day) {
+    return all.where((doc) {
+      try {
+        final d = doc.data() as Map<String, dynamic>;
+        final date = _parseEventDate(d['date']);
+        if (date == null) return false;
+        if (!isSameDay(date, day)) return false;
+        if (_filterPerson != null) {
+          final persons = (d['persons'] as List? ?? []).cast<String>();
+          return persons.contains(_filterPerson);
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+  }
+
+  void _showAddSheet({QueryDocumentSnapshot? edit}) {
+    if (_currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Laddar familjedata... försök igen'),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddEventSheet(
+        selectedDay: _selectedDay,
+        familyMembers: _familyMembers,
+        familyId: _currentUser?.familyId ?? '',
+        eventToEdit: edit,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final dayColor = AppTheme.getDayAccentColor();
+    final isFocus = _currentUser?.isFocusMode ?? false;
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+
+    return Container(
+      decoration: AppTheme.getBackground(),
+      child: Stack(
+        children: [
+          StreamBuilder<QuerySnapshot>(
+            stream: _eventsStream,
+            builder: (ctx, snap) {
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text('Fel: ${snap.error}',
+                        style: const TextStyle(color: Colors.red)),
+                  ),
+                );
+              }
+              final all = snap.data?.docs ?? [];
+              if (isFocus) return _buildFocusView(all);
+              return _buildParentView(all, dayColor);
+            },
+          ),
+          Positioned(
+            right: 16,
+            bottom: bottomPad + 16,
+            child: FloatingActionButton.extended(
+              onPressed: _showAddSheet,
+              backgroundColor: dayColor,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Ny aktivitet',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildParentView(List<QueryDocumentSnapshot> all, Color dayColor) {
+    final selected = _getEventsForDay(all, _selectedDay);
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(child: _buildCalendar(all, dayColor)),
+          SliverToBoxAdapter(child: _buildPersonFilter(dayColor)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+              child: Text(
+                  () {
+                    try {
+                      return DateFormat('EEEE d MMMM', 'sv').format(_selectedDay);
+                    } catch (_) {
+                      return DateFormat('d MMMM').format(_selectedDay);
+                    }
+                  }(),
+                  style: AppTheme.sectionTitleStyle),
+            ),
+          ),
+          if (selected.isEmpty)
+            SliverToBoxAdapter(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.all(24),
+                decoration: AppTheme.cardDecoration(),
+                child: const Center(child: Text('Ingen planering — lägg till! ✨',
+                    style: TextStyle(color: Colors.grey))),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) => _ActivityCard(
+                  doc: selected[i], 
+                  dayColor: dayColor,
+                  currentUser: _currentUser,
+                  familyMembers: _familyMembers,
+                ),
+                childCount: selected.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
+        ],
+      );
+  }
+
+  Widget _buildFocusView(List<QueryDocumentSnapshot> all) {
+    final today = _getEventsForDay(all, DateTime.now());
+    final dayColor = AppTheme.getDayAccentColor();
+    return CustomScrollView(
+      physics: const BouncingScrollPhysics(),
+      slivers: [
+          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Text('Min dag', style: AppTheme.sectionTitleStyle),
+            ),
+          ),
+          if (today.isEmpty)
+            SliverToBoxAdapter(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                padding: const EdgeInsets.all(32),
+                decoration: AppTheme.cardDecoration(),
+                child: const Center(child: Text('Fri dag! 🌿')),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) => _FocusCard(
+                  doc: today[i], 
+                  dayColor: dayColor,
+                  currentUser: _currentUser,
+                  familyMembers: _familyMembers,
+                ),
+                childCount: today.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 120)),
+        ],
+      );
+  }
+
+  Widget _buildHeader(Color dayColor) {
+    final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
+    return Container(
+      decoration: BoxDecoration(
+        color: dayColor,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+      child: Text('Planering',
+          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
+    );
+  }
+
+  Widget _buildCalendar(List<QueryDocumentSnapshot> all, Color dayColor) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      decoration: AppTheme.cardDecoration(),
+      child: TableCalendar(
+        firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
+        focusedDay: _focusedDay,
+        availableGestures: AvailableGestures.horizontalSwipe, // Tillåter vertikal scroll
+        selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
+        calendarFormat: CalendarFormat.month,
+        availableCalendarFormats: const {CalendarFormat.month: 'Månad'},
+        eventLoader: (day) {
+          try {
+            return _getEventsForDay(all, day).map((e) => e.id).toList();
+          } catch (_) {
+            return [];
+          }
+        },
+        onDaySelected: (s, f) => setState(() { _selectedDay = s; _focusedDay = f; }),
+        onPageChanged: (f) => setState(() => _focusedDay = f),
+        locale: 'sv',
+        calendarStyle: CalendarStyle(
+          selectedDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
+          todayDecoration: BoxDecoration(color: dayColor.withValues(alpha: 0.3), shape: BoxShape.circle),
+          markerDecoration: BoxDecoration(color: dayColor, shape: BoxShape.circle),
+          markersMaxCount: 3,
+          outsideDaysVisible: false,
+        ),
+        headerStyle: const HeaderStyle(
+          formatButtonVisible: false, titleCentered: true,
+          titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPersonFilter(Color dayColor) {
+    if (_familyMembers.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        children: [
+          _Pill(label: 'Alla', selected: _filterPerson == null, color: dayColor,
+              onTap: () => setState(() => _filterPerson = null)),
+          ..._familyMembers.map((m) {
+            Color mc;
+            try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
+            return _Pill(
+              label: m.name.split(' ').first,
+              selected: _filterPerson == m.name,
+              color: mc,
+              onTap: () => setState(() => _filterPerson = _filterPerson == m.name ? null : m.name),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final String label; final bool selected; final Color color; final VoidCallback onTap;
+  const _Pill({required this.label, required this.selected, required this.color, required this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: selected ? color : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: selected ? color : Colors.grey.shade300),
+      ),
+      child: Text(label, style: TextStyle(
+        color: selected ? Colors.white : AppTheme.getTextColor(),
+        fontWeight: FontWeight.w600, fontSize: 13)),
+    ),
+  );
+}
+
+class _ActivityCard extends StatelessWidget {
+  final QueryDocumentSnapshot doc; 
+  final Color dayColor;
+  final UserModel? currentUser;
+  final List<UserModel> familyMembers;
+  
+  const _ActivityCard({
+    required this.doc, 
+    required this.dayColor,
+    required this.currentUser,
+    required this.familyMembers,
+  });
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort aktivitet?'),
+        content: const Text('Är du säker på att du vill ta bort denna aktivitet?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              doc.reference.delete();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Ta bort'),
+          ),
+        ],
+      )
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = doc.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    final pik = d['piktogram'] as String? ?? '📅';
+    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
+    final date = _parseEventDate(d['date']);
+    final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
+    final isPending = d['isPending'] == true;
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        decoration: AppTheme.cardDecoration().copyWith(
+          border: Border(left: BorderSide(color: dayColor, width: 4))),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(children: [
+            Text(pik, style: const TextStyle(fontSize: 36)),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              Text(time, style: TextStyle(fontSize: 13, color: dayColor, fontWeight: FontWeight.w600)),
+              if (isPending) const Text('⏳ Väntar på godkännande',
+                  style: TextStyle(fontSize: 11, color: Colors.orange)),
+            ])),
+            // Lägg till popup-menyn här
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
+              padding: EdgeInsets.zero,
+              onSelected: (val) {
+                if (val == 'edit') {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => _AddEventSheet(
+                      selectedDay: date ?? DateTime.now(),
+                      familyMembers: familyMembers,
+                      familyId: currentUser?.familyId,
+                      eventToEdit: doc,
+                    ),
+                  );
+                } else if (val == 'delete') {
+                  _confirmDelete(context);
+                }
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(value: 'edit', child: Text('Redigera')),
+                const PopupMenuItem(value: 'delete', child: Text('Ta bort', style: TextStyle(color: Colors.red))),
+              ],
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusCard extends StatelessWidget {
+  final QueryDocumentSnapshot doc; 
+  final Color dayColor;
+  final UserModel? currentUser;
+  final List<UserModel> familyMembers;
+
+  const _FocusCard({
+    required this.doc, 
+    required this.dayColor,
+    required this.currentUser,
+    required this.familyMembers,
+  });
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort aktivitet?'),
+        content: const Text('Är du säker på att du vill ta bort denna aktivitet?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () {
+              doc.reference.delete();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Ta bort'),
+          ),
+        ],
+      )
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = doc.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    final pik = d['piktogram'] as String? ?? '📅';
+    final timeStr = d['time'] as String? ?? ''; // Läs tiden direkt från time-fältet!
+    final date = _parseEventDate(d['date']);
+    final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet(context: context, isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ActivityDetailSheet(docSnapshot: doc)),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.all(20),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(children: [
+          Text(pik, style: const TextStyle(fontSize: 44)),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(time, style: TextStyle(fontSize: 15, color: dayColor, fontWeight: FontWeight.w600)),
+          ])),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, color: Colors.grey.shade400, size: 20),
+            padding: EdgeInsets.zero,
+            onSelected: (val) {
+              if (val == 'edit') {
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => _AddEventSheet(
+                    selectedDay: date ?? DateTime.now(),
+                    familyMembers: familyMembers,
+                    familyId: currentUser?.familyId,
+                    eventToEdit: doc,
+                  ),
+                );
+              } else if (val == 'delete') {
+                _confirmDelete(context);
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(value: 'edit', child: Text('Redigera')),
+              const PopupMenuItem(value: 'delete', child: Text('Ta bort', style: TextStyle(color: Colors.red))),
+            ],
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _AddEventSheet extends StatefulWidget {
+  final DateTime selectedDay;
+  final List<UserModel> familyMembers;
+  final String? familyId;
+  final QueryDocumentSnapshot? eventToEdit;
+  const _AddEventSheet({required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
+  @override
+  State<_AddEventSheet> createState() => _AddEventSheetState();
+}
+
+class _AddEventSheetState extends State<_AddEventSheet> {
+  int _step = 0;
+  String _pik = '📅';
+  String _cat = 'Alla';
+  String _q = '';
+  final _title = TextEditingController();
+  TimeOfDay _start = TimeOfDay.now();
+  final List<String> _persons = [];
+  final List<String> _checklist = [];
+  final _clCtrl = TextEditingController();
+  
+  bool _saving = false;
+  bool _saveAsTemplate = false; // NY! Switch för att spara mall
+  List<QueryDocumentSnapshot> _templates = []; // Håller inlästa mallar
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTemplates();
+
+    // Ladda in befintlig data om vi redigerar!
+    if (widget.eventToEdit != null) {
+      final d = widget.eventToEdit!.data() as Map<String, dynamic>;
+      _pik = d['piktogram'] as String? ?? '📅';
+      _title.text = d['title'] as String? ?? '';
+      
+      final timeStr = d['time'] as String? ?? '';
+      if (timeStr.isNotEmpty) {
+        final parts = timeStr.split(':');
+        if (parts.length >= 2) {
+          _start = TimeOfDay(hour: int.tryParse(parts[0]) ?? 0, minute: int.tryParse(parts[1]) ?? 0);
+        }
+      }
+      
+      final loadedPersons = (d['persons'] as List? ?? []).cast<String>();
+      _persons.addAll(loadedPersons);
+      
+      final loadedChecklist = (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+      _checklist.addAll(loadedChecklist.map((e) => e['item'] as String? ?? ''));
+
+      _step = 1;
+    }
+  }
+
+  Future<void> _loadTemplates() async {
+    try {
+      final snap = await FirebaseFirestore.instance.collection('activity_templates').get();
+      if (mounted) {
+        setState(() {
+          // Filtrera ut de mallar som tillhör familjen, eller saknar familj-ID
+          _templates = snap.docs.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            final fid = d['familyId'] as String? ?? '';
+            return fid.isEmpty || fid == widget.familyId;
+          }).toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _applyTemplate(Map<String, dynamic> data) {
+    setState(() {
+      _pik = data['piktogram'] ?? '📅';
+      _title.text = data['title'] ?? '';
+      _checklist.clear();
+      _checklist.addAll((data['checklist'] as List<dynamic>? ?? []).map((e) => e.toString()));
+      _step = 1; // Hoppa direkt till formuläret!
+    });
+  }
+
+  List<PiktogramItem> get _filtered => piktogramLibrary.where((p) =>
+    (_cat == 'Alla' || p.category == _cat) &&
+    (_q.isEmpty || p.label.toLowerCase().contains(_q.toLowerCase()))
+  ).toList();
+
+  Future<void> _save() async {
+    if (_title.text.trim().isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      final d = widget.selectedDay;
+      final titleStr = _title.text.trim();
+      
+      final data = {
+        'title': titleStr,
+        'piktogram': _pik,
+        'type': 'activity',
+        'date': '${d.year}-${d.month}-${d.day}',
+        'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
+        'persons': _persons,
+        // Behåll tidigare checklista-status om vi redigerar
+        'checklist': _checklist.map((i) {
+          bool isDone = false;
+          if (widget.eventToEdit != null) {
+            final oldD = widget.eventToEdit!.data() as Map<String, dynamic>;
+            final oldChecklist = (oldD['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
+            final existing = oldChecklist.where((old) => old['item'] == i);
+            if (existing.isNotEmpty) {
+              isDone = existing.first['isDone'] == true;
+            }
+          }
+          return {'item': i, 'isDone': isDone};
+        }).toList(),
+        'source': 'manual',
+        'createdBy': user?.uid,
+        'isPending': false,
+        'familyId': widget.familyId ?? '',
+      };
+
+      // 1. Spara aktiviteten
+      if (widget.eventToEdit != null) {
+        await widget.eventToEdit!.reference.update(data);
+      } else {
+        await FirebaseFirestore.instance.collection('planner_events').add(data);
+      }
+
+      // 2. Spara som mall om checkboxen är ikryssad
+      if (_saveAsTemplate) {
+        await FirebaseFirestore.instance.collection('activity_templates').add({
+          'title': titleStr,
+          'piktogram': _pik,
+          'checklist': _checklist,
+          'familyId': widget.familyId ?? '',
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.eventToEdit != null ? 'Aktivitet uppdaterad! ✅' : 'Aktivitet sparad! ✅'),
+            backgroundColor: const Color(0xFF6BAE75),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Fel vid sparande: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dayColor = AppTheme.getDayAccentColor();
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.92,
+      decoration: const BoxDecoration(color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      child: Column(children: [
+        Padding(padding: const EdgeInsets.only(top: 12),
+          child: Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          child: Row(children: [
+            Expanded(child: Text(
+              _step == 0 ? 'Välj piktogram / Mall' : (widget.eventToEdit != null ? 'Redigera aktivitet' : 'Aktivitetsdetaljer'),
+              style: AppTheme.sectionTitleStyle
+            )),
+            if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0),
+                child: const Text('← Tillbaka')),
+          ]),
+        ),
+        Expanded(child: _step == 0 ? _picker(dayColor) : _form(dayColor)),
+      ]),
+    );
+  }
+
+  Widget _picker(Color dayColor) {
+    final items = _filtered;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+      // --- MALLAR ---
+      if (_templates.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Text('Hämta från mall', style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 80,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _templates.length,
+            itemBuilder: (ctx, i) {
+              final d = _templates[i].data() as Map<String, dynamic>;
+              return GestureDetector(
+                onTap: () => _applyTemplate(d),
+                child: Container(
+                  margin: const EdgeInsets.only(right: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: dayColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: dayColor.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(d['piktogram'] ?? '📋', style: const TextStyle(fontSize: 28)),
+                      const SizedBox(width: 10),
+                      Text(d['title'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Divider(),
+        ),
+      ],
+
+      // --- SÖK PIKTOGRAM ---
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: TextField(
+          onChanged: (v) => setState(() => _q = v),
+          decoration: InputDecoration(hintText: 'Sök piktogram...', prefixIcon: const Icon(Icons.search),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            filled: true, fillColor: Colors.grey.shade100, contentPadding: const EdgeInsets.symmetric(vertical: 8)),
+        ),
+      ),
+      SizedBox(height: 40, child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: piktogramCategories.map((c) => _Pill(label: c, selected: _cat == c,
+            color: dayColor, onTap: () => setState(() => _cat = c))).toList())),
+      const SizedBox(height: 8),
+      Expanded(child: GridView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 5, mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.9),
+        itemCount: items.length,
+        itemBuilder: (_, i) {
+          final p = items[i];
+          final sel = p.emoji == _pik;
+          return GestureDetector(
+            onTap: () { setState(() { _pik = p.emoji; if (_title.text.isEmpty) _title.text = p.label; _step = 1; }); },
+            child: AnimatedContainer(duration: const Duration(milliseconds: 150),
+              decoration: BoxDecoration(
+                color: sel ? dayColor.withValues(alpha: 0.15) : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+                border: sel ? Border.all(color: dayColor, width: 2) : null),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text(p.emoji, style: const TextStyle(fontSize: 24)),
+                Text(p.label, style: const TextStyle(fontSize: 9), textAlign: TextAlign.center,
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+              ])),
+          );
+        },
+      )),
+    ]);
+  }
+
+  Widget _form(Color dayColor) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: GestureDetector(
+          onTap: () => setState(() => _step = 0),
+          child: Column(children: [
+            Text(_pik, style: const TextStyle(fontSize: 56)),
+            Text('Byt piktogram / Mall', style: TextStyle(fontSize: 12, color: dayColor)),
+          ]),
+        )),
+        const SizedBox(height: 16),
+        TextField(controller: _title,
+          decoration: InputDecoration(labelText: 'Aktivitetsnamn',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)))),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.access_time),
+          label: Text('Starttid: ${_start.format(context)}'),
+          onPressed: () async {
+            final t = await showTimePicker(context: context, initialTime: _start);
+            if (t != null) setState(() => _start = t);
+          },
+        ),
+        const SizedBox(height: 16),
+        Text('Vem deltar?', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, children: widget.familyMembers.map((m) {
+          final sel = _persons.contains(m.name);
+          Color mc; try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
+          return FilterChip(label: Text(m.name.split(' ').first), selected: sel,
+            selectedColor: mc.withValues(alpha: 0.2), checkmarkColor: mc,
+            onSelected: (v) => setState(() => v ? _persons.add(m.name) : _persons.remove(m.name)));
+        }).toList()),
+        const SizedBox(height: 16),
+        Text('Packlista / Förberedelser', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(child: TextField(controller: _clCtrl,
+            decoration: InputDecoration(hintText: 'Lägg till...', contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+            onSubmitted: (v) { if (v.trim().isNotEmpty) setState(() { _checklist.add(v.trim()); _clCtrl.clear(); }); })),
+          const SizedBox(width: 8),
+          IconButton(icon: Icon(Icons.add_circle_rounded, color: dayColor, size: 32),
+            onPressed: () { if (_clCtrl.text.trim().isNotEmpty) setState(() { _checklist.add(_clCtrl.text.trim()); _clCtrl.clear(); }); }),
+        ]),
+        ..._checklist.map((item) => ListTile(
+          leading: const Icon(Icons.check_circle_outline), title: Text(item), dense: true, contentPadding: EdgeInsets.zero,
+          trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: Colors.red),
+            onPressed: () => setState(() => _checklist.remove(item))))),
+        
+        // --- SPARA SOM MALL SWITCH ---
+        if (widget.eventToEdit == null) ...[
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200)
+            ),
+            child: SwitchListTile(
+              title: const Text('Spara som mall', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Sparar namn, emoji och packlista för framtiden.', style: TextStyle(fontSize: 12)),
+              value: _saveAsTemplate,
+              activeColor: dayColor,
+              onChanged: (val) => setState(() => _saveAsTemplate = val),
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 24),
+        SizedBox(width: double.infinity, height: 56, child: ElevatedButton(
+          onPressed: _saving ? null : _save,
+          style: ElevatedButton.styleFrom(backgroundColor: dayColor, foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+          child: _saving ? const CircularProgressIndicator(color: Colors.white) :
+              Text(widget.eventToEdit != null ? 'Uppdatera aktivitet' : 'Spara aktivitet', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        )),
+        const SizedBox(height: 40),
+      ]),
     );
   }
 }
