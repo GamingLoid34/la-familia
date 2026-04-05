@@ -387,7 +387,11 @@ class _AgendaPageState extends State<AgendaPage>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       decoration: AppTheme.cardDecoration(),
-      child: TableCalendar(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Material(
+          color: Colors.transparent,
+          child: TableCalendar(
         firstDay: DateTime.utc(2020),
         lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
@@ -424,6 +428,8 @@ class _AgendaPageState extends State<AgendaPage>
           formatButtonVisible: false,
           titleCentered: true,
           titleTextStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
         ),
       ),
     );

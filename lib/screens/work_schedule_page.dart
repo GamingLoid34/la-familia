@@ -252,7 +252,11 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
                 borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: Colors.white10),
               ),
-              child: TableCalendar(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(15),
+                child: Material(
+                  color: Colors.transparent,
+                  child: TableCalendar(
                 firstDay: DateTime.utc(2024, 1, 1),
                 lastDay: DateTime.utc(2030, 12, 31),
                 focusedDay: _focusedDay,
@@ -279,6 +283,8 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
                     color: Colors.white24,
                     shape: BoxShape.circle,
                   ),
+                ),
+              ),
                 ),
               ),
             ),
