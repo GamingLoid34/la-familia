@@ -134,8 +134,8 @@ Mål: veckans middagar i appen (kärnbehov: "handla mat") utan att bygga receptb
 
 Mål: nästa aktivitet + rutinstatus utan att öppna appen — för ADHD är widgeten ofta hela appen.
 
-- [ ] 13.1 home_widget-paketet: liten widget med nästa aktivitet ("om 45 min: ⚽ Fotboll") i dagens färg.
-- [ ] 13.2 Medium-variant med dagens rutinsteg kvar att bocka.
+- [x] 13.1 home_widget + `NextActivityWidgetProvider` (Kotlin): nästa aktivitet med "om X min"/"Pågår nu", färgad kant + rubriker i dagens färg, tryck öppnar appen. Matas debounced från FamilyProvider; Android uppdaterar dessutom var 30:e min.
+- [x] 13.2 Rutinstatus-rad i samma widget ("🌅 Morgon: 2 av 4 steg" / "klart! 🌟") — egen medium-variant bedömdes onödig.
 
 ## 🚪 Etapp 14: Onboarding & login i nya designen
 
@@ -147,7 +147,7 @@ Mål: nästa aktivitet + rutinstatus utan att öppna appen — för ADHD är wid
 ## 🧹 Backlog (ingen egen etapp — tas löpande)
 
 - [ ] Inköpslistan: snabbval-chips för vanliga varor (mjölk, bröd, ägg...) — enda tillägget, inget mer.
-- [ ] Migrera `manage_members_page` från SecondaryApp till `createUser` Cloud Function.
+- [ ] Migrera `manage_members_page` från SecondaryApp till `createUser` Cloud Function (funktionen är deployad).
 - [ ] Lyft `work_shifts`/`busy_sessions`-streams till `FamilyProvider` (bort med nästlade StreamBuilders).
 - [ ] Typa `UserModel.colorValue` som `int`.
 - [ ] README.md: ersätt Flutter-starter-texten.
