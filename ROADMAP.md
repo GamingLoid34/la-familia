@@ -126,9 +126,9 @@ Mål: appen ska kännas levande — reaktioner, familjetavlan, "Jag tar det" och
 
 Mål: veckans middagar i appen (kärnbehov: "handla mat") utan att bygga receptbank.
 
-- [ ] 12.1 Collection `meals` {familyId, date, title, emoji}; vecko-vy (7 rader) nåbar från Hem-snabbverktyg + Familjen.
-- [ ] 12.2 "Lägg ingredienser i inköpslistan"-knapp per middag (fritextrader → shopping_items).
-- [ ] 12.3 Dagens middag visas på Hem ("🍽️ Ikväll: tacos").
+- [x] 12.1 Collection `meals` (regler deployade); "Veckans mat 🍽️" med 7 dagar, veckonav och emoji-val. Nås via Hem-snabbverktyget "Mat" + "Mat"-pillen i Familjen-headern.
+- [x] 12.2 Ingredienser skrivs i middagsbladet → batch-sparas som shopping_items ("3 varor lagda i inköpslistan 🛒").
+- [x] 12.3 "Ikväll: X"-kort på Hem när dagens middag är planerad (provider prenumererar på dagens meal).
 
 ## 📱 Etapp 13: Hemskärms-widget (Android)
 

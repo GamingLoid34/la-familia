@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/family_note.dart';
 import '../models/user_model.dart';
+import '../services/widget_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/recurrence.dart';
 
@@ -84,6 +85,22 @@ class FamilyProvider extends ChangeNotifier {
   /// Tvinga omritning av alla lyssnande vyer — används när globala
   /// UI-inställningar ändras (t.ex. lågstimuli-läget).
   void refreshUi() => notifyListeners();
+
+  /// Hemskärms-widgeten matas debounced vid varje dataändring (Etapp 13).
+  Timer? _widgetDebounce;
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    _widgetDebounce?.cancel();
+    _widgetDebounce = Timer(const Duration(seconds: 2), () {
+      WidgetService.updateFromData(
+        user: _currentUser,
+        todayEvents: todayEvents,
+        routines: _routines,
+      );
+    });
+  }
 
   FamilyProvider() {
     FirebaseAuth.instance.authStateChanges().listen((user) {
@@ -260,6 +277,7 @@ class FamilyProvider extends ChangeNotifier {
     _notesSub?.cancel();
     _routinesSub?.cancel();
     _mealsSub?.cancel();
+    _widgetDebounce?.cancel();
     super.dispose();
   }
 }
