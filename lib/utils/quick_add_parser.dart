@@ -1,0 +1,175 @@
+import '../data/piktogram.dart';
+import '../models/user_model.dart';
+
+/// Snabbinmatning (ROADMAP Etapp 10): tolkar svensk fritext lokalt —
+/// "Fotboll tis 17:00 Liam" → färdigt aktivitetsutkast. Ingen AI, inga
+/// nätverksanrop; bara enkla regler som täcker familjevardagen.
+class QuickAddDraft {
+  final String title;
+  final DateTime date;
+  /// `HH:mm` eller tom sträng (ingen tid angiven).
+  final String time;
+  final List<UserModel> persons;
+  /// 'weekly' | 'biweekly' | '' (engångs).
+  final String recurrenceType;
+  final String piktogram;
+
+  const QuickAddDraft({
+    required this.title,
+    required this.date,
+    required this.time,
+    required this.persons,
+    required this.recurrenceType,
+    required this.piktogram,
+  });
+}
+
+const Map<String, int> _weekdays = {
+  'måndag': 1, 'måndagar': 1, 'mån': 1,
+  'tisdag': 2, 'tisdagar': 2, 'tis': 2,
+  'onsdag': 3, 'onsdagar': 3, 'ons': 3,
+  'torsdag': 4, 'torsdagar': 4, 'tors': 4, 'tor': 4,
+  'fredag': 5, 'fredagar': 5, 'fre': 5,
+  'lördag': 6, 'lördagar': 6, 'lör': 6,
+  'söndag': 7, 'söndagar': 7, 'sön': 7,
+};
+
+/// Nästa förekomst av [weekday] från och med idag.
+DateTime _nextWeekday(DateTime from, int weekday) {
+  final today = DateTime(from.year, from.month, from.day);
+  final diff = (weekday - today.weekday) % 7;
+  return DateTime(today.year, today.month, today.day + diff);
+}
+
+/// Tolkar [text]. Returnerar null om ingen titel blir kvar efter tolkning.
+QuickAddDraft? parseQuickAdd(
+  String text, {
+  required List<UserModel> members,
+  DateTime? now,
+}) {
+  final n = now ?? DateTime.now();
+  var work = ' ${text.trim()} ';
+  if (work.trim().isEmpty) return null;
+
+  String recurrence = '';
+  DateTime? date;
+  String time = '';
+
+  String lower() => work.toLowerCase();
+
+  // 1. "varje X" / "varannan X" → upprepning + veckodag.
+  for (final entry in _weekdays.entries) {
+    for (final prefix in const ['varje', 'varannan']) {
+      final pattern = RegExp(
+          r'\b' + prefix + r'\s+' + entry.key + r'\b',
+          caseSensitive: false);
+      if (pattern.hasMatch(lower())) {
+        recurrence = prefix == 'varje' ? 'weekly' : 'biweekly';
+        date = _nextWeekday(n, entry.value);
+        work = work.replaceAll(pattern, ' ');
+      }
+    }
+  }
+
+  // 2. Fristående veckodag ("tis", "fredag") → nästa förekomst.
+  if (date == null) {
+    for (final entry in _weekdays.entries) {
+      final pattern =
+          RegExp(r'\b' + entry.key + r'\b', caseSensitive: false);
+      if (pattern.hasMatch(lower())) {
+        date = _nextWeekday(n, entry.value);
+        work = work.replaceFirst(pattern, ' ');
+        break;
+      }
+    }
+  }
+
+  // 3. "idag" / "imorgon" / "i morgon".
+  if (date == null) {
+    if (RegExp(r'\bidag\b', caseSensitive: false).hasMatch(lower())) {
+      date = DateTime(n.year, n.month, n.day);
+      work = work.replaceFirst(
+          RegExp(r'\bidag\b', caseSensitive: false), ' ');
+    } else if (RegExp(r'\bi ?morgon\b', caseSensitive: false)
+        .hasMatch(lower())) {
+      date = DateTime(n.year, n.month, n.day + 1);
+      work = work.replaceFirst(
+          RegExp(r'\bi ?morgon\b', caseSensitive: false), ' ');
+    }
+  }
+
+  // 4. Datum "12/6" eller "12/6-2026".
+  if (date == null) {
+    final m = RegExp(r'\b(\d{1,2})/(\d{1,2})(?:-(\d{4}))?\b')
+        .firstMatch(work);
+    if (m != null) {
+      final day = int.parse(m.group(1)!);
+      final month = int.parse(m.group(2)!);
+      final year = m.group(3) != null ? int.parse(m.group(3)!) : n.year;
+      var candidate = DateTime(year, month, day);
+      // Utan år: om datumet redan passerat i år, anta nästa år.
+      if (m.group(3) == null &&
+          candidate.isBefore(DateTime(n.year, n.month, n.day))) {
+        candidate = DateTime(year + 1, month, day);
+      }
+      date = candidate;
+      work = work.replaceFirst(m.group(0)!, ' ');
+    }
+  }
+
+  // 5. Tid: "kl 17", "kl 17.30", "17:00", "17.30".
+  final timeMatch = RegExp(
+          r'\bkl\.?\s*(\d{1,2})(?:[:.](\d{2}))?\b|\b(\d{1,2})[:.](\d{2})\b',
+          caseSensitive: false)
+      .firstMatch(work);
+  if (timeMatch != null) {
+    final h =
+        int.parse(timeMatch.group(1) ?? timeMatch.group(3) ?? '0');
+    final mnt = int.parse(timeMatch.group(2) ?? timeMatch.group(4) ?? '0');
+    if (h >= 0 && h <= 23 && mnt >= 0 && mnt <= 59) {
+      time = '${h.toString().padLeft(2, '0')}:'
+          '${mnt.toString().padLeft(2, '0')}';
+      work = work.replaceFirst(timeMatch.group(0)!, ' ');
+    }
+  }
+
+  // 6. Medlemsnamn (förnamn, hela ord).
+  final persons = <UserModel>[];
+  for (final m in members) {
+    final first = m.name.split(' ').first;
+    if (first.isEmpty) continue;
+    final pattern = RegExp(
+        r'\b' + RegExp.escape(first) + r'\b',
+        caseSensitive: false);
+    if (pattern.hasMatch(work)) {
+      persons.add(m);
+      work = work.replaceFirst(pattern, ' ');
+    }
+  }
+
+  // 7. Resten är titeln.
+  final title = work
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (title.isEmpty) return null;
+
+  // 8. Auto-piktogram: matcha titelord mot piktogrambiblioteket.
+  var pik = '📅';
+  final titleLower = title.toLowerCase();
+  for (final item in piktogramLibrary) {
+    final label = item.label.toLowerCase();
+    if (titleLower.contains(label) || label.contains(titleLower)) {
+      pik = item.emoji;
+      break;
+    }
+  }
+
+  return QuickAddDraft(
+    title: title[0].toUpperCase() + title.substring(1),
+    date: date ?? DateTime(n.year, n.month, n.day),
+    time: time,
+    persons: persons,
+    recurrenceType: recurrence,
+    piktogram: pik,
+  );
+}

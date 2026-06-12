@@ -578,7 +578,9 @@ class AddEventSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String? familyId;
   final QueryDocumentSnapshot? eventToEdit;
-  const AddEventSheet({super.key, required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit});
+  /// Förifylld titel (från snabbinmatningens fallback).
+  final String? initialTitle;
+  const AddEventSheet({super.key, required this.selectedDay, required this.familyMembers, this.familyId, this.eventToEdit, this.initialTitle});
   @override
   State<AddEventSheet> createState() => _AddEventSheetState();
 }
@@ -609,6 +611,10 @@ class _AddEventSheetState extends State<AddEventSheet> {
   void initState() {
     super.initState();
     _loadTemplates();
+
+    if (widget.initialTitle != null && widget.initialTitle!.isNotEmpty) {
+      _title.text = widget.initialTitle!;
+    }
 
     if (widget.eventToEdit != null) {
       final d = widget.eventToEdit!.data() as Map<String, dynamic>;

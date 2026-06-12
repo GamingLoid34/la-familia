@@ -106,6 +106,44 @@ Mål: "Hem" = min dag. "Familjen" = veckans översikt. Varje flik ett tydligt sv
 
 ---
 
+## ⚡ Etapp 10: Snabbinmatning (konkurrensanalys 2026-06-12: inmatning är svagaste punkten)
+
+Mål: "Fotboll tis 17:00 Liam" i en rad → färdig aktivitet. Sänker tröskeln som flerstegsformuläret skapar — extra viktigt vid exekutiva svårigheter.
+
+- [x] 10.1 `lib/utils/quick_add_parser.dart`: lokal svensk fritexttolk — veckodagar (tis/tisdag), "idag"/"imorgon", datum 12/6, "varje/varannan X" (→ recurrence), tid ("kl 17", "17:00", "17.30"), medlemsnamn, resten blir titel. Auto-piktogram via piktogrambiblioteket.
+- [x] 10.2 `QuickAddBar` överst i Agendan: skriv → bekräftelseblad med tolkningen som chips (datum/tid/vem/upprepning) → Spara. Skriver med alla konventioner + schemalägger notiser (inkl. återkommande instanser).
+- [x] 10.3 O-tolkbar text öppnar vanliga formuläret med texten förifylld som titel.
+
+## 🔔 Etapp 11: Riktiga pushar mellan medlemmar (FCM)
+
+Mål: appen ska kännas levande — reaktioner, familjetavlan, "Jag tar det" och tilldelade sysslor ska nå andras mobiler. firebase_messaging finns redan i pubspec.
+
+- [ ] 11.1 FCM-token per enhet sparas på users-dokumentet; Cloud Function skickar push vid ny familjenotis/reaktion/syssle-tilldelning till berörda (ej avsändaren).
+- [ ] 11.2 Respektera presence: ingen push till den som är "Upptagen" eller har energi Låg (servern läser users-dokumentet).
+- [ ] 11.3 Notisinställningar utökas med "Familjehändelser"-toggle.
+
+## 🍽️ Etapp 12: Matplanering light
+
+Mål: veckans middagar i appen (kärnbehov: "handla mat") utan att bygga receptbank.
+
+- [ ] 12.1 Collection `meals` {familyId, date, title, emoji}; vecko-vy (7 rader) nåbar från Hem-snabbverktyg + Familjen.
+- [ ] 12.2 "Lägg ingredienser i inköpslistan"-knapp per middag (fritextrader → shopping_items).
+- [ ] 12.3 Dagens middag visas på Hem ("🍽️ Ikväll: tacos").
+
+## 📱 Etapp 13: Hemskärms-widget (Android)
+
+Mål: nästa aktivitet + rutinstatus utan att öppna appen — för ADHD är widgeten ofta hela appen.
+
+- [ ] 13.1 home_widget-paketet: liten widget med nästa aktivitet ("om 45 min: ⚽ Fotboll") i dagens färg.
+- [ ] 13.2 Medium-variant med dagens rutinsteg kvar att bocka.
+
+## 🚪 Etapp 14: Onboarding & login i nya designen
+
+- [ ] 14.1 Login/registrering/onboarding får juveltema, Nunito och gradient-headers (enda skärmarna kvar med gamla stilen) + lint-städning (BuildContext async-gaps).
+- [ ] 14.2 Förstagångs-upplevelse: förifyllda exempel (en aktivitet, en rutin, en syssla) så appen inte är tom dag 1.
+
+---
+
 ## 🧹 Backlog (ingen egen etapp — tas löpande)
 
 - [ ] Inköpslistan: snabbval-chips för vanliga varor (mjölk, bröd, ägg...) — enda tillägget, inget mer.

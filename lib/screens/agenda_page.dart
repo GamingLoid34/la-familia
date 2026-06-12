@@ -12,6 +12,7 @@ import '../providers/family_provider.dart';
 import '../widgets/activity_detail_sheet.dart';
 import '../services/notification_service.dart';
 import '../widgets/planner_event_leading.dart';
+import '../widgets/quick_add_bar.dart';
 import 'calendar_import_page.dart';
 import 'chores_page.dart';
 import 'planner_page.dart';
@@ -669,6 +670,26 @@ class _AgendaPageState extends State<AgendaPage>
                 slivers: [
                   SliverToBoxAdapter(
                       child: _buildHeader(context, dayColor)),
+                  // Snabbinmatning (Etapp 10): en rad → tolkad aktivitet.
+                  SliverToBoxAdapter(
+                    child: QuickAddBar(
+                      familyMembers: provider.familyMembers,
+                      familyId: user?.familyId ?? '',
+                      onFallbackToForm: (raw) {
+                        showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (_) => AddEventSheet(
+                            selectedDay: _selectedDay,
+                            familyMembers: provider.familyMembers,
+                            familyId: user?.familyId ?? '',
+                            initialTitle: raw,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                   if (!isFocus) ...[
                     SliverToBoxAdapter(
                       child: _buildTabs(dayColor),
