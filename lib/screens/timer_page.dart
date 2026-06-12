@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import '../app_theme.dart';
 import '../timer_service.dart'; // Hämta vår nya tjänst
 
 class TimerPage extends StatefulWidget {
-  const TimerPage({super.key});
+  /// Förinställd tid (t.ex. nedräkning till nästa aktivitet).
+  final int? initialSeconds;
+  /// Vad nedräkningen gäller — visas under klockan.
+  final String? label;
+
+  const TimerPage({super.key, this.initialSeconds, this.label});
 
   @override
   State<TimerPage> createState() => _TimerPageState();
@@ -10,6 +16,16 @@ class TimerPage extends StatefulWidget {
 
 class _TimerPageState extends State<TimerPage> {
   final TimerService _service = TimerService(); // Koppla upp oss
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.initialSeconds;
+    if (s != null && s > 0) {
+      _service.setTimer(s);
+      _service.startTimer();
+    }
+  }
 
   String _formatTime(int totalSeconds) {
     int m = totalSeconds ~/ 60;
@@ -21,7 +37,7 @@ class _TimerPageState extends State<TimerPage> {
   Widget build(BuildContext context) {
     // Vi använder ValueListenableBuilder för att lyssna på ändringar live
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F0ED),
+      backgroundColor: AppTheme.dayPalette().tint,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -75,7 +91,7 @@ class _TimerPageState extends State<TimerPage> {
                               height: 300,
                               child: CircularProgressIndicator(
                                 value: progress,
-                                color: Colors.redAccent,
+                                color: AppTheme.getDayAccentColor(),
                                 strokeWidth: 20,
                                 strokeCap: StrokeCap.round,
                               ),
@@ -85,10 +101,10 @@ class _TimerPageState extends State<TimerPage> {
                               children: [
                                 Text(
                                   _formatTime(currentSeconds),
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 60,
                                     fontWeight: FontWeight.bold,
-                                    color: Colors.redAccent,
+                                    color: AppTheme.getDayAccentColor(),
                                   ),
                                 ),
                                 if (currentSeconds == 0)
@@ -103,6 +119,20 @@ class _TimerPageState extends State<TimerPage> {
                                   const Text(
                                     "PAUSAD",
                                     style: TextStyle(color: Colors.grey),
+                                  ),
+                                if (widget.label != null &&
+                                    widget.label!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      widget.label!,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
                                   ),
                               ],
                             ),
@@ -120,11 +150,11 @@ class _TimerPageState extends State<TimerPage> {
                             ),
                           ),
                           Slider(
-                            value: minutesSet,
+                            value: minutesSet.clamp(5, 120),
                             min: 5,
                             max: 120,
                             divisions: 23,
-                            activeColor: Colors.redAccent,
+                            activeColor: AppTheme.getDayAccentColor(),
                             onChanged: (val) {
                               _service.setTimer(val.toInt() * 60);
                             },
@@ -138,7 +168,7 @@ class _TimerPageState extends State<TimerPage> {
                             if (!running)
                               ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.redAccent,
+                                  backgroundColor: AppTheme.getDayAccentColor(),
                                   shape: const CircleBorder(),
                                   padding: const EdgeInsets.all(20),
                                 ),

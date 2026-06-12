@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../app_theme.dart';
 import '../firebase_options.dart';
+import '../services/family_service.dart';
 
 class ManageMembersPage extends StatefulWidget {
   const ManageMembersPage({super.key});
@@ -20,26 +21,13 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  String _selectedColor = 'ff2196f3';
+  String _selectedColor = AppTheme.memberColorPalette.first;
   String _selectedRole = 'Barn';
   String? _editingId;
   String? _familyId;
   bool _isLoading = false;
   String? _avatarUrl;
   bool _uploadingAvatar = false;
-
-  final List<String> _colors = [
-    'ff2196f3',
-    'fff44336',
-    'ff4caf50',
-    'ffff9800',
-    'ff9c27b0',
-    'ffe91e63',
-    'ff795548',
-    'ff607d8b',
-    'ff6bae75', // NPF Grön
-    'ffedd87a', // NPF Gul
-  ];
 
   @override
   void initState() {
@@ -55,8 +43,20 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         setState(() {
           _familyId = doc.data()?['familyId'] as String?;
         });
+        // När vi är i create-läge: föreslå nästa lediga färg så syskon inte
+        // hamnar på samma som föräldern.
+        if (_editingId == null) {
+          await _preselectNextAvailableColor();
+        }
       }
     }
+  }
+
+  Future<void> _preselectNextAvailableColor() async {
+    final fid = _familyId;
+    if (fid == null || fid.isEmpty) return;
+    final next = await FamilyService.assignNextAvailableColor(fid);
+    if (mounted) setState(() => _selectedColor = next);
   }
 
   void _resetForm() {
@@ -64,12 +64,14 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     _emailController.clear();
     _passwordController.clear();
     setState(() {
-      _selectedColor = 'ff2196f3';
+      _selectedColor = AppTheme.memberColorPalette.first;
       _selectedRole = 'Barn';
       _editingId = null;
       _avatarUrl = null;
     });
     FocusScope.of(context).unfocus();
+    // Föreslå nästa lediga färg igen efter sparat barn.
+    _preselectNextAvailableColor();
   }
 
   void _editMember(DocumentSnapshot doc) {
@@ -79,7 +81,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     
     setState(() {
       _editingId = doc.id;
-      _selectedColor = data['color'] ?? 'ff2196f3';
+      _selectedColor = data['color'] ?? AppTheme.memberColorPalette.first;
       _avatarUrl = data['avatarUrl'] as String?;
       
       // Översätt databas-roll till rullgardin
@@ -184,7 +186,9 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         userData['energy'] = 3;
         userData['weeklyPoints'] = 0;
         userData['points'] = 0;
-        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin') ? 'parent' : 'child';
+        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin')
+            ? 'parent'
+            : (dbRole == 'youth' ? 'youth' : 'child');
 
         await FirebaseFirestore.instance.collection('users').doc(uid).set(userData);
         
@@ -308,14 +312,22 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                       Wrap(
                         spacing: 12,
                         runSpacing: 12,
-                        children: _colors.map((colorHex) => GestureDetector(
-                          onTap: () => setState(() => _selectedColor = colorHex),
-                          child: CircleAvatar(
-                            backgroundColor: Color(int.parse(colorHex, radix: 16)),
-                            radius: 18,
-                            child: _selectedColor == colorHex ? const Icon(Icons.check, color: Colors.white, size: 18) : null,
-                          ),
-                        )).toList(),
+                        children: AppTheme.memberColorPalette
+                            .map((colorHex) => GestureDetector(
+                                  onTap: () => setState(
+                                      () => _selectedColor = colorHex),
+                                  child: CircleAvatar(
+                                    backgroundColor:
+                                        AppTheme.colorFromHex(colorHex),
+                                    radius: 18,
+                                    child: _selectedColor.toLowerCase() ==
+                                            colorHex.toLowerCase()
+                                        ? const Icon(Icons.check,
+                                            color: Colors.white, size: 18)
+                                        : null,
+                                  ),
+                                ))
+                            .toList(),
                       ),
                       const SizedBox(height: 20),
                       if (_editingId != null) ...[

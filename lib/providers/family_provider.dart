@@ -2,26 +2,83 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/family_note.dart';
 import '../models/user_model.dart';
+import '../utils/date_utils.dart';
+import '../utils/recurrence.dart';
 
 class FamilyProvider extends ChangeNotifier {
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   List<QueryDocumentSnapshot> _chores = [];
-  List<QueryDocumentSnapshot> _todayEvents = [];
-  
+  List<QueryDocumentSnapshot> _todayDateEvents = [];
+  List<QueryDocumentSnapshot> _tomorrowDateEvents = [];
+  List<QueryDocumentSnapshot> _recurringEvents = [];
+  List<FamilyNote> _todayNotes = [];
+  List<QueryDocumentSnapshot> _routines = [];
+
   bool _isLoading = true;
 
   StreamSubscription? _userSub;
   StreamSubscription? _familySub;
   StreamSubscription? _choresSub;
   StreamSubscription? _eventsSub;
+  StreamSubscription? _tomorrowSub;
+  StreamSubscription? _recurringSub;
+  StreamSubscription? _notesSub;
+  StreamSubscription? _routinesSub;
 
   UserModel? get currentUser => _currentUser;
   List<UserModel> get familyMembers => _familyMembers;
   List<QueryDocumentSnapshot> get chores => _chores;
-  List<QueryDocumentSnapshot> get todayEvents => _todayEvents;
+
+  /// Dagens händelser: events med dagens datum + återkommande som
+  /// infaller idag (expanderade i klienten, deduplicerade på doc-id).
+  List<QueryDocumentSnapshot> get todayEvents {
+    final now = DateTime.now();
+    final seen = <String>{};
+    final out = <QueryDocumentSnapshot>[];
+    for (final doc in _todayDateEvents) {
+      if (seen.add(doc.id)) out.add(doc);
+    }
+    for (final doc in _recurringEvents) {
+      if (seen.contains(doc.id)) continue;
+      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, now)) {
+        seen.add(doc.id);
+        out.add(doc);
+      }
+    }
+    return out;
+  }
+
+  /// Morgondagens händelser — för "I morgon"-vyn på Hem (NPF: förutsägbarhet).
+  List<QueryDocumentSnapshot> get tomorrowEvents {
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    final seen = <String>{};
+    final out = <QueryDocumentSnapshot>[];
+    for (final doc in _tomorrowDateEvents) {
+      if (seen.add(doc.id)) out.add(doc);
+    }
+    for (final doc in _recurringEvents) {
+      if (seen.contains(doc.id)) continue;
+      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, tomorrow)) {
+        seen.add(doc.id);
+        out.add(doc);
+      }
+    }
+    return out;
+  }
+
+  List<FamilyNote> get todayNotes => _todayNotes;
+
+  /// Familjens morgon-/kvällsrutiner (ROADMAP Etapp 7).
+  List<QueryDocumentSnapshot> get routines => _routines;
+
   bool get isLoading => _isLoading;
+
+  /// Tvinga omritning av alla lyssnande vyer — används när globala
+  /// UI-inställningar ändras (t.ex. lågstimuli-läget).
+  void refreshUi() => notifyListeners();
 
   FamilyProvider() {
     FirebaseAuth.instance.authStateChanges().listen((user) {
@@ -37,14 +94,22 @@ class FamilyProvider extends ChangeNotifier {
     _currentUser = null;
     _familyMembers = [];
     _chores = [];
-    _todayEvents = [];
+    _todayDateEvents = [];
+    _tomorrowDateEvents = [];
+    _recurringEvents = [];
+    _todayNotes = [];
     _isLoading = false;
-    
+
     _userSub?.cancel();
     _familySub?.cancel();
     _choresSub?.cancel();
     _eventsSub?.cancel();
-    
+    _tomorrowSub?.cancel();
+    _recurringSub?.cancel();
+    _notesSub?.cancel();
+    _routinesSub?.cancel();
+    _routines = [];
+
     notifyListeners();
   }
 
@@ -67,9 +132,17 @@ class FamilyProvider extends ChangeNotifier {
       _familySub?.cancel();
       _choresSub?.cancel();
       _eventsSub?.cancel();
+      _tomorrowSub?.cancel();
+      _recurringSub?.cancel();
+      _notesSub?.cancel();
+      _routinesSub?.cancel();
+      _routines = [];
       _familyMembers = [];
       _chores = [];
-      _todayEvents = [];
+      _todayDateEvents = [];
+      _tomorrowDateEvents = [];
+      _recurringEvents = [];
+      _todayNotes = [];
       notifyListeners();
       return;
     }
@@ -98,15 +171,59 @@ class FamilyProvider extends ChangeNotifier {
       notifyListeners();
     });
 
-    // Lyssna på dagens händelser
+    // Lyssna på dagens händelser (datum migrerade till paddat format 2026-06-11).
     _eventsSub?.cancel();
     final now = DateTime.now();
-    final todayStr = '${now.year}-${now.month}-${now.day}';
     _eventsSub = FirebaseFirestore.instance.collection('planner_events')
         .where('familyId', isEqualTo: familyId)
-        .where('date', isEqualTo: todayStr)
+        .where('date', isEqualTo: dateKey(now))
         .snapshots().listen((snap) {
-      _todayEvents = snap.docs;
+      _todayDateEvents = snap.docs;
+      notifyListeners();
+    });
+
+    // Morgondagens daterade händelser — för "I morgon"-vyn.
+    _tomorrowSub?.cancel();
+    _tomorrowSub = FirebaseFirestore.instance.collection('planner_events')
+        .where('familyId', isEqualTo: familyId)
+        .where('date', isEqualTo: dateKey(now.add(const Duration(days: 1))))
+        .snapshots().listen((snap) {
+      _tomorrowDateEvents = snap.docs;
+      notifyListeners();
+    });
+
+    // Återkommande händelser — expanderas i todayEvents-gettern.
+    _recurringSub?.cancel();
+    _recurringSub = FirebaseFirestore.instance.collection('planner_events')
+        .where('familyId', isEqualTo: familyId)
+        .where('isRecurring', isEqualTo: true)
+        .snapshots().listen((snap) {
+      _recurringEvents = snap.docs;
+      notifyListeners();
+    });
+
+    // Rutiner (morgon/kväll) för hela familjen.
+    _routinesSub?.cancel();
+    _routinesSub = FirebaseFirestore.instance
+        .collection('routines')
+        .where('familyId', isEqualTo: familyId)
+        .snapshots()
+        .listen((snap) {
+      _routines = snap.docs;
+      notifyListeners();
+    });
+
+    // Dagens familjenotiser (alltid zero-paddade — ny collection).
+    _notesSub?.cancel();
+    final today = dateKey(now);
+    _notesSub = FirebaseFirestore.instance
+        .collection('family_notes')
+        .where('familyId', isEqualTo: familyId)
+        .where('date', isEqualTo: today)
+        .snapshots()
+        .listen((snap) {
+      _todayNotes = snap.docs.map((d) => FamilyNote.fromDoc(d)).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       notifyListeners();
     });
   }
@@ -117,6 +234,10 @@ class FamilyProvider extends ChangeNotifier {
     _familySub?.cancel();
     _choresSub?.cancel();
     _eventsSub?.cancel();
+    _tomorrowSub?.cancel();
+    _recurringSub?.cancel();
+    _notesSub?.cancel();
+    _routinesSub?.cancel();
     super.dispose();
   }
 }

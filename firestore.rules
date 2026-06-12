@@ -41,9 +41,24 @@ service cloud.firestore {
       allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
     }
     
+    // planner_events: medlemmar i familjen får uppdatera — inkl. reactions.{uid}
+    // (emoji-reaktioner, Fas 2) utan separata fältregler.
     match /planner_events/{docId} {
       allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /family_notes/{docId} {
+      allow read: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth()
+        && request.resource.data.familyId == getUserFamilyId()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.text.size() <= 140;
+      allow delete: if isAuth()
+        && resource.data.familyId == getUserFamilyId()
+        && resource.data.fromUid == request.auth.uid;
+      // Notiser är inte editerbara — radera och skapa ny.
+      allow update: if false;
     }
 
     match /shopping_items/{docId} {
@@ -74,6 +89,20 @@ service cloud.firestore {
     }
 
     match /work_shifts/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
+    match /busy_sessions/{docId} {
+      allow read: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+      allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+    }
+
+    // Morgon-/kvällsrutiner (ROADMAP Etapp 7). Alla i familjen får läsa och
+    // bocka av; skapa/redigera/radera kräver bara familjetillhörighet
+    // (föräldrakontroll sköts i UI:t — barn ser ingen editor).
+    match /routines/{docId} {
       allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
     }

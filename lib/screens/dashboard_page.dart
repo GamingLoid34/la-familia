@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -5,18 +6,37 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
+import '../utils/date_utils.dart';
+import '../utils/member_presence.dart';
+import '../utils/person_match.dart';
+import '../services/user_service.dart';
 import '../widgets/activity_detail_sheet.dart';
 import '../widgets/member_day_sheet.dart';
 import '../widgets/member_avatar.dart';
-import 'agenda_page.dart';
+import '../widgets/routine_card.dart';
+import '../widgets/today_chores_sheet.dart';
+import '../widgets/planner_event_leading.dart';
+import '../widgets/family_notes_strip.dart';
 import 'timer_page.dart';
 import 'shopping_list_page.dart';
-import 'screen_rules_page.dart';
 import 'family_status_page.dart';
 import 'work_schedule_page.dart';
 
+enum DashboardVariant {
+  /// Bara inloggad användare (hem).
+  me,
+
+  /// Hela familjen — samma data som tidigare dashboard.
+  family,
+}
+
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  final DashboardVariant variant;
+
+  const DashboardPage({
+    super.key,
+    this.variant = DashboardVariant.me,
+  });
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -27,39 +47,28 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   bool get wantKeepAlive => true;
 
-  static DateTime? _parseDate(dynamic v) {
-    try {
-      if (v is Timestamp) return v.toDate();
-      if (v is String) {
-        final p = v.split('-');
-        if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-      }
-    } catch (_) {}
-    return null;
+  /// Minut-puls så "om X min"-texter och tidsbalkar håller sig färska.
+  Timer? _minuteTicker;
+
+  @override
+  void initState() {
+    super.initState();
+    _minuteTicker = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
-  static DateTime? _parseDateTime(Map<String, dynamic> d) {
-    try {
-      final base = _parseDate(d['date']);
-      if (base == null) return null;
-      final timeStr = d['time'] as String? ?? '';
-      if (timeStr.isNotEmpty) {
-        final tp = timeStr.split(':');
-        if (tp.length >= 2) {
-          return DateTime(base.year, base.month, base.day,
-              int.parse(tp[0]), int.parse(tp[1]));
-        }
-      }
-      return base;
-    } catch (_) {}
-    return null;
+  @override
+  void dispose() {
+    _minuteTicker?.cancel();
+    super.dispose();
   }
 
   List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
     final list = rawDocs.toList();
     list.sort((a, b) {
-      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;
@@ -70,22 +79,20 @@ class _DashboardPageState extends State<DashboardPage>
 
   void _openMemberDaySheet(FamilyProvider provider, UserModel member) {
     final events = provider.todayEvents.where((doc) {
-      final persons = ((doc.data() as Map<String, dynamic>)['persons'] as List? ?? [])
-          .cast<String>();
-      return persons.contains(member.name);
+      return eventIncludesPerson(doc.data() as Map<String, dynamic>,
+          uid: member.uid, name: member.name);
     }).toList();
     events.sort((a, b) {
-      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;
       return dA.compareTo(dB);
     });
     final chores = provider.chores.where((doc) {
-      final who =
-          (doc.data() as Map<String, dynamic>)['who'] as String? ?? '';
-      return who == member.name;
+      return assignedToPerson(doc.data() as Map<String, dynamic>,
+          uid: member.uid, name: member.name);
     }).toList();
 
     showModalBottomSheet<void>(
@@ -116,7 +123,8 @@ class _DashboardPageState extends State<DashboardPage>
     }
 
     final user = familyProvider.currentUser;
-    final isFocus = user?.isFocusMode ?? false;
+    final isFocus = widget.variant == DashboardVariant.me &&
+        (user?.isFocusMode ?? false);
 
     return Container(
       decoration: AppTheme.getBackground(),
@@ -126,40 +134,221 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  /// Kalender som importerats som ”schema” visas bara under Scheman, inte på hem.
+  bool _showEventOnHome(Map<String, dynamic> d) {
+    if (d['source'] == 'calendar') {
+      final kind = d['planningImportKind'] as String? ?? 'schedule';
+      return kind == 'activity';
+    }
+    return true;
+  }
+
+  List<QueryDocumentSnapshot> _eventsForVariant(
+    List<QueryDocumentSnapshot> todayEvents,
+    UserModel? me,
+  ) {
+    if (widget.variant == DashboardVariant.family) {
+      return todayEvents
+          .where((doc) => _showEventOnHome(doc.data() as Map<String, dynamic>))
+          .toList();
+    }
+    if (me == null) return todayEvents;
+    return todayEvents.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (!_showEventOnHome(d)) return false;
+      if (eventHasNoPersons(d)) return true;
+      return eventIncludesPerson(d, uid: me.uid, name: me.name);
+    }).toList();
+  }
+
+  List<QueryDocumentSnapshot> _choresForVariant(
+    List<QueryDocumentSnapshot> chores,
+    UserModel? me,
+  ) {
+    List<QueryDocumentSnapshot> list;
+    if (widget.variant == DashboardVariant.family) {
+      list = chores;
+    } else if (me == null) {
+      list = chores.toList();
+    } else {
+      list = chores
+          .where((doc) => assignedToPerson(
+              doc.data() as Map<String, dynamic>,
+              uid: me.uid,
+              name: me.name))
+          .toList();
+    }
+    if (widget.variant == DashboardVariant.me) {
+      list = list
+          .where((doc) =>
+              (doc.data() as Map<String, dynamic>)['isDone'] != true)
+          .toList();
+    }
+    return list;
+  }
+
   Widget _buildParentView(FamilyProvider provider) {
     final user = provider.currentUser;
-    final todayEvents = provider.todayEvents;
-    final chores = provider.chores;
+    final todayEvents =
+        _eventsForVariant(provider.todayEvents, user);
+    final chores = _choresForVariant(provider.chores, user);
+
+    final isMe = widget.variant == DashboardVariant.me;
+    final timelineTitle = isMe ? 'MIN DAGSLINJE' : 'DAGSTIDSLINJE';
+    final choresTitle = isMe ? 'MINA SYSSLOR' : 'SYSSLOR IDAG';
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
         SliverToBoxAdapter(child: _buildHeader(user)),
-        SliverToBoxAdapter(child: _buildFamilyStrip(context, provider)),
+        if (widget.variant == DashboardVariant.family)
+          SliverToBoxAdapter(child: _buildFamilyStrip(context, provider)),
+        if (widget.variant == DashboardVariant.family)
+          const SliverToBoxAdapter(child: FamilyNotesStrip()),
+        // Rutin visas på Hem: morgonrutin före 12, kvällsrutin från 18.
+        if (isMe)
+          ..._myRoutineSlivers(provider, user),
         SliverToBoxAdapter(
           child: _buildSection(
-            'DAGSTIDSLINJE',
+            timelineTitle,
             _buildTimeline(todayEvents),
           ),
         ),
         SliverToBoxAdapter(
-          child: _buildSection('HÄRNÄST', _buildNextCard(todayEvents)),
+          child: _buildSection(
+            choresTitle,
+            _buildChoreSummary(
+              chores,
+              onlyAssignedTo: isMe ? user?.name : null,
+              onlyAssignedToUid: isMe ? user?.uid : null,
+            ),
+          ),
         ),
-        SliverToBoxAdapter(
-          child: _buildSection('SYSSLOR IDAG', _buildChoreSummary(chores)),
-        ),
-        SliverToBoxAdapter(
-          child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
-        ),
+        if (isMe)
+          SliverToBoxAdapter(
+            child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
+          ),
+        if (isMe && DateTime.now().hour >= 18)
+          SliverToBoxAdapter(
+            child: _buildSection(
+                'I MORGON', _buildTomorrowPreview(provider, user)),
+          ),
         const SliverToBoxAdapter(child: SizedBox(height: 100)),
       ],
+    );
+  }
+
+  /// Min rutin för rätt tid på dygnet: morgon före 12, kväll från 18.
+  List<Widget> _myRoutineSlivers(FamilyProvider provider, UserModel? user) {
+    if (user == null) return const [];
+    final hour = DateTime.now().hour;
+    final String? wantedType =
+        hour < 12 ? 'morning' : (hour >= 18 ? 'evening' : null);
+    if (wantedType == null) return const [];
+
+    final docs = provider.routines.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      return d['ownerUid'] == user.uid &&
+          (d['type'] as String? ?? 'morning') == wantedType;
+    }).toList();
+    if (docs.isEmpty) return const [];
+
+    return [
+      SliverToBoxAdapter(
+        child: _buildSection(
+          wantedType == 'morning' ? 'MIN MORGON' : 'MIN KVÄLL',
+          Column(
+            children: [
+              for (final doc in docs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: RoutineCard(routineDoc: doc),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// Kvällens förhandsvisning av morgondagen — förutsägbarhet minskar ångest.
+  Widget _buildTomorrowPreview(FamilyProvider provider, UserModel? user) {
+    final events = _getSortedDocs(
+      _eventsForVariant(provider.tomorrowEvents, user),
+    );
+    final dayColor = AppTheme.getDayAccentColor();
+
+    if (events.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(
+          children: [
+            const Text('😌', style: TextStyle(fontSize: 20)),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                'Inget planerat i morgon — sov gott!',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+      decoration: AppTheme.cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: events.map((doc) {
+          final d = doc.data() as Map<String, dynamic>;
+          final t = (d['time'] as String? ?? '').trim();
+          final title = d['title'] as String? ?? '';
+          final pik = d['piktogram'] as String? ?? '📅';
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Text(pik, style: const TextStyle(fontSize: 18)),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 48,
+                  child: Text(
+                    t.isEmpty ? '–' : t,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: dayColor,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
   Widget _buildFocusView(FamilyProvider provider) {
     final user = provider.currentUser;
     final name = user?.name.split(' ').first ?? '';
-    final docs = _getSortedDocs(provider.todayEvents);
+    final docs = _getSortedDocs(
+      _eventsForVariant(provider.todayEvents, user),
+    );
         
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -211,13 +400,27 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  /// "om 45 min" istället för bara klockslag — NPF: hur länge till, inte när.
+  String _untilLabel(Duration left) {
+    if (left.inMinutes < 1) return 'nu!';
+    if (left.inMinutes < 60) return 'om ${left.inMinutes} min';
+    final h = left.inHours;
+    final m = left.inMinutes % 60;
+    return m == 0 ? 'om $h h' : 'om $h h $m min';
+  }
+
   Widget _buildFocusMainCard(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDateTime(data);
+    final date = parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     final dayColor = AppTheme.getDayAccentColor();
+    final palette = AppTheme.dayPalette();
+
+    final now = DateTime.now();
+    final left = date?.difference(now);
+    final started = left != null && left.isNegative;
+    final showBar = left != null && !started && left.inMinutes <= 60;
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -225,19 +428,56 @@ class _DashboardPageState extends State<DashboardPage>
       decoration: AppTheme.cardDecoration(),
       child: Column(
         children: [
-          Text(piktogram, style: const TextStyle(fontSize: 64)),
+          PlannerEventLeadingHero(data: data, accentColor: dayColor),
           const SizedBox(height: 12),
           Text(title,
               style: const TextStyle(
                   fontSize: 24, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center),
           const SizedBox(height: 6),
-          Text(timeStr,
-              style: TextStyle(
-                  fontSize: 18,
-                  color: dayColor,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 16),
+          Text(
+            started
+                ? 'Pågår nu · började $timeStr'
+                : (left != null ? '$timeStr · ${_untilLabel(left)}' : timeStr),
+            style: TextStyle(
+                fontSize: 18, color: dayColor, fontWeight: FontWeight.w600),
+          ),
+          if (showBar) ...[
+            const SizedBox(height: 12),
+            // Krympande balk: hur mycket av sista timmen som är kvar.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: (left.inSeconds / 3600).clamp(0.0, 1.0),
+                minHeight: 10,
+                backgroundColor: palette.base.withValues(alpha: 0.15),
+                valueColor: AlwaysStoppedAnimation<Color>(dayColor),
+              ),
+            ),
+          ],
+          if (left != null && !started && left.inMinutes >= 1) ...[
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              icon: Icon(Icons.timer_rounded, size: 18, color: palette.deep),
+              label: Text('Starta nedräkning',
+                  style: TextStyle(color: palette.deep)),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => TimerPage(
+                    initialSeconds: left.inSeconds,
+                    label: 'Tills $title börjar',
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
           Text('Du klarar det! 💪',
               style: TextStyle(
                   fontSize: 15, color: Colors.grey.shade500)),
@@ -248,10 +488,10 @@ class _DashboardPageState extends State<DashboardPage>
 
   Widget _buildFocusSmallCard(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDateTime(data);
+    final date = parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
+    final dayColor = AppTheme.getDayAccentColor();
     return Container(
       width: 130,
       margin: const EdgeInsets.only(right: 10),
@@ -260,7 +500,11 @@ class _DashboardPageState extends State<DashboardPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(piktogram, style: const TextStyle(fontSize: 28)),
+          PlannerEventLeading(
+            data: data,
+            accentColor: dayColor,
+            emojiSize: 28,
+          ),
           const SizedBox(height: 4),
           Text(title,
               style: const TextStyle(
@@ -279,23 +523,70 @@ class _DashboardPageState extends State<DashboardPage>
   Widget _buildFamilyStrip(BuildContext context, FamilyProvider provider) {
     final members = provider.familyMembers;
     if (members.isEmpty) return const SizedBox.shrink();
+    final fid = provider.currentUser?.familyId;
+    if (fid == null || fid.isEmpty) {
+      return _familyStripContent(
+        context,
+        provider,
+        members,
+        const <QueryDocumentSnapshot>[],
+        const <QueryDocumentSnapshot>[],
+      );
+    }
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('work_shifts')
+          .where('familyId', isEqualTo: fid)
+          .snapshots(),
+      builder: (ctx, ws) {
+        return StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('busy_sessions')
+              .where('familyId', isEqualTo: fid)
+              .snapshots(),
+          builder: (ctx2, bs) {
+            final shiftDocs = ws.data?.docs ?? const <QueryDocumentSnapshot>[];
+            final busyDocs = bs.data?.docs ?? const <QueryDocumentSnapshot>[];
+            return _familyStripContent(
+              context,
+              provider,
+              members,
+              shiftDocs,
+              busyDocs,
+            );
+          },
+        );
+      },
+    );
+  }
 
+  Widget _familyStripContent(
+    BuildContext context,
+    FamilyProvider provider,
+    List<UserModel> members,
+    List<QueryDocumentSnapshot> shiftDocs,
+    List<QueryDocumentSnapshot> busyDocs,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('FAMILJEN', style: AppTheme.sectionLabelStyle),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Tryck för aktiviteter, sysslor och energi',
+                    'Grön/gul/röd = Familjestatus',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
+                      height: 1.25,
                       color: Colors.grey.shade500,
                       fontWeight: FontWeight.w500,
                     ),
@@ -305,13 +596,32 @@ class _DashboardPageState extends State<DashboardPage>
             ),
           ),
           SizedBox(
-            height: 124,
+            height: 132,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               itemCount: members.length,
-              itemBuilder: (_, i) =>
-                  _buildFamilyMemberCard(context, provider, members[i]),
+              itemBuilder: (_, i) {
+                final member = members[i];
+                final memberEvents = provider.todayEvents.where((doc) {
+                  return eventIncludesPerson(
+                      doc.data() as Map<String, dynamic>,
+                      uid: member.uid,
+                      name: member.name);
+                }).toList();
+                final presence = computeMemberPresence(
+                  member,
+                  memberTodayEvents: memberEvents,
+                  familyShiftDocs: shiftDocs,
+                  familyBusyDocs: busyDocs,
+                );
+                return _buildFamilyMemberCard(
+                  context,
+                  provider,
+                  member,
+                  presence,
+                );
+              },
             ),
           ),
         ],
@@ -323,6 +633,7 @@ class _DashboardPageState extends State<DashboardPage>
     BuildContext context,
     FamilyProvider provider,
     UserModel member,
+    MemberPresence presence,
   ) {
     Color mc;
     try {
@@ -330,7 +641,6 @@ class _DashboardPageState extends State<DashboardPage>
     } catch (_) {
       mc = AppTheme.getDayAccentColor();
     }
-    final energyColor = _energyColor(member.energy);
     final first = member.name.split(' ').first;
 
     return Padding(
@@ -341,62 +651,79 @@ class _DashboardPageState extends State<DashboardPage>
           onTap: () => _openMemberDaySheet(provider, member),
           borderRadius: BorderRadius.circular(22),
           child: SizedBox(
-            width: 108,
+            width: 104,
             child: Ink(
-              padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
-              decoration: AppTheme.cardDecoration(radius: 22).copyWith(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+              decoration: AppTheme.cardDecoration(radius: 20).copyWith(
                 border:
                     Border.all(color: mc.withValues(alpha: 0.35), width: 1.5),
               ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      FamilyMemberAvatar(member: member, size: 46),
-                      Positioned(
-                        right: -2,
-                        bottom: -2,
-                        child: Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: energyColor,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Stack(
+                      clipBehavior: Clip.hardEdge,
+                      alignment: Alignment.center,
+                      children: [
+                        FamilyMemberAvatar(member: member, size: 40),
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: presence.ringColor,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                        // Energi som emoji — form + färg, färgblindsäkert
+                        // och större än gamla 12px-pricken.
+                        Positioned(
+                          right: -2,
+                          bottom: -2,
+                          child: Container(
+                            width: 20,
+                            height: 20,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: _energyColor(member.energy),
+                                  width: 1.5),
+                            ),
+                            child: Text(
+                              _energyEmoji(member.energy),
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
                     first,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
+                      height: 1.1,
                       color: mc,
                     ),
                   ),
                   const SizedBox(height: 2),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Visa dag',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey.shade500,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      Icon(Icons.expand_more_rounded,
-                          size: 12, color: Colors.grey.shade400),
-                    ],
-                  ),
+                  Icon(Icons.expand_more_rounded,
+                      size: 14, color: Colors.grey.shade400),
                 ],
               ),
             ),
@@ -407,75 +734,148 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Widget _buildHeader(UserModel? user) {
-    final dayColor = AppTheme.getDayAccentColor();
     final now = DateTime.now();
     final weekday = now.weekday;
     final textColor = AppTheme.getNpfTextColor(weekday);
     final dayName = _swedishWeekday(weekday);
     final dateStr = DateFormat('d MMMM', 'sv').format(now);
     final firstName = user?.name.split(' ').first ?? '';
+    final family = widget.variant == DashboardVariant.family;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: dayColor,
-        borderRadius:
-            const BorderRadius.vertical(bottom: Radius.circular(28)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(dayName,
-                    style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: textColor)),
-              ),
-              GestureDetector(
-                onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const FamilyStatusPage())),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+      child: Container(
+        decoration: AppTheme.headerDecoration(weekday),
+        child: Stack(
+          children: [
+            // Mjuka ljuscirklar — ger djup utan att störa läsbarheten.
+            // Utelämnas i lågstimuli-läge.
+            if (!AppTheme.lowStimuli) ...[
+              Positioned(
+                top: -36,
+                right: -28,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                  width: 140,
+                  height: 140,
                   decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(20),
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.10),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.people_rounded,
-                          color: textColor, size: 16),
-                      const SizedBox(width: 4),
-                      Text('Familjestatus',
-                          style: TextStyle(
-                              color: textColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ],
+                ),
+              ),
+              Positioned(
+                bottom: -50,
+                right: 60,
+                child: Container(
+                  width: 110,
+                  height: 110,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.07),
                   ),
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 2),
-          Text(dateStr,
-              style: TextStyle(
-                  fontSize: 13,
-                  color: textColor.withValues(alpha: 0.85))),
-          const SizedBox(height: 4),
-          if (firstName.isNotEmpty)
-            Text('God morgon, $firstName! ☀️',
-                style: TextStyle(fontSize: 15, color: textColor)),
-        ],
+            Padding(
+              padding: AppTheme.paddingBelowStatusBar(context),
+              child: _buildHeaderContent(user, textColor, dayName, dateStr,
+                  firstName, family),
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  Widget _buildHeaderContent(UserModel? user, Color textColor, String dayName,
+      String dateStr, String firstName, bool family) {
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  family ? 'Familjen' : dayName,
+                  style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: textColor),
+                ),
+              ),
+              if (family)
+                GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const FamilyStatusPage()),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: textColor.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.insights_rounded,
+                            color: textColor, size: 16),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Familjestatus',
+                          style: TextStyle(
+                              color: textColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (user != null && widget.variant == DashboardVariant.me)
+                _DashboardViewModeToggle(user: user, textColor: textColor),
+            ],
+          ),
+          if (family) ...[
+            const SizedBox(height: 6),
+            Text(
+              '$dayName $dateStr',
+              style: TextStyle(
+                fontSize: 15,
+                color: textColor.withValues(alpha: 0.9),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Allas aktiviteter och sysslor idag',
+              style: TextStyle(
+                fontSize: 13,
+                color: textColor.withValues(alpha: 0.78),
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 2),
+            Text(dateStr,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: textColor.withValues(alpha: 0.85))),
+            const SizedBox(height: 4),
+            if (firstName.isNotEmpty)
+              Text('God morgon, $firstName! ☀️',
+                  style: TextStyle(fontSize: 15, color: textColor)),
+          ],
+        ],
+      );
+  }
+
+  /// Samma skala som energiväljaren i MemberDaySheet.
+  String _energyEmoji(int energy) =>
+      const ['', '😔', '😌', '😊', '🚀'][energy.clamp(1, 4)];
 
   Color _energyColor(int energy) {
     switch (energy) {
@@ -505,7 +905,9 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(width: 10),
             Flexible(
               child: Text(
-                'Inga aktiviteter idag — lägg till i Planering!',
+                widget.variant == DashboardVariant.me
+                    ? 'Inga aktiviteter för dig idag — lägg till under Planering.'
+                    : 'Inga aktiviteter idag — lägg till under Planering.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
             ),
@@ -522,9 +924,8 @@ class _DashboardPageState extends State<DashboardPage>
         itemCount: docs.length,
         itemBuilder: (_, i) {
           final d = docs[i].data() as Map<String, dynamic>;
-          final date = _parseDateTime(d);
+          final date = parseDateTime(d);
           final title = d['title'] as String? ?? '';
-          final piktogram = d['piktogram'] as String? ?? '📅';
           final dayColor = AppTheme.getDayAccentColor();
           final isCurrent = date != null &&
               date.isBefore(now) &&
@@ -553,8 +954,14 @@ class _DashboardPageState extends State<DashboardPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(piktogram,
-                      style: const TextStyle(fontSize: 18)),
+                  PlannerEventLeading(
+                    data: d,
+                    accentColor: dayColor,
+                    emojiSize: 18,
+                    leadingStyle: isCurrent
+                        ? PlannerEventLeadingStyle.onColoredSurface
+                        : PlannerEventLeadingStyle.normal,
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     date != null
@@ -604,128 +1011,11 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildNextCard(List<QueryDocumentSnapshot> rawDocs) {
-    final docs = _getSortedDocs(rawDocs);
-        
-    if (docs.isEmpty) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-        decoration: AppTheme.cardDecoration(),
-        child: Column(
-          children: [
-            const Text('✨', style: TextStyle(fontSize: 36)),
-            const SizedBox(height: 10),
-            Text('Inget planerat härnäst',
-                style: AppTheme.sectionTitleStyle,
-                textAlign: TextAlign.center),
-            const SizedBox(height: 6),
-            Text(
-              'Tryck på Planering för att lägga till',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-
-    final now = DateTime.now();
-    QueryDocumentSnapshot? targetDoc;
-    for (var d in docs) {
-      final dt = _parseDateTime(d.data() as Map<String, dynamic>);
-      if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
-        targetDoc = d;
-        break;
-      }
-    }
-    final doc = targetDoc ?? docs.last;
-
-    final d = doc.data() as Map<String, dynamic>;
-    final title = d['title'] as String? ?? '';
-    final piktogram = d['piktogram'] as String? ?? '📅';
-    final date = _parseDateTime(d);
-    final checklist =
-        (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
-    final dayColor = AppTheme.getDayAccentColor();
-    final diffMin = date != null
-        ? date.difference(now).inMinutes
-        : 0;
-    final timeLabel = diffMin <= 0
-        ? 'NU PÅGÅR'
-        : diffMin < 60
-            ? 'OM ${diffMin} MIN'
-            : 'OM ${(diffMin / 60).round()} H';
-    final timeStr =
-        date != null ? DateFormat('HH:mm').format(date) : '';
-
-    return GestureDetector(
-      onTap: () => _openDetail(doc),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: AppTheme.cardDecoration().copyWith(
-          border: Border(
-            left: BorderSide(color: dayColor, width: 6),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: dayColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(timeLabel,
-                    style: TextStyle(
-                        color: dayColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text(piktogram,
-                      style: const TextStyle(fontSize: 40)),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                        Text(timeStr,
-                            style: TextStyle(
-                                fontSize: 14,
-                                color: dayColor,
-                                fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              if (checklist.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                ...checklist.map((item) => _ChecklistTile(
-                      item: item,
-                      docId: doc.id,
-                      dayColor: dayColor,
-                    )),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChoreSummary(List<QueryDocumentSnapshot> chores) {
+  Widget _buildChoreSummary(
+    List<QueryDocumentSnapshot> chores, {
+    String? onlyAssignedTo,
+    String? onlyAssignedToUid,
+  }) {
     final total = chores.length;
     final done = chores.where((d) {
       final data = d.data() as Map<String, dynamic>;
@@ -734,12 +1024,35 @@ class _DashboardPageState extends State<DashboardPage>
     final dayColor = AppTheme.getDayAccentColor();
     final progress = total > 0 ? done / total : 0.0;
 
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const AgendaPage(initialTab: AgendaTab.chores),
+    if (total == 0 && onlyAssignedTo != null) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_outline_rounded,
+                color: dayColor, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Inga väntande sysslor just nu.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              ),
+            ),
+          ],
         ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => TodayChoresSheet(
+            onlyAssignedTo: onlyAssignedTo,
+            onlyAssignedToUid: onlyAssignedToUid),
       ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -777,11 +1090,23 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Widget _buildQuickTools() {
-    final tools = [
-      {'emoji': '⏱️', 'label': 'Timer', 'page': const TimerPage()},
-      {'emoji': '📱', 'label': 'Skärmtid', 'page': const ScreenRulesPage()},
-      {'emoji': '🛒', 'label': 'Inköp', 'page': const ShoppingListPage()},
-      {'emoji': '💼', 'label': 'Arbete', 'page': const WorkSchedulePage()},
+    final palette = AppTheme.dayPalette();
+    final tools = <Map<String, dynamic>>[
+      {
+        'icon': Icons.timer_rounded,
+        'label': 'Timer',
+        'page': const TimerPage(),
+      },
+      {
+        'icon': Icons.shopping_cart_rounded,
+        'label': 'Inköp',
+        'page': const ShoppingListPage(),
+      },
+      {
+        'icon': Icons.calendar_month_rounded,
+        'label': 'Scheman',
+        'page': const WorkSchedulePage(),
+      },
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -795,18 +1120,28 @@ class _DashboardPageState extends State<DashboardPage>
                             builder: (_) => t['page'] as Widget)),
                     child: Container(
                       margin: const EdgeInsets.only(right: 6),
-                      height: 80,
-                      decoration: AppTheme.cardDecoration(radius: 16),
+                      height: 88,
+                      decoration: AppTheme.cardDecoration(radius: 18),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(t['emoji'] as String,
-                              style: const TextStyle(fontSize: 26)),
-                          const SizedBox(height: 4),
+                          // Färgad mjuk bricka bakom ikonen — dagens kulör.
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: palette.base.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: Icon(t['icon'] as IconData,
+                                size: 24, color: palette.deep),
+                          ),
+                          const SizedBox(height: 6),
                           Text(t['label'] as String,
-                              style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.getTextColor()),
                               overflow: TextOverflow.ellipsis),
                         ],
                       ),
@@ -853,119 +1188,59 @@ class _DashboardPageState extends State<DashboardPage>
   }
 }
 
-class _ChecklistTile extends StatefulWidget {
-  final Map<String, dynamic> item;
-  final String docId;
-  final Color dayColor;
+/// Snabbväxling hem-skärmen: samma alternativ som under Inställningar.
+class _DashboardViewModeToggle extends StatelessWidget {
+  final UserModel user;
+  final Color textColor;
 
-  const _ChecklistTile({
-    required this.item,
-    required this.docId,
-    required this.dayColor,
+  const _DashboardViewModeToggle({
+    required this.user,
+    required this.textColor,
   });
 
   @override
-  State<_ChecklistTile> createState() => _ChecklistTileState();
-}
-
-class _ChecklistTileState extends State<_ChecklistTile>
-    with SingleTickerProviderStateMixin {
-  late bool _isDone;
-  late AnimationController _anim;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _isDone = widget.item['isDone'] == true;
-    _anim = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 200));
-    _scale = Tween<double>(begin: 1.0, end: 1.2)
-        .chain(CurveTween(curve: Curves.elasticOut))
-        .animate(_anim);
-  }
-
-  @override
-  void dispose() {
-    _anim.dispose();
-    super.dispose();
-  }
-
-  void _toggle() {
-    setState(() => _isDone = !_isDone);
-    _anim.forward().then((_) => _anim.reverse());
-    FirebaseFirestore.instance
-        .collection('planner_events')
-        .doc(widget.docId)
-        .get()
-        .then((doc) {
-      if (!doc.exists) return;
-      final list = List<Map<String, dynamic>>.from(
-          (doc.data()!['checklist'] as List? ?? []));
-      final idx = list.indexWhere(
-          (e) => e['item'] == widget.item['item']);
-      if (idx != -1) {
-        list[idx] = {...list[idx], 'isDone': _isDone};
-        doc.reference.update({'checklist': list});
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _toggle,
-      child: Container(
-        height: 56,
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: _isDone
-              ? widget.dayColor.withValues(alpha: 0.08)
-              : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            ScaleTransition(
-              scale: _scale,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color:
-                      _isDone ? widget.dayColor : Colors.transparent,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: _isDone
-                          ? widget.dayColor
-                          : Colors.grey.shade400,
-                      width: 2),
-                ),
-                child: _isDone
-                    ? const Icon(Icons.check,
-                        color: Colors.white, size: 16)
-                    : null,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                widget.item['item'] as String? ?? '',
-                style: TextStyle(
-                    fontSize: 15,
-                    decoration: _isDone
-                        ? TextDecoration.lineThrough
-                        : null,
-                    color: _isDone
-                        ? Colors.grey.shade400
-                        : AppTheme.getTextColor()),
-              ),
-            ),
-          ],
-        ),
+    final modes = <String>[];
+    final labels = <String>[];
+    if (user.isParent) {
+      modes.addAll(['parent', 'focus']);
+    } else if (user.role == 'youth') {
+      modes.addAll(['youth', 'focus']);
+    } else {
+      modes.addAll(['child', 'focus']);
+    }
+    labels.addAll(['Allt', 'Fokus']);
+    final selectedIndex = modes.contains(user.viewMode)
+        ? modes.indexOf(user.viewMode)
+        : 0;
+
+    return ToggleButtons(
+      direction: Axis.horizontal,
+      borderRadius: BorderRadius.circular(12),
+      selectedColor: textColor,
+      fillColor: textColor.withValues(alpha: 0.22),
+      color: textColor.withValues(alpha: 0.65),
+      selectedBorderColor: Colors.transparent,
+      borderColor: textColor.withValues(alpha: 0.35),
+      constraints: const BoxConstraints(
+        minHeight: 34,
+        minWidth: 0,
       ),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      isSelected: List.generate(modes.length, (i) => i == selectedIndex),
+      onPressed: (index) async {
+        await UserService.updateViewMode(user.uid, modes[index]);
+      },
+      children: [
+        for (final l in labels)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              l,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+            ),
+          ),
+      ],
     );
   }
 }

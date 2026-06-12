@@ -1,0 +1,38 @@
+feat: roadmap v3 etapp 1-9 + ny design (juvel/metall-tema)
+
+Stadning (E1): dod/trasig kod borttagen (personal_countdown, screen_rules,
+manage_templates, responsive_wrapper), tysta catch-block ersatta med
+developer.log, dod notistoggle borttagen.
+
+Datumfundament (E2): central date_utils (dateKey/parseDate m.fl.), all
+datumskrivning zero-paddad, migrateDateFormatOnce deployad och kord.
+
+Person-uid (E3): personUids/whoUid/userUid skrivs vid alla skrivningar,
+matchning via person_match.dart (uid forst, namn fallback),
+backfillPersonUids deployad och kord. Namnbyten tappar inte kopplingar.
+
+Aterkommande aktiviteter (E4): recurrence.dart, UI-valjare i AddEventSheet,
+expansion i alla lasvyer, undantag per dag, instansnotiser 14 dagar.
+
+Notiser (E5): payload-taggade notiser, togglar avbokar bara sin typ,
+overgangsvarning 10 min innan (NPF) med egen kanal och toggle.
+
+Visuell tid (E6): fokuskort med 'om X min' + krympande balk + nedrakning
+till aktivitet, I morgon-vy pa Hem efter kl 18.
+
+Rutiner (E7): routines-collection med regler, RoutineCard pa Hem
+(morgon/kvall, auto-reset), foraldraeditor fran Installningar.
+
+Energi + lagstimuli (E8): energi som emoji-badge (fargblindsakert),
+lag energi erbjuder notispaus, lagstimuli-lage som plattar designen.
+
+Veckogrid (E9): Familjen-fliken ar nu veckooversikt (medlemmar x dagar)
+med konfliktdetektering och 'Jag tar det'-knapp.
+
+Design: varje dag en adelsten/metall - trestegsgradienter med glansband,
+tonad sidbakgrund, vita kort med fargad skugga, ikonbrickor, frostat
+glas-bottennav, Nunito via google_fonts. Utrullat pa alla sidor inkl timern.
+
+Cloud Functions omskrivna till v2-API (firebase-functions v7).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

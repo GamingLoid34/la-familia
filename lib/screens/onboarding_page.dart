@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import '../app_theme.dart';
 import '../main.dart';
+import '../services/family_service.dart';
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -45,12 +46,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
               'createdBy': user.uid,
             });
 
+        // Tilldela unik medlemsfärg från paletten innan vi skriver doc.
+        final assignedColor =
+            await FamilyService.assignNextAvailableColor(familyRef.id);
+
         // Uppdatera användaren
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'name': _userNameCtrl.text.trim(),
           'familyId': familyRef.id,
           'role': 'admin',
           'points': 0,
+          'color': assignedColor,
         }, SetOptions(merge: true));
 
         if (mounted) {
@@ -95,11 +101,16 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
         String familyId = snapshot.docs.first.id;
 
+        // Tilldela unik medlemsfärg från paletten innan vi skriver doc.
+        final assignedColor =
+            await FamilyService.assignNextAvailableColor(familyId);
+
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'name': _userNameCtrl.text.trim(),
           'familyId': familyId,
           'role': 'member',
           'points': 0,
+          'color': assignedColor,
         }, SetOptions(merge: true));
 
         if (mounted) {

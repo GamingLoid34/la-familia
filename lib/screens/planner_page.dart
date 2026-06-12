@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -5,22 +6,15 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../app_theme.dart';
 import '../data/piktogram.dart';
+import '../utils/date_utils.dart';
+import '../utils/person_match.dart';
+import '../utils/recurrence.dart';
 import '../models/user_model.dart';
 import '../services/family_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/activity_detail_sheet.dart';
+import '../widgets/planner_event_leading.dart';
 
-DateTime? _parseEventDate(dynamic dateValue) {
-  try {
-    if (dateValue is Timestamp) return dateValue.toDate();
-    if (dateValue is String) {
-      final p = dateValue.split('-');
-      if (p.length >= 3) {
-        return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-      }
-    }
-  } catch (_) {}
-  return null;
-}
 
 class PlannerPage extends StatefulWidget {
   const PlannerPage({super.key});
@@ -38,6 +32,10 @@ class _PlannerPageState extends State<PlannerPage>
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   String? _filterPerson;
+  String? _filterPersonUid;
+  
+  // NYTT: Göm kalenderimporter som standard
+  bool _showImported = false; 
 
   Stream<QuerySnapshot>? _eventsStream;
 
@@ -65,7 +63,7 @@ class _PlannerPageState extends State<PlannerPage>
         if (user?.familyId != null && user!.familyId!.isNotEmpty) {
           _eventsStream = FirebaseFirestore.instance
               .collection('planner_events')
-              .where('familyId', isEqualTo: user.familyId) // HÄR ÄR FILTRET FIXAT
+              .where('familyId', isEqualTo: user.familyId)
               .snapshots();
         }
       });
@@ -77,12 +75,18 @@ class _PlannerPageState extends State<PlannerPage>
     return all.where((doc) {
       try {
         final d = doc.data() as Map<String, dynamic>;
-        final date = _parseEventDate(d['date']);
-        if (date == null) return false;
-        if (!isSameDay(date, day)) return false;
+        
+        // Schema-import (skola/job): dölj om togglen är av. Aktivitets-import syns alltid.
+        if (!_showImported &&
+            d['source'] == 'calendar' &&
+            (d['planningImportKind'] as String? ?? 'schedule') == 'schedule') {
+          return false;
+        }
+
+        if (!eventOccursOnDay(d, day)) return false;
         if (_filterPerson != null) {
-          final persons = (d['persons'] as List? ?? []).cast<String>();
-          return persons.contains(_filterPerson);
+          return eventIncludesPerson(d,
+              uid: _filterPersonUid ?? '', name: _filterPerson!);
         }
         return true;
       } catch (_) {
@@ -168,7 +172,7 @@ class _PlannerPageState extends State<PlannerPage>
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(child: _buildHeader(context, dayColor)),
           SliverToBoxAdapter(child: _buildCalendar(all, dayColor)),
           SliverToBoxAdapter(child: _buildPersonFilter(dayColor)),
           SliverToBoxAdapter(
@@ -218,7 +222,7 @@ class _PlannerPageState extends State<PlannerPage>
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-          SliverToBoxAdapter(child: _buildHeader(dayColor)),
+          SliverToBoxAdapter(child: _buildHeader(context, dayColor)),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -251,14 +255,11 @@ class _PlannerPageState extends State<PlannerPage>
       );
   }
 
-  Widget _buildHeader(Color dayColor) {
+  Widget _buildHeader(BuildContext context, Color dayColor) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     return Container(
-      decoration: BoxDecoration(
-        color: dayColor,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+      decoration: AppTheme.headerDecoration(),
+      padding: AppTheme.paddingBelowStatusBar(context),
       child: Text('Planering',
           style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
     );
@@ -275,6 +276,7 @@ class _PlannerPageState extends State<PlannerPage>
           child: TableCalendar(
         firstDay: DateTime.utc(2020), lastDay: DateTime.utc(2030, 12, 31),
         focusedDay: _focusedDay,
+        startingDayOfWeek: StartingDayOfWeek.monday,
         availableGestures: AvailableGestures.horizontalSwipe, 
         selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
         calendarFormat: CalendarFormat.month,
@@ -307,15 +309,40 @@ class _PlannerPageState extends State<PlannerPage>
   }
 
   Widget _buildPersonFilter(Color dayColor) {
-    if (_familyMembers.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: 48,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         children: [
+          // NYTT: Toggle för importerat schema
+          GestureDetector(
+            onTap: () => setState(() => _showImported = !_showImported),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: _showImported ? Colors.blueGrey.shade100 : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _showImported ? Colors.blueGrey : Colors.grey.shade300),
+              ),
+              child: Row(
+                children: [
+                  Icon(_showImported ? Icons.visibility : Icons.visibility_off, size: 16, color: _showImported ? Colors.blueGrey.shade800 : Colors.grey),
+                  const SizedBox(width: 6),
+                  Text('Schema', style: TextStyle(
+                    color: _showImported ? Colors.blueGrey.shade800 : Colors.grey,
+                    fontWeight: FontWeight.w600, fontSize: 13)),
+                ],
+              ),
+            ),
+          ),
           _Pill(label: 'Alla', selected: _filterPerson == null, color: dayColor,
-              onTap: () => setState(() => _filterPerson = null)),
+              onTap: () => setState(() {
+                    _filterPerson = null;
+                    _filterPersonUid = null;
+                  })),
           ..._familyMembers.map((m) {
             Color mc;
             try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
@@ -323,7 +350,15 @@ class _PlannerPageState extends State<PlannerPage>
               label: m.name.split(' ').first,
               selected: _filterPerson == m.name,
               color: mc,
-              onTap: () => setState(() => _filterPerson = _filterPerson == m.name ? null : m.name),
+              onTap: () => setState(() {
+                if (_filterPerson == m.name) {
+                  _filterPerson = null;
+                  _filterPersonUid = null;
+                } else {
+                  _filterPerson = m.name;
+                  _filterPersonUid = m.uid;
+                }
+              }),
             );
           }),
         ],
@@ -377,9 +412,10 @@ class _ActivityCard extends StatelessWidget {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            onPressed: () {
-              doc.reference.delete();
-              Navigator.pop(ctx);
+            onPressed: () async {
+              await NotificationService.cancel(doc.id);
+              await doc.reference.delete();
+              if (ctx.mounted) Navigator.pop(ctx);
             },
             child: const Text('Ta bort'),
           ),
@@ -392,9 +428,8 @@ class _ActivityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
-    final pik = d['piktogram'] as String? ?? '📅';
     final timeStr = d['time'] as String? ?? '';
-    final date = _parseEventDate(d['date']);
+    final date = parseDate(d['date']);
     final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
     final isPending = d['isPending'] == true;
 
@@ -409,7 +444,7 @@ class _ActivityCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(children: [
-            Text(pik, style: const TextStyle(fontSize: 36)),
+            PlannerEventLeading(data: d, accentColor: dayColor, emojiSize: 34),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
@@ -472,9 +507,10 @@ class _FocusCard extends StatelessWidget {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Avbryt')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            onPressed: () {
-              doc.reference.delete();
-              Navigator.pop(ctx);
+            onPressed: () async {
+              await NotificationService.cancel(doc.id);
+              await doc.reference.delete();
+              if (ctx.mounted) Navigator.pop(ctx);
             },
             child: const Text('Ta bort'),
           ),
@@ -487,9 +523,8 @@ class _FocusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
-    final pik = d['piktogram'] as String? ?? '📅';
     final timeStr = d['time'] as String? ?? '';
-    final date = _parseEventDate(d['date']);
+    final date = parseDate(d['date']);
     final time = timeStr.isNotEmpty ? timeStr : (date != null ? DateFormat('HH:mm').format(date) : '');
 
     return GestureDetector(
@@ -501,7 +536,7 @@ class _FocusCard extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         decoration: AppTheme.cardDecoration(),
         child: Row(children: [
-          Text(pik, style: const TextStyle(fontSize: 44)),
+          PlannerEventLeading(data: d, accentColor: dayColor, emojiSize: 42),
           const SizedBox(width: 16),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -555,6 +590,7 @@ class _AddEventSheetState extends State<AddEventSheet> {
   String _q = '';
   final _title = TextEditingController();
   TimeOfDay _start = TimeOfDay.now();
+  TimeOfDay? _end;
   final List<String> _persons = [];
   final List<String> _checklist = [];
   final _clCtrl = TextEditingController();
@@ -562,6 +598,12 @@ class _AddEventSheetState extends State<AddEventSheet> {
   bool _saving = false;
   bool _saveAsTemplate = false;
   List<QueryDocumentSnapshot> _templates = [];
+
+  // Upprepning (ROADMAP Etapp 4)
+  String _recurrenceType = 'none'; // none | weekly | biweekly | monthly
+  DateTime? _recurrenceEnd;
+  List<String> _recurrenceExceptions = [];
+  String? _recurrenceStartDate; // bevaras vid redigering
 
   @override
   void initState() {
@@ -572,6 +614,15 @@ class _AddEventSheetState extends State<AddEventSheet> {
       final d = widget.eventToEdit!.data() as Map<String, dynamic>;
       _pik = d['piktogram'] as String? ?? '📅';
       _title.text = d['title'] as String? ?? '';
+
+      final rec = d['recurrence'] as Map<String, dynamic>?;
+      if (rec != null) {
+        _recurrenceType = rec['type'] as String? ?? 'none';
+        _recurrenceStartDate = rec['startDate'] as String?;
+        _recurrenceEnd = parseDate(rec['endDate']);
+        _recurrenceExceptions =
+            (rec['exceptions'] as List? ?? []).cast<String>().toList();
+      }
       
       final timeStr = d['time'] as String? ?? '';
       if (timeStr.isNotEmpty) {
@@ -580,7 +631,17 @@ class _AddEventSheetState extends State<AddEventSheet> {
           _start = TimeOfDay(hour: int.tryParse(parts[0]) ?? 0, minute: int.tryParse(parts[1]) ?? 0);
         }
       }
-      
+      final endStr = d['endTime'] as String? ?? '';
+      if (endStr.isNotEmpty) {
+        final parts = endStr.split(':');
+        if (parts.length >= 2) {
+          _end = TimeOfDay(
+            hour: int.tryParse(parts[0]) ?? 0,
+            minute: int.tryParse(parts[1]) ?? 0,
+          );
+        }
+      }
+
       final loadedPersons = (d['persons'] as List? ?? []).cast<String>();
       _persons.addAll(loadedPersons);
       
@@ -597,13 +658,16 @@ class _AddEventSheetState extends State<AddEventSheet> {
       if (mounted) {
         setState(() {
           _templates = snap.docs.where((doc) {
-            final d = doc.data() as Map<String, dynamic>;
+            final d = doc.data();
             final fid = d['familyId'] as String? ?? '';
             return fid.isEmpty || fid == widget.familyId;
           }).toList();
         });
       }
-    } catch (_) {}
+    } catch (e, stack) {
+      developer.log('planner _loadTemplates misslyckades',
+          error: e, stackTrace: stack);
+    }
   }
 
   void _applyTemplate(Map<String, dynamic> data) {
@@ -621,6 +685,15 @@ class _AddEventSheetState extends State<AddEventSheet> {
     (_q.isEmpty || p.label.toLowerCase().contains(_q.toLowerCase()))
   ).toList();
 
+  /// Veckodagsnamn för upprepningens startdag (befintlig start vid redigering).
+  String _recurrenceDayName() {
+    final start =
+        parseDate(_recurrenceStartDate) ?? widget.selectedDay;
+    const days = ['', 'måndag', 'tisdag', 'onsdag', 'torsdag',
+        'fredag', 'lördag', 'söndag'];
+    return days[start.weekday];
+  }
+
   Future<void> _save() async {
     if (_title.text.trim().isEmpty) return;
     setState(() => _saving = true);
@@ -629,13 +702,14 @@ class _AddEventSheetState extends State<AddEventSheet> {
       final d = widget.selectedDay;
       final titleStr = _title.text.trim();
       
-      final data = {
+      final data = <String, dynamic>{
         'title': titleStr,
         'piktogram': _pik,
         'type': 'activity',
-        'date': '${d.year}-${d.month}-${d.day}',
+        'date': dateKey(d),
         'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
         'persons': _persons,
+        'personUids': uidsForNames(widget.familyMembers, _persons),
         'checklist': _checklist.map((i) {
           bool isDone = false;
           if (widget.eventToEdit != null) {
@@ -654,11 +728,60 @@ class _AddEventSheetState extends State<AddEventSheet> {
         'familyId': widget.familyId ?? '',
       };
 
+      if (_end != null) {
+        data['endTime'] =
+            '${_end!.hour.toString().padLeft(2, '0')}:${_end!.minute.toString().padLeft(2, '0')}';
+      } else if (widget.eventToEdit != null) {
+        data['endTime'] = FieldValue.delete();
+      }
+
+      // Upprepning: spara/uppdatera recurrence-blocket.
+      if (_recurrenceType != 'none') {
+        data['isRecurring'] = true;
+        data['recurrence'] = {
+          'type': _recurrenceType,
+          'startDate': _recurrenceStartDate ?? dateKey(d),
+          'endDate': _recurrenceEnd != null ? dateKey(_recurrenceEnd!) : null,
+          'exceptions': _recurrenceExceptions,
+        };
+      } else if (widget.eventToEdit != null) {
+        data['isRecurring'] = FieldValue.delete();
+        data['recurrence'] = FieldValue.delete();
+      }
+
+      String savedDocId;
       if (widget.eventToEdit != null) {
+        savedDocId = widget.eventToEdit!.id;
+        // Avboka gamla notiser (även instanser om eventet var återkommande).
+        await NotificationService.cancelActivityReminders(
+          savedDocId,
+          widget.eventToEdit!.data() as Map<String, dynamic>,
+        );
         await widget.eventToEdit!.reference.update(data);
       } else {
-        await FirebaseFirestore.instance.collection('planner_events').add(data);
+        final ref = await FirebaseFirestore.instance
+            .collection('planner_events')
+            .add(data);
+        savedDocId = ref.id;
       }
+
+      // Ren karta utan FieldValue-sentinels för notis-schemaläggning.
+      await NotificationService.scheduleActivityReminders(
+        docId: savedDocId,
+        data: {
+          'title': titleStr,
+          'date': dateKey(d),
+          'time': data['time'],
+          if (_recurrenceType != 'none')
+            'recurrence': {
+              'type': _recurrenceType,
+              'startDate': _recurrenceStartDate ?? dateKey(d),
+              'endDate':
+                  _recurrenceEnd != null ? dateKey(_recurrenceEnd!) : null,
+              'exceptions': _recurrenceExceptions,
+            },
+        },
+      );
 
       if (_saveAsTemplate) {
         await FirebaseFirestore.instance.collection('activity_templates').add({
@@ -831,6 +954,79 @@ class _AddEventSheetState extends State<AddEventSheet> {
             if (t != null) setState(() => _start = t);
           },
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.schedule_rounded),
+          label: Text(
+            _end == null
+                ? 'Sluttid (valfritt)'
+                : 'Slut: ${_end!.format(context)}',
+          ),
+          onPressed: () async {
+            final t = await showTimePicker(
+              context: context,
+              initialTime: _end ??
+                  TimeOfDay(
+                    hour: (_start.hour + 1) % 24,
+                    minute: _start.minute,
+                  ),
+            );
+            if (t != null) setState(() => _end = t);
+          },
+        ),
+        if (_end != null)
+          TextButton(
+            onPressed: () => setState(() => _end = null),
+            child: const Text('Ta bort sluttid'),
+          ),
+        const SizedBox(height: 16),
+        Text('UPPREPNING', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          initialValue: _recurrenceType,
+          decoration: InputDecoration(
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+          items: [
+            const DropdownMenuItem(
+                value: 'none', child: Text('Engångshändelse')),
+            DropdownMenuItem(
+                value: 'weekly',
+                child: Text('Varje ${_recurrenceDayName()}')),
+            DropdownMenuItem(
+                value: 'biweekly',
+                child: Text('Varannan ${_recurrenceDayName()}')),
+            const DropdownMenuItem(
+                value: 'monthly', child: Text('Varje månad (samma datum)')),
+          ],
+          onChanged: (v) => setState(() => _recurrenceType = v ?? 'none'),
+        ),
+        if (_recurrenceType != 'none') ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.event_busy_rounded),
+            label: Text(_recurrenceEnd == null
+                ? 'Slutdatum: tills vidare'
+                : 'Slut: ${dateKey(_recurrenceEnd!)}'),
+            onPressed: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _recurrenceEnd ??
+                    widget.selectedDay.add(const Duration(days: 90)),
+                firstDate: widget.selectedDay,
+                lastDate: widget.selectedDay.add(const Duration(days: 365 * 2)),
+              );
+              if (picked != null) setState(() => _recurrenceEnd = picked);
+            },
+          ),
+          if (_recurrenceEnd != null)
+            TextButton(
+              onPressed: () => setState(() => _recurrenceEnd = null),
+              child: const Text('Upprepa tills vidare'),
+            ),
+        ],
         const SizedBox(height: 16),
         Text('Vem deltar?', style: AppTheme.sectionLabelStyle),
         const SizedBox(height: 8),

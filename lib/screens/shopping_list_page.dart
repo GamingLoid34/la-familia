@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -39,7 +40,10 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
           }
         });
       }
-    } catch (_) {}
+    } catch (e, stack) {
+      developer.log('shopping_list _loadFamilyId misslyckades',
+          error: e, stackTrace: stack);
+    }
   }
 
   Future<void> _addItem() async {
@@ -134,12 +138,8 @@ class _ShoppingListPageState extends State<ShoppingListPage> {
           slivers: [
             SliverToBoxAdapter(
               child: Container(
-                decoration: BoxDecoration(
-                  color: dayColor,
-                  borderRadius:
-                      const BorderRadius.vertical(bottom: Radius.circular(28)),
-                ),
-                padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+                decoration: AppTheme.headerDecoration(),
+                padding: AppTheme.paddingBelowStatusBar(context),
                 child: Row(children: [
                   GestureDetector(
                     onTap: () => Navigator.pop(context),

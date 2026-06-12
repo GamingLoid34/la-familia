@@ -3,45 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
+import '../services/notification_service.dart';
 import '../services/user_service.dart';
 import '../screens/agenda_page.dart';
+import '../utils/date_utils.dart';
 import 'activity_detail_sheet.dart';
 import 'member_avatar.dart';
-
-DateTime? _parsePlannerDate(dynamic v) {
-  try {
-    if (v is Timestamp) return v.toDate();
-    if (v is String) {
-      final p = v.split('-');
-      if (p.length >= 3) {
-        return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
-DateTime? _parsePlannerDateTime(Map<String, dynamic> d) {
-  try {
-    final base = _parsePlannerDate(d['date']);
-    if (base == null) return null;
-    final timeStr = d['time'] as String? ?? '';
-    if (timeStr.isNotEmpty) {
-      final tp = timeStr.split(':');
-      if (tp.length >= 2) {
-        return DateTime(
-          base.year,
-          base.month,
-          base.day,
-          int.parse(tp[0]),
-          int.parse(tp[1]),
-        );
-      }
-    }
-    return base;
-  } catch (_) {}
-  return null;
-}
+import 'planner_event_leading.dart';
 
 /// Dagens aktiviteter och sysslor för en medlem, med länk till planering.
 class MemberDaySheet extends StatefulWidget {
@@ -155,7 +123,37 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
                       _EnergyRow(
                         userUid: widget.member.uid,
                         currentEnergy: _energyDisplay,
-                        onSelect: (e) => setState(() => _energyDisplay = e),
+                        onSelect: (e) async {
+                          setState(() => _energyDisplay = e);
+                          // Låg energi → erbjud att dämpa dagens påminnelser.
+                          if (e == 1) {
+                            final pause = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Tung dag? 💛'),
+                                content: const Text(
+                                  'Vill du pausa dagens påminnelser? '
+                                  'Inga aktivitets-, övergångs- eller '
+                                  'sysslonotiser förrän något nytt planeras.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Nej, behåll dem'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Pausa påminnelser'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (pause == true) {
+                              await NotificationService.cancelByPayloads(
+                                  {'activity', 'transition', 'chore'});
+                            }
+                          }
+                        },
                       ),
                     ],
                     const SizedBox(height: 20),
@@ -166,6 +164,7 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
                           context,
                           MaterialPageRoute<void>(
                             builder: (_) => AgendaPage(
+                              initialPersonFilterUid: widget.member.uid,
                               initialTab: AgendaTab.all,
                               initialPersonFilter: widget.member.name,
                             ),
@@ -307,8 +306,7 @@ class _EventTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
-    final pik = d['piktogram'] as String? ?? '📅';
-    final dt = _parsePlannerDateTime(d);
+    final dt = parseDateTime(d);
     final timeStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
 
     return Padding(
@@ -326,7 +324,11 @@ class _EventTile extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  Text(pik, style: const TextStyle(fontSize: 28)),
+                  PlannerEventLeading(
+                    data: d,
+                    accentColor: dayColor,
+                    emojiSize: 28,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(

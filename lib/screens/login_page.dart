@@ -31,7 +31,13 @@ class _LoginPageState extends State<LoginPage> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-      // AuthWrapper i main.dart känner av inloggningen och tar oss vidare automatiskt.
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const MainPage()),
+        );
+      }
     } on FirebaseAuthException catch (e) {
       String message = "Inloggning misslyckades.";
       if (e.code == 'user-not-found') message = "Användaren finns inte.";
@@ -134,7 +140,7 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Text(
-                      "Skapa ett konto för att starta en helt ny familj.",
+                      "Skapa ett konto för att starta en ny familj.",
                       style: TextStyle(fontSize: 13, color: Colors.black54),
                     ),
                     const SizedBox(height: 16),
@@ -168,7 +174,6 @@ class _LoginPageState extends State<LoginPage> {
                               _pwdCtrl.text.isEmpty ||
                               _nameCtrl.text.isEmpty) return;
 
-                          // Spara navigatorn innan vi gör något asynkront!
                           final navigator = Navigator.of(context);
                           setStateBuilder(() => _isRegistering = true);
                           
@@ -190,7 +195,6 @@ class _LoginPageState extends State<LoginPage> {
                                 'createdAt': FieldValue.serverTimestamp(),
                               });
 
-                              // Stäng dialogen med den sparade navigatorn oavsett "mounted"-status
                               navigator.pop();
                             }
                           } catch (e) {
@@ -273,12 +277,8 @@ class _LoginPageState extends State<LoginPage> {
                               _nameCtrl.text.isEmpty)
                             return;
 
-                          // Spara navigatorn innan async
-                          final navigator = Navigator.of(context);
                           setStateBuilder(() => _isRegistering = true);
-                          
                           try {
-                            // Hitta familjen
                             var snapshot = await FirebaseFirestore.instance
                                 .collection('families')
                                 .where(
@@ -302,7 +302,6 @@ class _LoginPageState extends State<LoginPage> {
 
                             String familyId = snapshot.docs.first.id;
 
-                            // Skapa konto
                             UserCredential uc = await FirebaseAuth.instance
                                 .createUserWithEmailAndPassword(
                                   email: _emailCtrl.text.trim(),
@@ -321,8 +320,15 @@ class _LoginPageState extends State<LoginPage> {
                                     'createdAt': FieldValue.serverTimestamp(),
                                   });
 
-                              // Stäng dialogen
-                              navigator.pop();
+                              if (mounted) {
+                                Navigator.pop(context);
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const MainPage(),
+                                  ),
+                                );
+                              }
                             }
                           } catch (e) {
                             ScaffoldMessenger.of(

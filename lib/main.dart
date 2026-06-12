@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -14,6 +15,7 @@ import 'firebase_options.dart';
 
 // Import av dina sidor & tjänster
 import 'screens/dashboard_page.dart';
+import 'screens/family_week_page.dart';
 import 'screens/agenda_page.dart';
 import 'screens/settings_page.dart';
 import 'screens/login_page.dart';
@@ -22,6 +24,8 @@ import 'screens/splash_screen.dart';
 import 'app_theme.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
+import 'services/migration_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,23 +39,31 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     
-    // Aktivera Firebase Crashlytics
-    FlutterError.onError = (errorDetails) {
-      FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
-    };
-    
-    // Fånga asynkrona fel som inte fångas av Flutter
-    PlatformDispatcher.instance.onError = (error, stack) {
-      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-      return true;
-    };
-    
+    // Crashlytics stöds inte på web; undvik att krascha vid felrapportering.
+    if (!kIsWeb) {
+      FlutterError.onError = (errorDetails) {
+        FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+      };
+      PlatformDispatcher.instance.onError = (error, stack) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+        return true;
+      };
+    }
   } catch (e) {
     debugPrint('Firebase init error: $e');
   }
 
-  // Initiera Notistjänsten
-  await NotificationService.initialize();
+  if (!kIsWeb) {
+    await NotificationService.initialize();
+  }
+
+  // Lågstimuli-läge (NPF) — laddas före första frame så UI:t aldrig "blinkar".
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    AppTheme.lowStimuli = prefs.getBool('lowStimuli') ?? false;
+  } catch (e) {
+    debugPrint('Kunde inte läsa lowStimuli: $e');
+  }
 
   // Aktivera offline-cache för Firestore
   FirebaseFirestore.instance.settings = const Settings(
@@ -88,6 +100,15 @@ class _MyAppState extends State<MyApp> {
     // Aktivera 120Hz efter att första framen ritats
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _enableHighRefreshRate();
+      if (!kIsWeb) {
+        SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Color(0xFFF7F7F7),
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ));
+      }
     });
   }
 
@@ -123,7 +144,7 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'La Familia',
       debugShowCheckedModeBanner: false,
-      
+
       // Språkstöd för svenska
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -142,6 +163,7 @@ class _MyAppState extends State<MyApp> {
           seedColor: AppTheme.getNpfDayColor(_weekday),
           brightness: Brightness.light,
         ),
+        textTheme: AppTheme.appTextTheme(ThemeData.light().textTheme),
       ),
       home: const SplashScreen(),
     );
@@ -214,17 +236,32 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
   late PageController _pageController;
-
-  final List<Widget> _pages = [
-    const DashboardPage(),
-    const AgendaPage(initialTab: AgendaTab.all),
-    const SettingsPage(),
-  ];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
+    _pages = [
+      const DashboardPage(variant: DashboardVariant.me),
+      // Etapp 9: Familjen = veckans översikt (ersätter familje-dashboarden).
+      const FamilyWeekPage(),
+      const AgendaPage(initialTab: AgendaTab.all),
+      const SettingsPage(),
+    ];
+    // Engångsmigration: tilldela unik medlemsfärg om saknas/default-grön.
+    // Fire-and-forget; den loggar internt och blockerar aldrig UI.
+    MigrationService.backfillMemberColors();
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      SharedPreferences.getInstance().then((prefs) {
+        if (prefs.getBool('notifPermissionAsked') != true) {
+          NotificationService.requestPermissions().then((_) {
+            prefs.setBool('notifPermissionAsked', true);
+          });
+        }
+      });
+    }
   }
 
   @override
@@ -294,29 +331,36 @@ class _MainPageState extends State<MainPage> {
   }
 
   Widget _buildBottomNav(Color activeColor) {
+    // Frostat glas: innehållet skymtar bakom navet (extendBody är aktivt).
     return Container(
       margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: BottomNavigationBar(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: BottomNavigationBar(
           items: const <BottomNavigationBarItem>[
             BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
+              icon: Icon(Icons.home_rounded),
               label: 'Hem',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.calendar_month_rounded),
+              icon: Icon(Icons.groups_rounded),
+              label: 'Familjen',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.event_note_rounded),
               label: 'Planering',
             ),
             BottomNavigationBarItem(
@@ -325,15 +369,16 @@ class _MainPageState extends State<MainPage> {
             ),
           ],
           currentIndex: _selectedIndex,
-          backgroundColor: Colors.white,
+          backgroundColor: Colors.white.withValues(alpha: 0.65),
           selectedItemColor: activeColor,
-          unselectedItemColor: Colors.grey.shade400,
+          unselectedItemColor: Colors.grey.shade500,
           selectedIconTheme: const IconThemeData(size: 28),
           unselectedIconTheme: const IconThemeData(size: 24),
           type: BottomNavigationBarType.fixed,
           showUnselectedLabels: true,
           onTap: _onItemTapped,
           elevation: 0,
+          ),
         ),
       ),
     );
