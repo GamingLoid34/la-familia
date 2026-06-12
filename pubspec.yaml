@@ -71,18 +71,15 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.3
 
-# TODO: Oscar genererar nya ikoner manuellt i Figma (assets/icon/icon.png +
-# assets/icon/icon_foreground.png, 1024x1024) och kör
-# `flutter pub run flutter_launcher_icons`.
-# När de filerna finns, byt image_path och adaptive_icon_foreground till
-# "assets/icon/icon.png" respektive "assets/icon/icon_foreground.png".
+# Ny logga 2026-06-12: marinblå familjesiluett på vitt.
+# icon_foreground.png är logo.png centrerad med ~35 % marginal så att
+# Androids cirkelmask för adaptiva ikoner inte kapar bågen/texten.
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/images/logo.png"
-  # Primärfärg från medlemspaletten (Djup petrol = ff2A6F97).
-  adaptive_icon_background: "#2A6F97"
-  adaptive_icon_foreground: "assets/images/logo.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/icon_foreground.png"
   min_sdk_android: 21
 
 # For information on the generic Dart part of this file, see the

@@ -139,8 +139,8 @@ Mål: nästa aktivitet + rutinstatus utan att öppna appen — för ADHD är wid
 
 ## 🚪 Etapp 14: Onboarding & login i nya designen
 
-- [ ] 14.1 Login/registrering/onboarding får juveltema, Nunito och gradient-headers (enda skärmarna kvar med gamla stilen) + lint-städning (BuildContext async-gaps).
-- [ ] 14.2 Förstagångs-upplevelse: förifyllda exempel (en aktivitet, en rutin, en syssla) så appen inte är tom dag 1.
+- [x] 14.1 Login + onboarding omskrivna: dagens gradient som fond (respekterar lågstimuli), vita kort, palette-knappar, säkra async-context-mönster. Lints: 44 → 22.
+- [x] 14.2 Ny familj får tre exempel via batch: "Exempel: Middag tillsammans" (imorgon 17:30), morgonrutin med 3 steg, "Exempel: Vattna blommorna" (otilldelad syssla). Misslyckad seed blockerar aldrig onboarding.
 
 ---
 
