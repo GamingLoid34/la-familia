@@ -10,6 +10,7 @@ import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../services/family_service.dart';
 import '../services/notification_service.dart';
+import '../services/push_service.dart';
 import '../services/user_service.dart';
 import 'manage_members_page.dart';
 import 'manage_routines_page.dart';
@@ -35,6 +36,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _notifActivity = true;
   bool _notifChore = true;
   bool _notifTransition = true;
+  bool _notifFamily = true;
 
   @override
   void initState() {
@@ -49,6 +51,7 @@ class _SettingsPageState extends State<SettingsPage>
       _notifActivity = prefs.getBool('notifActivity') ?? true;
       _notifChore = prefs.getBool('notifChore') ?? true;
       _notifTransition = prefs.getBool('notifTransition') ?? true;
+      _notifFamily = prefs.getBool('notifFamily') ?? true;
     });
   }
 
@@ -448,6 +451,22 @@ class _SettingsPageState extends State<SettingsPage>
             }
             setState(() => _notifChore = v);
             _savePreference('notifChore', v);
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Familjehändelser',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          subtitle: const Text(
+              'Push när någon skriver på tavlan, reagerar eller tilldelar',
+              style: TextStyle(fontSize: 12)),
+          value: _notifFamily,
+          activeColor: dayColor,
+          onChanged: (v) async {
+            setState(() => _notifFamily = v);
+            await _savePreference('notifFamily', v);
+            // Servern läser flaggan på users-dokumentet innan utskick.
+            await PushService.setFamilyPushEnabled(v);
           },
         ),
         const Divider(height: 20),

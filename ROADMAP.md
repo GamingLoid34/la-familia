@@ -118,9 +118,9 @@ Mål: "Fotboll tis 17:00 Liam" i en rad → färdig aktivitet. Sänker tröskeln
 
 Mål: appen ska kännas levande — reaktioner, familjetavlan, "Jag tar det" och tilldelade sysslor ska nå andras mobiler. firebase_messaging finns redan i pubspec.
 
-- [ ] 11.1 FCM-token per enhet sparas på users-dokumentet; Cloud Function skickar push vid ny familjenotis/reaktion/syssle-tilldelning till berörda (ej avsändaren).
-- [ ] 11.2 Respektera presence: ingen push till den som är "Upptagen" eller har energi Låg (servern läser users-dokumentet).
-- [ ] 11.3 Notisinställningar utökas med "Familjehändelser"-toggle.
+- [x] 11.1 `PushService` sparar FCM-tokens (array, flera enheter) på users-dokumentet + visar förgrunds-pushar. Triggers deployade: `onFamilyNoteCreated` (alla utom skribenten), `onChoreAssigned` (bara ansvarig), `onEventReaction` (deltagarna). Döda tokens städas efter utskick.
+- [x] 11.2 Servern hoppar över: `pushFamilyEvents == false`, energi ≤ 1, aktiv Upptagen-session.
+- [x] 11.3 "Familjehändelser"-toggle i Inställningar (skriver flaggan till users-dokumentet). **ÅTERSTÅR: tvåenheters-test — installera appen på en andra mobil och verifiera att lapp/syssla/reaktion plingar.**
 
 ## 🍽️ Etapp 12: Matplanering light
 

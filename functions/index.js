@@ -1,7 +1,131 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 admin.initializeApp();
+
+// ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
+// Skickar push till familjemedlemmar. Respekterar:
+//  - pushFamilyEvents === false (toggle i Inställningar)
+//  - energi <= 1 (låg energi → dämpa)
+//  - aktiv "Upptagen"-session just nu
+// Döda tokens städas bort från users-dokumenten efter varje utskick.
+async function sendFamilyPush({ familyId, excludeUids = [], onlyUids = null, title, body }) {
+    if (!familyId) return;
+    const db = admin.firestore();
+    const usersSnap = await db.collection("users")
+        .where("familyId", "==", familyId).get();
+
+    const now = admin.firestore.Timestamp.now();
+    const busySnap = await db.collection("busy_sessions")
+        .where("familyId", "==", familyId)
+        .where("endAt", ">", now)
+        .get();
+    const busyUids = new Set();
+    const busyNames = new Set();
+    for (const doc of busySnap.docs) {
+        const b = doc.data();
+        if (b.startAt && b.startAt.toMillis() <= now.toMillis()) {
+            if (b.userUid) busyUids.add(b.userUid);
+            if (b.userName) busyNames.add(b.userName);
+        }
+    }
+
+    const tokens = [];
+    const tokenOwner = {};
+    for (const doc of usersSnap.docs) {
+        const u = doc.data();
+        if (excludeUids.includes(doc.id)) continue;
+        if (onlyUids && !onlyUids.includes(doc.id)) continue;
+        if (u.pushFamilyEvents === false) continue;
+        if ((u.energy ?? 3) <= 1) continue;
+        if (busyUids.has(doc.id) || busyNames.has(u.name)) continue;
+        for (const t of (u.fcmTokens || [])) {
+            tokens.push(t);
+            tokenOwner[t] = doc.ref;
+        }
+    }
+    if (tokens.length === 0) return;
+
+    const res = await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: { title, body },
+        android: { notification: { channelId: "family_channel" } },
+    });
+
+    const removals = [];
+    res.responses.forEach((r, i) => {
+        if (!r.success) {
+            const code = r.error?.code || "";
+            if (code.includes("registration-token-not-registered") ||
+                code.includes("invalid-argument")) {
+                const t = tokens[i];
+                removals.push(tokenOwner[t].update({
+                    fcmTokens: admin.firestore.FieldValue.arrayRemove([t]),
+                }));
+            }
+        }
+    });
+    await Promise.all(removals);
+    console.log(`sendFamilyPush: "${title}" till ${tokens.length} enheter.`);
+}
+
+// Ny lapp på familjetavlan → alla utom avsändaren.
+exports.onFamilyNoteCreated = onDocumentCreated("family_notes/{id}", async (event) => {
+    const d = event.data?.data();
+    if (!d) return;
+    await sendFamilyPush({
+        familyId: d.familyId,
+        excludeUids: [d.fromUid],
+        title: "Ny lapp på familjetavlan 📌",
+        body: `${d.fromName || "Någon"}: ${d.text || ""}`,
+    });
+});
+
+// Ny syssla med ansvarig → bara den personen.
+exports.onChoreAssigned = onDocumentCreated("chores/{id}", async (event) => {
+    const d = event.data?.data();
+    if (!d || !d.whoUid) return;
+    await sendFamilyPush({
+        familyId: d.familyId,
+        onlyUids: [d.whoUid],
+        title: "Ny syssla till dig ✅",
+        body: `${d.piktogram || ""} ${d.chore || d.title || ""}`.trim(),
+    });
+});
+
+// Ny/ändrad emoji-reaktion → eventets deltagare (eller hela familjen).
+exports.onEventReaction = onDocumentUpdated("planner_events/{id}", async (event) => {
+    const before = event.data?.before.data() || {};
+    const after = event.data?.after.data() || {};
+    const rb = before.reactions || {};
+    const ra = after.reactions || {};
+
+    let reactorUid = null;
+    let reaction = null;
+    for (const [uid, r] of Object.entries(ra)) {
+        const prev = rb[uid];
+        if (!prev || prev.emoji !== r.emoji) {
+            reactorUid = uid;
+            reaction = r;
+            break;
+        }
+    }
+    if (!reactorUid || !reaction) return;
+
+    const targets = Array.isArray(after.personUids) && after.personUids.length > 0
+        ? after.personUids.filter((u) => u !== reactorUid)
+        : null;
+    if (targets && targets.length === 0) return;
+
+    await sendFamilyPush({
+        familyId: after.familyId,
+        excludeUids: [reactorUid],
+        onlyUids: targets,
+        title: `${reaction.emoji} från ${reaction.name || "någon"}`,
+        body: after.title || "En aktivitet fick en reaktion",
+    });
+});
 
 // ─── 1. SKAPA ANVÄNDARE (Callable Function) ──────────────────────────────────
 exports.createUser = onCall(async (request) => {

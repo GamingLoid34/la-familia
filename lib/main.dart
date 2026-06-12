@@ -24,6 +24,7 @@ import 'screens/splash_screen.dart';
 import 'app_theme.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
+import 'services/push_service.dart';
 import 'services/migration_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -261,6 +262,8 @@ class _MainPageState extends State<MainPage> {
           });
         }
       });
+      // FCM: registrera enhetens token + visa förgrunds-pushar (Etapp 11).
+      PushService.init();
     }
   }
 
