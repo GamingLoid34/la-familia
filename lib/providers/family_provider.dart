@@ -16,6 +16,7 @@ class FamilyProvider extends ChangeNotifier {
   List<QueryDocumentSnapshot> _recurringEvents = [];
   List<FamilyNote> _todayNotes = [];
   List<QueryDocumentSnapshot> _routines = [];
+  List<QueryDocumentSnapshot> _todayMeals = [];
 
   bool _isLoading = true;
 
@@ -27,6 +28,7 @@ class FamilyProvider extends ChangeNotifier {
   StreamSubscription? _recurringSub;
   StreamSubscription? _notesSub;
   StreamSubscription? _routinesSub;
+  StreamSubscription? _mealsSub;
 
   UserModel? get currentUser => _currentUser;
   List<UserModel> get familyMembers => _familyMembers;
@@ -74,6 +76,9 @@ class FamilyProvider extends ChangeNotifier {
   /// Familjens morgon-/kvällsrutiner (ROADMAP Etapp 7).
   List<QueryDocumentSnapshot> get routines => _routines;
 
+  /// Dagens middag(ar) — för "Ikväll"-kortet på Hem (ROADMAP Etapp 12).
+  List<QueryDocumentSnapshot> get todayMeals => _todayMeals;
+
   bool get isLoading => _isLoading;
 
   /// Tvinga omritning av alla lyssnande vyer — används när globala
@@ -109,6 +114,8 @@ class FamilyProvider extends ChangeNotifier {
     _notesSub?.cancel();
     _routinesSub?.cancel();
     _routines = [];
+    _mealsSub?.cancel();
+    _todayMeals = [];
 
     notifyListeners();
   }
@@ -137,6 +144,8 @@ class FamilyProvider extends ChangeNotifier {
       _notesSub?.cancel();
       _routinesSub?.cancel();
       _routines = [];
+      _mealsSub?.cancel();
+      _todayMeals = [];
       _familyMembers = [];
       _chores = [];
       _todayDateEvents = [];
@@ -213,6 +222,18 @@ class FamilyProvider extends ChangeNotifier {
       notifyListeners();
     });
 
+    // Dagens middag (Etapp 12).
+    _mealsSub?.cancel();
+    _mealsSub = FirebaseFirestore.instance
+        .collection('meals')
+        .where('familyId', isEqualTo: familyId)
+        .where('date', isEqualTo: dateKey(now))
+        .snapshots()
+        .listen((snap) {
+      _todayMeals = snap.docs;
+      notifyListeners();
+    });
+
     // Dagens familjenotiser (alltid zero-paddade — ny collection).
     _notesSub?.cancel();
     final today = dateKey(now);
@@ -238,6 +259,7 @@ class FamilyProvider extends ChangeNotifier {
     _recurringSub?.cancel();
     _notesSub?.cancel();
     _routinesSub?.cancel();
+    _mealsSub?.cancel();
     super.dispose();
   }
 }

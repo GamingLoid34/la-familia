@@ -17,6 +17,7 @@ import '../widgets/routine_card.dart';
 import '../widgets/today_chores_sheet.dart';
 import '../widgets/planner_event_leading.dart';
 import '../widgets/family_notes_strip.dart';
+import 'meal_planner_page.dart';
 import 'timer_page.dart';
 import 'shopping_list_page.dart';
 import 'family_status_page.dart';
@@ -208,6 +209,9 @@ class _DashboardPageState extends State<DashboardPage>
         // Rutin visas på Hem: morgonrutin före 12, kvällsrutin från 18.
         if (isMe)
           ..._myRoutineSlivers(provider, user),
+        // Ikväll-kort: dagens middag om planerad (Etapp 12).
+        if (isMe && provider.todayMeals.isNotEmpty)
+          SliverToBoxAdapter(child: _buildTonightMeal(provider)),
         SliverToBoxAdapter(
           child: _buildSection(
             timelineTitle,
@@ -235,6 +239,47 @@ class _DashboardPageState extends State<DashboardPage>
           ),
         const SliverToBoxAdapter(child: SizedBox(height: 100)),
       ],
+    );
+  }
+
+  /// "🍽️ Ikväll: Tacos" — diskret rad som öppnar matveckan.
+  Widget _buildTonightMeal(FamilyProvider provider) {
+    final d = provider.todayMeals.first.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    if (title.isEmpty) return const SizedBox.shrink();
+    final emoji = d['emoji'] as String? ?? '🍽️';
+    final palette = AppTheme.dayPalette();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const MealPlannerPage())),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: AppTheme.cardDecoration(radius: 16),
+            child: Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 22)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Ikväll: $title',
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    color: palette.deep, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1101,6 +1146,11 @@ class _DashboardPageState extends State<DashboardPage>
         'icon': Icons.shopping_cart_rounded,
         'label': 'Inköp',
         'page': const ShoppingListPage(),
+      },
+      {
+        'icon': Icons.restaurant_rounded,
+        'label': 'Mat',
+        'page': const MealPlannerPage(),
       },
       {
         'icon': Icons.calendar_month_rounded,

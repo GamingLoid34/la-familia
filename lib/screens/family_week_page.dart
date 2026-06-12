@@ -14,6 +14,7 @@ import '../widgets/family_notes_strip.dart';
 import '../widgets/member_day_sheet.dart';
 import '../widgets/week_grid.dart';
 import 'family_status_page.dart';
+import 'meal_planner_page.dart';
 
 /// Familjen-fliken (ROADMAP Etapp 9): hela familjens vecka i ett ögonkast,
 /// med konfliktvarningar när flera vuxna är upptagna samtidigt.
@@ -254,33 +255,52 @@ class _FamilyWeekPageState extends State<FamilyWeekPage>
               ],
             ),
           ),
-          GestureDetector(
-            onTap: () => Navigator.push(
+          _headerPill(
+            textColor,
+            Icons.restaurant_rounded,
+            'Mat',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MealPlannerPage()),
+            ),
+          ),
+          const SizedBox(width: 6),
+          _headerPill(
+            textColor,
+            Icons.insights_rounded,
+            'Status',
+            () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const FamilyStatusPage()),
             ),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: textColor.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.insights_rounded, color: textColor, size: 16),
-                  const SizedBox(width: 4),
-                  Text('Status',
-                      style: TextStyle(
-                          color: textColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600)),
-                ],
-              ),
-            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _headerPill(
+      Color textColor, IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: textColor.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: textColor, size: 16),
+            const SizedBox(width: 4),
+            Text(label,
+                style: TextStyle(
+                    color: textColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
       ),
     );
   }

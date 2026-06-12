@@ -99,6 +99,12 @@ service cloud.firestore {
       allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
     }
 
+    // Matplanering (ROADMAP Etapp 12): en middag per dag och familj.
+    match /meals/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    }
+
     // Morgon-/kvällsrutiner (ROADMAP Etapp 7). Alla i familjen får läsa och
     // bocka av; skapa/redigera/radera kräver bara familjetillhörighet
     // (föräldrakontroll sköts i UI:t — barn ser ingen editor).
