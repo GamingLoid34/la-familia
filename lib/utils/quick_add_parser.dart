@@ -4,23 +4,34 @@ import '../models/user_model.dart';
 /// Snabbinmatning (ROADMAP Etapp 10): tolkar svensk fritext lokalt —
 /// "Fotboll tis 17:00 Liam" → färdigt aktivitetsutkast. Ingen AI, inga
 /// nätverksanrop; bara enkla regler som täcker familjevardagen.
+/// Vad användaren vill skapa — avgörs av nyckelord i början av texten.
+enum QuickAddIntent { activity, chore, meal, shopping }
+
 class QuickAddDraft {
+  final QuickAddIntent intent;
   final String title;
   final DateTime date;
+  /// Sattes datumet uttryckligen i texten? (Annars default = idag.)
+  final bool hasExplicitDate;
   /// `HH:mm` eller tom sträng (ingen tid angiven).
   final String time;
   final List<UserModel> persons;
   /// 'weekly' | 'biweekly' | '' (engångs).
   final String recurrenceType;
   final String piktogram;
+  /// Inköpsvaror (endast [QuickAddIntent.shopping]).
+  final List<String> items;
 
   const QuickAddDraft({
+    required this.intent,
     required this.title,
     required this.date,
+    required this.hasExplicitDate,
     required this.time,
     required this.persons,
     required this.recurrenceType,
     required this.piktogram,
+    this.items = const [],
   });
 }
 
@@ -71,6 +82,55 @@ QuickAddDraft? parseQuickAdd(
   String time = '';
 
   String lower() => work.toLowerCase();
+
+  // 0. Intent: nyckelord styr vart det sparas.
+  //    "handla/köp mjölk och bröd"     → inköpslistan
+  //    "middag tacos på fredag"        → matsedeln
+  //    "syssla dammsuga Liam imorgon"  → syssla
+  //    allt annat                      → aktivitet
+  var intent = QuickAddIntent.activity;
+  final shoppingMatch =
+      RegExp(r'^\s*(handla|köp|köpa)\b', caseSensitive: false)
+          .firstMatch(work);
+  if (shoppingMatch != null) {
+    intent = QuickAddIntent.shopping;
+    work = work.replaceFirst(shoppingMatch.group(0)!, ' ');
+  } else if (RegExp(r'\b(middag|matsedel|kvällsmat)\b', caseSensitive: false)
+      .hasMatch(lower())) {
+    intent = QuickAddIntent.meal;
+    work = work.replaceFirst(
+        RegExp(r'\b(middag|matsedel|kvällsmat)\b', caseSensitive: false),
+        ' ');
+  } else {
+    final choreMatch =
+        RegExp(r'^\s*syssla\b:?', caseSensitive: false).firstMatch(work);
+    if (choreMatch != null) {
+      intent = QuickAddIntent.chore;
+      work = work.replaceFirst(choreMatch.group(0)!, ' ');
+    }
+  }
+
+  // Inköp: resten är varor — splitta på komma och "och".
+  if (intent == QuickAddIntent.shopping) {
+    final items = work
+        .split(RegExp(r',|\boch\b', caseSensitive: false))
+        .map((s) => s.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((s) => s.isNotEmpty)
+        .map((s) => s[0].toUpperCase() + s.substring(1))
+        .toList();
+    if (items.isEmpty) return null;
+    return QuickAddDraft(
+      intent: intent,
+      title: items.join(', '),
+      date: DateTime(n.year, n.month, n.day),
+      hasExplicitDate: false,
+      time: '',
+      persons: const [],
+      recurrenceType: '',
+      piktogram: '🛒',
+      items: items,
+    );
+  }
 
   // 1. "varje X" / "varannan X" → upprepning + veckodag.
   for (final entry in _weekdays.entries) {
@@ -196,19 +256,27 @@ QuickAddDraft? parseQuickAdd(
   if (title.isEmpty) return null;
 
   // 8. Auto-piktogram: matcha titelord mot piktogrambiblioteket.
-  var pik = '📅';
+  var pik = switch (intent) {
+    QuickAddIntent.meal => '🍽️',
+    QuickAddIntent.chore => '✅',
+    _ => '📅',
+  };
   final titleLower = title.toLowerCase();
-  for (final item in piktogramLibrary) {
-    final label = item.label.toLowerCase();
-    if (titleLower.contains(label) || label.contains(titleLower)) {
-      pik = item.emoji;
-      break;
+  if (intent != QuickAddIntent.meal) {
+    for (final item in piktogramLibrary) {
+      final label = item.label.toLowerCase();
+      if (titleLower.contains(label) || label.contains(titleLower)) {
+        pik = item.emoji;
+        break;
+      }
     }
   }
 
   return QuickAddDraft(
+    intent: intent,
     title: title[0].toUpperCase() + title.substring(1),
     date: date ?? DateTime(n.year, n.month, n.day),
+    hasExplicitDate: date != null,
     time: time,
     persons: persons,
     recurrenceType: recurrence,

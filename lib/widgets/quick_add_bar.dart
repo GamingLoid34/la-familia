@@ -3,14 +3,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/notification_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/quick_add_parser.dart';
 
-/// Snabbinmatning (ROADMAP Etapp 10.2): en rad text → tolkat utkast →
-/// bekräfta → sparad aktivitet. "Fotboll tis 17:00 Liam" räcker.
+/// Snabbinmatning (ROADMAP Etapp 10 + röst): skriv ELLER tala in en rad →
+/// tolkat utkast → bekräfta → sparad. Förstår aktiviteter, sysslor
+/// ("syssla dammsuga Liam"), middagar ("middag tacos fredag") och inköp
+/// ("handla mjölk och bröd").
 class QuickAddBar extends StatefulWidget {
   final List<UserModel> familyMembers;
   final String familyId;
@@ -30,11 +33,66 @@ class QuickAddBar extends StatefulWidget {
 
 class _QuickAddBarState extends State<QuickAddBar> {
   final _ctrl = TextEditingController();
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _listening = false;
 
   @override
   void dispose() {
+    _speech.stop();
     _ctrl.dispose();
     super.dispose();
+  }
+
+  /// Tryck på mikrofonen → börja lyssna direkt (svenska). Live-texten
+  /// skrivs i fältet; när taget är klart tolkas och bekräftas det.
+  Future<void> _toggleListen() async {
+    if (_listening) {
+      await _speech.stop();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    try {
+      final available = await _speech.initialize(
+        onStatus: (status) {
+          if ((status == 'done' || status == 'notListening') && mounted) {
+            setState(() => _listening = false);
+          }
+        },
+        onError: (e) {
+          developer.log('Taligenkänning: $e');
+          if (mounted) setState(() => _listening = false);
+        },
+      );
+      if (!available) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'Taligenkänning är inte tillgänglig på den här enheten.'),
+            ),
+          );
+        }
+        return;
+      }
+      setState(() => _listening = true);
+      await _speech.listen(
+        listenOptions: stt.SpeechListenOptions(
+          partialResults: true,
+          localeId: 'sv_SE',
+        ),
+        onResult: (result) {
+          if (!mounted) return;
+          setState(() => _ctrl.text = result.recognizedWords);
+          if (result.finalResult && result.recognizedWords.isNotEmpty) {
+            setState(() => _listening = false);
+            _submit();
+          }
+        },
+      );
+    } catch (e, stack) {
+      developer.log('Röstinmatning misslyckades', error: e, stackTrace: stack);
+      if (mounted) setState(() => _listening = false);
+    }
   }
 
   void _submit() {
@@ -69,8 +127,14 @@ class _QuickAddBarState extends State<QuickAddBar> {
         textInputAction: TextInputAction.done,
         onSubmitted: (_) => _submit(),
         decoration: InputDecoration(
-          hintText: '⚡ Snabbt: "Fotboll tis 17:00 Liam"',
-          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+          hintText: _listening
+              ? '🎙️ Lyssnar… tala nu'
+              : '⚡ Skriv eller tryck 🎤 — "Fotboll tis 17:00 Liam"',
+          hintStyle: TextStyle(
+            fontSize: 13,
+            color: _listening ? palette.deep : Colors.grey.shade500,
+            fontWeight: _listening ? FontWeight.w700 : FontWeight.normal,
+          ),
           filled: true,
           fillColor: Colors.white,
           contentPadding:
@@ -82,13 +146,31 @@ class _QuickAddBarState extends State<QuickAddBar> {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide:
-                BorderSide(color: palette.base.withValues(alpha: 0.25)),
+            borderSide: BorderSide(
+              color: _listening
+                  ? palette.base
+                  : palette.base.withValues(alpha: 0.25),
+              width: _listening ? 2 : 1,
+            ),
           ),
-          suffixIcon: IconButton(
-            icon: Icon(Icons.arrow_circle_up_rounded,
-                color: palette.deep, size: 26),
-            onPressed: _submit,
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: Icon(
+                  _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                  color: _listening ? Colors.red.shade400 : palette.deep,
+                  size: 24,
+                ),
+                tooltip: _listening ? 'Sluta lyssna' : 'Tala in',
+                onPressed: _toggleListen,
+              ),
+              IconButton(
+                icon: Icon(Icons.arrow_circle_up_rounded,
+                    color: palette.deep, size: 26),
+                onPressed: _submit,
+              ),
+            ],
           ),
         ),
       ),
@@ -114,50 +196,32 @@ class _QuickAddConfirmSheet extends StatefulWidget {
 class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
   bool _saving = false;
 
+  String get _intentLabel => switch (widget.draft.intent) {
+        QuickAddIntent.activity => 'Aktivitet',
+        QuickAddIntent.chore => 'Syssla',
+        QuickAddIntent.meal => 'Middag',
+        QuickAddIntent.shopping => 'Inköpslistan',
+      };
+
   Future<void> _save() async {
     setState(() => _saving = true);
     final d = widget.draft;
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    final names = d.persons.map((m) => m.name).toList();
     try {
-      final data = <String, dynamic>{
-        'title': d.title,
-        'piktogram': d.piktogram,
-        'type': 'activity',
-        'date': dateKey(d.date),
-        'time': d.time,
-        'persons': names,
-        'personUids': d.persons.map((m) => m.uid).toList(),
-        'checklist': <dynamic>[],
-        'source': 'manual',
-        'createdBy': uid,
-        'isPending': false,
-        'familyId': widget.familyId,
-      };
-      if (d.recurrenceType.isNotEmpty) {
-        data['isRecurring'] = true;
-        data['recurrence'] = {
-          'type': d.recurrenceType,
-          'startDate': dateKey(d.date),
-          'endDate': null,
-          'exceptions': <String>[],
-        };
-      }
-      final ref = await FirebaseFirestore.instance
-          .collection('planner_events')
-          .add(data);
-
-      if (d.time.isNotEmpty) {
-        await NotificationService.scheduleActivityReminders(
-          docId: ref.id,
-          data: {
-            'title': d.title,
-            'date': dateKey(d.date),
-            'time': d.time,
-            if (d.recurrenceType.isNotEmpty)
-              'recurrence': data['recurrence'],
-          },
-        );
+      String snackText;
+      switch (d.intent) {
+        case QuickAddIntent.activity:
+          await _saveActivity(d);
+          snackText = '${d.piktogram} ${d.title} sparad! ✅';
+        case QuickAddIntent.chore:
+          await _saveChore(d);
+          snackText = '✅ Syssla "${d.title}" sparad!';
+        case QuickAddIntent.meal:
+          await _saveMeal(d);
+          snackText =
+              '🍽️ ${DateFormat('EEEE', 'sv').format(d.date)}: ${d.title}';
+        case QuickAddIntent.shopping:
+          await _saveShopping(d);
+          snackText = '🛒 ${d.items.length} varor lagda i inköpslistan!';
       }
 
       widget.onSaved();
@@ -165,7 +229,7 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${d.piktogram} ${d.title} sparad! ✅'),
+            content: Text(snackText),
             backgroundColor: const Color(0xFF6BAE75),
           ),
         );
@@ -181,6 +245,109 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
         );
       }
     }
+  }
+
+  Future<void> _saveActivity(QuickAddDraft d) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final names = d.persons.map((m) => m.name).toList();
+    final data = <String, dynamic>{
+      'title': d.title,
+      'piktogram': d.piktogram,
+      'type': 'activity',
+      'date': dateKey(d.date),
+      'time': d.time,
+      'persons': names,
+      'personUids': d.persons.map((m) => m.uid).toList(),
+      'checklist': <dynamic>[],
+      'source': 'manual',
+      'createdBy': uid,
+      'isPending': false,
+      'familyId': widget.familyId,
+    };
+    if (d.recurrenceType.isNotEmpty) {
+      data['isRecurring'] = true;
+      data['recurrence'] = {
+        'type': d.recurrenceType,
+        'startDate': dateKey(d.date),
+        'endDate': null,
+        'exceptions': <String>[],
+      };
+    }
+    final ref = await FirebaseFirestore.instance
+        .collection('planner_events')
+        .add(data);
+
+    if (d.time.isNotEmpty) {
+      await NotificationService.scheduleActivityReminders(
+        docId: ref.id,
+        data: {
+          'title': d.title,
+          'date': dateKey(d.date),
+          'time': d.time,
+          if (d.recurrenceType.isNotEmpty) 'recurrence': data['recurrence'],
+        },
+      );
+    }
+  }
+
+  Future<void> _saveChore(QuickAddDraft d) async {
+    final now = DateTime.now();
+    final firstDay = DateTime(now.year, 1, 1);
+    final weekNum =
+        ((now.difference(firstDay).inDays + firstDay.weekday - 1) / 7).ceil();
+    final assignee = d.persons.isNotEmpty ? d.persons.first : null;
+
+    await FirebaseFirestore.instance.collection('chores').add({
+      'chore': d.title,
+      'piktogram': d.piktogram,
+      'who': assignee?.name ?? '',
+      'whoUid': assignee?.uid ?? '',
+      'whoColor': assignee?.color ?? '',
+      'isDone': false,
+      'points': 10,
+      'isRecurring': false,
+      'familyId': widget.familyId,
+      'weekOf': '${now.year}-W$weekNum',
+      if (d.hasExplicitDate) 'dueDate': dateKey(d.date),
+      'substeps': <Map<String, dynamic>>[],
+    });
+  }
+
+  Future<void> _saveMeal(QuickAddDraft d) async {
+    final db = FirebaseFirestore.instance;
+    // En middag per dag: uppdatera om den redan finns.
+    final existing = await db
+        .collection('meals')
+        .where('familyId', isEqualTo: widget.familyId)
+        .where('date', isEqualTo: dateKey(d.date))
+        .limit(1)
+        .get();
+    if (existing.docs.isNotEmpty) {
+      await existing.docs.first.reference
+          .update({'title': d.title, 'emoji': d.piktogram});
+    } else {
+      await db.collection('meals').add({
+        'familyId': widget.familyId,
+        'date': dateKey(d.date),
+        'title': d.title,
+        'emoji': d.piktogram,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  Future<void> _saveShopping(QuickAddDraft d) async {
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    for (final item in d.items) {
+      batch.set(db.collection('shopping_items').doc(), {
+        'title': item,
+        'isDone': false,
+        'timestamp': FieldValue.serverTimestamp(),
+        'familyId': widget.familyId,
+      });
+    }
+    await batch.commit();
   }
 
   Widget _chip(IconData icon, String label, Color color) {
@@ -208,6 +375,7 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
     final d = widget.draft;
     final palette = AppTheme.dayPalette();
     final dateLabel = DateFormat('EEEE d MMM', 'sv').format(d.date);
+    final isShopping = d.intent == QuickAddIntent.shopping;
 
     return Container(
       decoration: const BoxDecoration(
@@ -249,7 +417,9 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _chip(Icons.event_rounded, dateLabel, palette.deep),
+              _chip(Icons.category_rounded, _intentLabel, palette.deep),
+              if (!isShopping && (d.hasExplicitDate || d.time.isNotEmpty))
+                _chip(Icons.event_rounded, dateLabel, palette.deep),
               if (d.time.isNotEmpty)
                 _chip(Icons.access_time_rounded, d.time, palette.deep),
               if (d.recurrenceType.isNotEmpty)
@@ -262,7 +432,7 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
               for (final p in d.persons)
                 _chip(Icons.person_rounded, p.name.split(' ').first,
                     AppTheme.colorFromHex(p.color)),
-              if (d.persons.isEmpty)
+              if (d.intent == QuickAddIntent.activity && d.persons.isEmpty)
                 _chip(Icons.groups_rounded, 'Hela familjen',
                     Colors.grey.shade600),
             ],
