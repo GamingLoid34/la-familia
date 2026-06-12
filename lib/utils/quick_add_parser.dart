@@ -24,6 +24,21 @@ class QuickAddDraft {
   });
 }
 
+const Map<String, int> _months = {
+  'januari': 1, 'jan': 1,
+  'februari': 2, 'feb': 2,
+  'mars': 3, 'mar': 3,
+  'april': 4, 'apr': 4,
+  'maj': 5,
+  'juni': 6, 'jun': 6,
+  'juli': 7, 'jul': 7,
+  'augusti': 8, 'aug': 8,
+  'september': 9, 'sept': 9, 'sep': 9,
+  'oktober': 10, 'okt': 10,
+  'november': 11, 'nov': 11,
+  'december': 12, 'dec': 12,
+};
+
 const Map<String, int> _weekdays = {
   'måndag': 1, 'måndagar': 1, 'mån': 1,
   'tisdag': 2, 'tisdagar': 2, 'tis': 2,
@@ -71,20 +86,7 @@ QuickAddDraft? parseQuickAdd(
     }
   }
 
-  // 2. Fristående veckodag ("tis", "fredag") → nästa förekomst.
-  if (date == null) {
-    for (final entry in _weekdays.entries) {
-      final pattern =
-          RegExp(r'\b' + entry.key + r'\b', caseSensitive: false);
-      if (pattern.hasMatch(lower())) {
-        date = _nextWeekday(n, entry.value);
-        work = work.replaceFirst(pattern, ' ');
-        break;
-      }
-    }
-  }
-
-  // 3. "idag" / "imorgon" / "i morgon".
+  // 2. "idag" / "imorgon" / "i morgon".
   if (date == null) {
     if (RegExp(r'\bidag\b', caseSensitive: false).hasMatch(lower())) {
       date = DateTime(n.year, n.month, n.day);
@@ -98,7 +100,33 @@ QuickAddDraft? parseQuickAdd(
     }
   }
 
-  // 4. Datum "12/6" eller "12/6-2026".
+  // 4a. Datum med månadsnamn: "12 oktober", "12:e okt", "12 okt 2027".
+  if (date == null) {
+    final monthNames = _months.keys.join('|');
+    final m = RegExp(
+            r'\b(\d{1,2})(?::?e)?\s+(' + monthNames + r')(?:\s+(\d{4}))?\b',
+            caseSensitive: false)
+        .firstMatch(lower());
+    if (m != null) {
+      final day = int.parse(m.group(1)!);
+      final month = _months[m.group(2)!]!;
+      final year = m.group(3) != null ? int.parse(m.group(3)!) : n.year;
+      var candidate = DateTime(year, month, day);
+      // Utan år: passerat datum i år → anta nästa år (födelsedagar!).
+      if (m.group(3) == null &&
+          candidate.isBefore(DateTime(n.year, n.month, n.day))) {
+        candidate = DateTime(year + 1, month, day);
+      }
+      if (candidate.month == month && candidate.day == day) {
+        date = candidate;
+        // Ta bort träffen ur arbets-strängen (matcha mot original-case).
+        work = work.replaceFirst(
+            RegExp(RegExp.escape(m.group(0)!), caseSensitive: false), ' ');
+      }
+    }
+  }
+
+  // 4b. Datum "12/6" eller "12/6-2026".
   if (date == null) {
     final m = RegExp(r'\b(\d{1,2})/(\d{1,2})(?:-(\d{4}))?\b')
         .firstMatch(work);
@@ -117,7 +145,21 @@ QuickAddDraft? parseQuickAdd(
     }
   }
 
-  // 5. Tid: "kl 17", "kl 17.30", "17:00", "17.30".
+  // 5. Fristående veckodag ("tis", "fredag") → nästa förekomst.
+  // Körs EFTER explicita datum så "fre 12 oktober" tar datumet, inte fredagen.
+  if (date == null) {
+    for (final entry in _weekdays.entries) {
+      final pattern =
+          RegExp(r'\b' + entry.key + r'\b', caseSensitive: false);
+      if (pattern.hasMatch(lower())) {
+        date = _nextWeekday(n, entry.value);
+        work = work.replaceFirst(pattern, ' ');
+        break;
+      }
+    }
+  }
+
+  // 6. Tid: "kl 17", "kl 17.30", "17:00", "17.30".
   final timeMatch = RegExp(
           r'\bkl\.?\s*(\d{1,2})(?:[:.](\d{2}))?\b|\b(\d{1,2})[:.](\d{2})\b',
           caseSensitive: false)
