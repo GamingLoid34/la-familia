@@ -124,6 +124,20 @@ service cloud.firestore {
       allow write: if isAuth() && request.auth.uid == userId;
     }
 
+    // ─── MyMirai (delar Firebase-projekt med La Familia) ─────────────────
+    // OBS: DENNA FIL är enda källan för Firestore-regler i projektet
+    // la-familia-5d9f5. Deploya ALDRIG regler från MyMirais repo — det
+    // skriver över allt nedan och öppnar La Familias data.
+    match /documents/{docId} {
+      allow read, delete: if isAuth()
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuth()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuth()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+    }
+
     // Stäng ute allt annat
     match /{document=**} {
       allow read, write: if false;
