@@ -136,6 +136,13 @@ service cloud.firestore {
       allow update: if isAuth()
         && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      // Subcollections ärver INTE förälderns regler — chat_turns ägs av
+      // dokumentägaren (verifieras via get() på förälderdokumentet).
+      match /chat_turns/{turnId} {
+        allow read, write: if isAuth()
+          && get(/databases/$(database)/documents/documents/$(docId)).data.ownerUid == request.auth.uid;
+      }
     }
 
     // MyMirai: familjeägda collections (familyId på varje dokument).
