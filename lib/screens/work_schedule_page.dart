@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../utils/layout.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/family_service.dart';
@@ -257,7 +258,7 @@ class _WorkSchedulePageState extends State<WorkSchedulePage> {
                           ..._familyMembers.map((m) {
                             Color mc;
                             try {
-                              mc = Color(m.colorValue as int);
+                              mc = Color(m.colorValue);
                             } catch (_) {
                               mc = dayColor;
                             }
@@ -519,7 +520,9 @@ class _AddWorkShiftSheetState extends State<AddWorkShiftSheet> {
   @override
   Widget build(BuildContext context) {
     final dayColor = AppTheme.getDayAccentColor();
-    return Container(
+    return wrapBottomSheet(
+      context,
+      Container(
       height: MediaQuery.of(context).size.height * 0.9,
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -551,7 +554,7 @@ class _AddWorkShiftSheetState extends State<AddWorkShiftSheet> {
                     children: widget.familyMembers.map((m) {
                       final sel = _selectedPerson == m.name;
                       Color mc;
-                      try { mc = Color(m.colorValue as int); } catch (_) { mc = dayColor; }
+                      try { mc = Color(m.colorValue); } catch (_) { mc = dayColor; }
                       return ChoiceChip(
                         label: Text(m.name.split(' ').first),
                         selected: sel,
@@ -643,6 +646,7 @@ class _AddWorkShiftSheetState extends State<AddWorkShiftSheet> {
           ),
         ],
       ),
+    ),
     );
   }
 }

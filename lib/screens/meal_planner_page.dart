@@ -1,14 +1,18 @@
 import 'dart:developer' as developer;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+
 import '../app_theme.dart';
 import '../providers/family_provider.dart';
+import '../services/meal_ai_service.dart';
 import '../utils/date_utils.dart';
+import '../widgets/ai_meal_menu_sheet.dart';
 
-/// Matplanering light (ROADMAP Etapp 12): veckans middagar, en per dag.
-/// Ingen receptbank — bara "vad äter vi" + ingredienser till inköpslistan.
+/// Matplanering: veckans middagar, recept, AI-veckomeny.
 class MealPlannerPage extends StatefulWidget {
   const MealPlannerPage({super.key});
 
@@ -18,6 +22,7 @@ class MealPlannerPage extends StatefulWidget {
 
 class _MealPlannerPageState extends State<MealPlannerPage> {
   late DateTime _weekStart;
+  bool _counting = false;
 
   @override
   void initState() {
@@ -34,10 +39,54 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
   void _shiftWeek(int weeks) => setState(() => _weekStart = DateTime(
       _weekStart.year, _weekStart.month, _weekStart.day + 7 * weeks));
 
+  /// Öka antalLagningar när en middag med dishId passerat sitt datum.
+  Future<void> _bumpCookCounts(
+    String familyId,
+    Iterable<QueryDocumentSnapshot> docs,
+  ) async {
+    if (_counting) return;
+    final today = dateKey(DateTime.now());
+    final pending = <QueryDocumentSnapshot>[];
+    for (final doc in docs) {
+      final d = doc.data() as Map<String, dynamic>;
+      final dishId = d['dishId'] as String?;
+      final date = d['date'] as String? ?? '';
+      final counted = d['cookCounted'] == true;
+      if (dishId == null || dishId.isEmpty || date.isEmpty || counted) continue;
+      if (date.compareTo(today) >= 0) continue;
+      pending.add(doc);
+    }
+    if (pending.isEmpty) return;
+
+    _counting = true;
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      for (final doc in pending) {
+        final d = doc.data() as Map<String, dynamic>;
+        final dishId = d['dishId'] as String;
+        final date = d['date'] as String;
+        batch.update(doc.reference, {'cookCounted': true});
+        batch.update(
+          FirebaseFirestore.instance.collection('dishes').doc(dishId),
+          {
+            'antalLagningar': FieldValue.increment(1),
+            'senastLagad': date,
+          },
+        );
+      }
+      await batch.commit();
+    } catch (e, stack) {
+      developer.log('cookCount bump misslyckades', error: e, stackTrace: stack);
+    } finally {
+      _counting = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<FamilyProvider>();
     final fid = provider.currentUser?.familyId ?? '';
+    final isParent = provider.currentUser?.isParent == true;
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     final palette = AppTheme.dayPalette();
     final weekKeys = _days.map(dateKey).toList();
@@ -60,11 +109,13 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
                           color: textColor),
                     ),
                     const SizedBox(width: 12),
-                    Text('Veckans mat 🍽️',
-                        style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: textColor)),
+                    Expanded(
+                      child: Text('Veckans mat 🍽️',
+                          style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: textColor)),
+                    ),
                   ]),
                 ),
                 Padding(
@@ -91,6 +142,28 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
                     ],
                   ),
                 ),
+                if (isParent && fid.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => runAiMealMenuFlow(
+                          context,
+                          familyId: fid,
+                          weekStartHint: _weekStart,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: palette.deep,
+                          side: BorderSide(
+                              color: palette.base.withValues(alpha: 0.5)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Föreslå veckomeny ✨'),
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: fid.isEmpty
                       ? const Center(child: CircularProgressIndicator())
@@ -101,14 +174,16 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
                               .where('date', whereIn: weekKeys)
                               .snapshots(),
                           builder: (ctx, snap) {
+                            final docs = snap.data?.docs ?? const [];
                             final byDate = <String, QueryDocumentSnapshot>{};
-                            for (final doc
-                                in snap.data?.docs ?? const []) {
-                              final d =
-                                  doc.data() as Map<String, dynamic>;
-                              byDate[d['date'] as String? ?? ''] =
-                                  doc as QueryDocumentSnapshot;
+                            for (final doc in docs) {
+                              final d = doc.data() as Map<String, dynamic>;
+                              byDate[d['date'] as String? ?? ''] = doc;
                             }
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _bumpCookCounts(fid, docs);
+                            });
+
                             final today = dateKey(DateTime.now());
 
                             return ListView.builder(
@@ -119,13 +194,30 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
                                 final day = _days[i];
                                 final key = dateKey(day);
                                 final doc = byDate[key];
-                                final d = doc?.data()
-                                    as Map<String, dynamic>?;
+                                final d =
+                                    doc?.data() as Map<String, dynamic>?;
                                 final isToday = key == today;
+                                final leftover =
+                                    d?['leftoverOfDay'] as String?;
+                                String? leftoverLabel;
+                                if (leftover != null && leftover.isNotEmpty) {
+                                  final src = parseDate(leftover);
+                                  if (src != null) {
+                                    try {
+                                      final n =
+                                          DateFormat('EEEE', 'sv').format(src);
+                                      leftoverLabel =
+                                          '♻️ rester från ${n[0].toUpperCase()}${n.substring(1)}';
+                                    } catch (_) {
+                                      leftoverLabel = '♻️ rester';
+                                    }
+                                  }
+                                }
+                                final prep = (d?['recipe']
+                                        as Map?)?['prepMinutes'] as num?;
 
                                 return Container(
-                                  margin:
-                                      const EdgeInsets.only(bottom: 8),
+                                  margin: const EdgeInsets.only(bottom: 8),
                                   decoration:
                                       AppTheme.cardDecoration(radius: 16)
                                           .copyWith(
@@ -155,20 +247,40 @@ class _MealPlannerPageState extends State<MealPlannerPage> {
                                         letterSpacing: 0.5,
                                       ),
                                     ),
-                                    subtitle: Text(
-                                      (d?['title'] as String?)
-                                                  ?.isNotEmpty ==
-                                              true
-                                          ? d!['title'] as String
-                                          : 'Lägg till middag…',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w700,
-                                        color: d?['title'] != null
-                                            ? AppTheme.getTextColor()
-                                            : Colors.grey.shade400,
-                                      ),
+                                    subtitle: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (d?['title'] as String?)
+                                                      ?.isNotEmpty ==
+                                                  true
+                                              ? d!['title'] as String
+                                              : 'Lägg till middag…',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            color: d?['title'] != null
+                                                ? AppTheme.getTextColor()
+                                                : Colors.grey.shade400,
+                                          ),
+                                        ),
+                                        if (leftoverLabel != null)
+                                          Text(leftoverLabel,
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color:
+                                                      Colors.teal.shade700))
+                                        else if (prep != null)
+                                          Text('~${prep.round()} min',
+                                              style: TextStyle(
+                                                  fontSize: 12,
+                                                  color:
+                                                      Colors.grey.shade600)),
+                                      ],
                                     ),
+                                    isThreeLine: leftoverLabel != null ||
+                                        prep != null,
                                     trailing: Icon(
                                         Icons.chevron_right_rounded,
                                         color: Colors.grey.shade400),
@@ -226,6 +338,12 @@ class _MealSheetState extends State<_MealSheet> {
   final List<String> _ingredients = [];
   String _emoji = '🍽️';
   bool _saving = false;
+  bool _recipeOpen = false;
+  List<MealIngredient> _recipeIngs = [];
+  List<String> _recipeSteps = [];
+  int? _prepMinutes;
+  String? _dishId;
+  String? _leftoverOfDay;
 
   static const _emojis = [
     '🌮', '🍝', '🍕', '🐟', '🍲', '🥘', '🍗', '🍔',
@@ -239,6 +357,28 @@ class _MealSheetState extends State<_MealSheet> {
     if (d != null) {
       _title.text = d['title'] as String? ?? '';
       _emoji = d['emoji'] as String? ?? '🍽️';
+      _dishId = d['dishId'] as String?;
+      _leftoverOfDay = d['leftoverOfDay'] as String?;
+      final recipe = d['recipe'];
+      if (recipe is Map) {
+        _recipeIngs = (recipe['ingredients'] as List?)
+                ?.whereType<Map>()
+                .map((e) =>
+                    MealIngredient.fromMap(Map<String, dynamic>.from(e)))
+                .where((i) => i.namn.isNotEmpty)
+                .toList() ??
+            [];
+        _recipeSteps = (recipe['steps'] as List?)
+                ?.whereType<String>()
+                .map((s) => s.trim())
+                .where((s) => s.isNotEmpty)
+                .toList() ??
+            [];
+        _prepMinutes = (recipe['prepMinutes'] as num?)?.round();
+        if (_recipeIngs.isNotEmpty || _recipeSteps.isNotEmpty) {
+          _recipeOpen = true;
+        }
+      }
     }
   }
 
@@ -258,17 +398,74 @@ class _MealSheetState extends State<_MealSheet> {
     });
   }
 
+  Future<void> _saveAsFamilyDish() async {
+    final title = _title.text.trim();
+    if (title.isEmpty) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final ings = _recipeIngs.isNotEmpty
+        ? _recipeIngs
+        : _ingredients
+            .map((s) => MealIngredient(namn: s))
+            .toList();
+    try {
+      final ref = await FirebaseFirestore.instance.collection('dishes').add({
+        'familyId': widget.familyId,
+        'namn': title,
+        'emoji': _emoji,
+        'kategori': 'ÖVRIGT',
+        'ingredienser': ings.map((i) => i.toMap()).toList(),
+        'steg': _recipeSteps,
+        'tillagningMin': _prepMinutes ?? 30,
+        'antalLagningar': 0,
+        'senastLagad': null,
+        'kalla': 'manuell',
+        'createdByUid': uid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      if (widget.existing != null) {
+        await widget.existing!.reference.update({'dishId': ref.id});
+      }
+      if (mounted) {
+        setState(() => _dishId = ref.id);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sparad som familjerätt'),
+            backgroundColor: Color(0xFF6BAE75),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Kunde inte spara rätt: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _save() async {
     final title = _title.text.trim();
     setState(() => _saving = true);
     try {
-      // Spara/uppdatera middagen.
+      final recipe = <String, dynamic>{
+        'ingredients': _recipeIngs.map((i) => i.toMap()).toList(),
+        'steps': _recipeSteps,
+        'prepMinutes': _prepMinutes ?? 30,
+      };
+
       if (widget.existing != null) {
         if (title.isEmpty) {
           await widget.existing!.reference.delete();
         } else {
-          await widget.existing!.reference
-              .update({'title': title, 'emoji': _emoji});
+          await widget.existing!.reference.update({
+            'title': title,
+            'emoji': _emoji,
+            if (_dishId != null) 'dishId': _dishId,
+            if (_leftoverOfDay != null) 'leftoverOfDay': _leftoverOfDay,
+            'recipe': recipe,
+          });
         }
       } else if (title.isNotEmpty) {
         await FirebaseFirestore.instance.collection('meals').add({
@@ -276,17 +473,19 @@ class _MealSheetState extends State<_MealSheet> {
           'date': dateKey(widget.day),
           'title': title,
           'emoji': _emoji,
+          'dishId': _dishId,
+          'leftoverOfDay': _leftoverOfDay,
+          'recipe': recipe,
+          'cookCounted': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
 
-      // Ingredienser → inköpslistan.
       if (_ingredients.isNotEmpty) {
         final batch = FirebaseFirestore.instance.batch();
         for (final ing in _ingredients) {
-          final ref = FirebaseFirestore.instance
-              .collection('shopping_items')
-              .doc();
+          final ref =
+              FirebaseFirestore.instance.collection('shopping_items').doc();
           batch.set(ref, {
             'title': ing,
             'isDone': false,
@@ -327,6 +526,10 @@ class _MealSheetState extends State<_MealSheet> {
     final palette = AppTheme.dayPalette();
     final kb = MediaQuery.viewInsetsOf(context).bottom;
     final dayLabel = DateFormat('EEEE d MMM', 'sv').format(widget.day);
+    final hasRecipe =
+        _recipeIngs.isNotEmpty || _recipeSteps.isNotEmpty || _prepMinutes != null;
+    final canSaveDish = _title.text.trim().isNotEmpty &&
+        (_dishId == null || _dishId!.isEmpty);
 
     return Padding(
       padding: EdgeInsets.only(bottom: kb),
@@ -353,10 +556,18 @@ class _MealSheetState extends State<_MealSheet> {
                 ),
               ),
               Text('Middag $dayLabel', style: AppTheme.sectionTitleStyle),
+              if (_leftoverOfDay != null) ...[
+                const SizedBox(height: 6),
+                Text('♻️ Matlåda / rester',
+                    style: TextStyle(
+                        color: Colors.teal.shade700,
+                        fontWeight: FontWeight.w600)),
+              ],
               const SizedBox(height: 14),
               TextField(
                 controller: _title,
                 autofocus: _title.text.isEmpty,
+                onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   labelText: 'Vad äter vi?',
                   hintText: 'T.ex. Tacos',
@@ -388,6 +599,51 @@ class _MealSheetState extends State<_MealSheet> {
                         ))
                     .toList(),
               ),
+              if (hasRecipe) ...[
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: () => setState(() => _recipeOpen = !_recipeOpen),
+                  child: Row(
+                    children: [
+                      Text('RECEPT', style: AppTheme.sectionLabelStyle),
+                      const Spacer(),
+                      if (_prepMinutes != null)
+                        Text('~$_prepMinutes min',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey.shade600)),
+                      Icon(_recipeOpen
+                          ? Icons.expand_less
+                          : Icons.expand_more),
+                    ],
+                  ),
+                ),
+                if (_recipeOpen) ...[
+                  const SizedBox(height: 8),
+                  for (final ing in _recipeIngs)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text('• ${ing.shoppingLine}',
+                          style: const TextStyle(fontSize: 14)),
+                    ),
+                  if (_recipeSteps.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    for (var i = 0; i < _recipeSteps.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text('${i + 1}. ${_recipeSteps[i]}',
+                            style: const TextStyle(fontSize: 14)),
+                      ),
+                  ],
+                ],
+              ],
+              if (canSaveDish) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: _saveAsFamilyDish,
+                  icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+                  label: const Text('Spara som familjerätt'),
+                ),
+              ],
               const SizedBox(height: 16),
               Text('INGREDIENSER → INKÖPSLISTAN',
                   style: AppTheme.sectionLabelStyle),

@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:confetti/confetti.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -6,16 +8,21 @@ import 'package:table_calendar/table_calendar.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../utils/date_utils.dart';
+import '../utils/layout.dart';
 import '../utils/person_match.dart';
+import '../utils/permissions.dart';
 import '../utils/recurrence.dart';
 import '../providers/family_provider.dart';
 import '../widgets/activity_detail_sheet.dart';
+import '../services/chore_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/planner_event_leading.dart';
 import '../widgets/quick_add_bar.dart';
 import 'calendar_import_page.dart';
+import 'chore_stats_page.dart';
 import 'chores_page.dart';
-import 'planner_page.dart';
+import '../widgets/add_event_sheet.dart';
+import '../widgets/weather_widgets.dart';
 import 'work_schedule_page.dart';
 
 enum AgendaTab { all, activities, chores }
@@ -31,80 +38,6 @@ bool _choreVisibleOnDay(Map<String, dynamic> d, DateTime day) {
     return isSameDay(parsed, day);
   }
   return true;
-}
-
-int? _hhmmToMinutesAgenda(String? s) {
-  if (s == null) return null;
-  final t = s.trim();
-  if (t.isEmpty) return null;
-  final p = t.split(':');
-  if (p.length < 2) return null;
-  final h = int.tryParse(p[0]);
-  final m = int.tryParse(p[1]);
-  if (h == null || m == null) return null;
-  return h * 60 + m.clamp(0, 59);
-}
-
-String? _latestHhmmAgenda(Iterable<String?> candidates) {
-  String? best;
-  var bestM = -1;
-  for (final c in candidates) {
-    final mm = _hhmmToMinutesAgenda(c);
-    if (mm != null && mm > bestM) {
-      bestM = mm;
-      best = c!.trim();
-    }
-  }
-  return best;
-}
-
-String? _earliestHhmmAgenda(Iterable<String?> candidates) {
-  String? best;
-  var bestM = 24 * 60 + 999;
-  for (final c in candidates) {
-    final mm = _hhmmToMinutesAgenda(c);
-    if (mm != null && mm < bestM) {
-      bestM = mm;
-      best = c!.trim();
-    }
-  }
-  return best;
-}
-
-bool _agendaEventSameDay(Map<String, dynamic> d, DateTime day) =>
-    eventOccursOnDay(d, day);
-
-bool _agendaIsScheduleCalendarImport(Map<String, dynamic> d) {
-  if (d['source'] != 'calendar') return false;
-  final kind = d['planningImportKind'] as String? ?? 'schedule';
-  return kind == 'schedule';
-}
-
-/// En rad: `schema 08:15 - 15:20` (tidigaste start bland passen – senaste slut).
-String _schemaSpanFromDocs(List<QueryDocumentSnapshot> docs) {
-  if (docs.isEmpty) return 'schema';
-  final startCandidates = <String?>[];
-  final endCandidates = <String?>[];
-  for (final doc in docs) {
-    final d = doc.data() as Map<String, dynamic>;
-    final st = (d['time'] as String? ?? '').trim();
-    if (st.isNotEmpty) startCandidates.add(st);
-    final et = (d['endTime'] as String? ?? '').trim();
-    if (et.isNotEmpty) {
-      endCandidates.add(et);
-    } else if (st.isNotEmpty) {
-      endCandidates.add(st);
-    }
-  }
-  final earliest = _earliestHhmmAgenda(startCandidates);
-  final latest = _latestHhmmAgenda(endCandidates);
-  if (earliest != null && latest != null) {
-    if (earliest == latest) return 'schema $earliest';
-    return 'schema $earliest - $latest';
-  }
-  if (earliest != null) return 'schema från $earliest';
-  if (latest != null) return 'schema till $latest';
-  return 'schema';
 }
 
 class AgendaPage extends StatefulWidget {
@@ -136,6 +69,7 @@ class _AgendaPageState extends State<AgendaPage>
   String? _filterPerson;
   String? _filterPersonUid;
   CalendarFormat _calendarFormat = CalendarFormat.month;
+  late ConfettiController _confettiController;
 
   @override
   void initState() {
@@ -143,6 +77,18 @@ class _AgendaPageState extends State<AgendaPage>
     _tab = widget.initialTab;
     _filterPerson = widget.initialPersonFilter;
     _filterPersonUid = widget.initialPersonFilterUid;
+    _confettiController =
+        ConfettiController(duration: const Duration(seconds: 2));
+  }
+
+  @override
+  void dispose() {
+    _confettiController.dispose();
+    super.dispose();
+  }
+
+  void _onChoreCompleted() {
+    _confettiController.play();
   }
 
   List<QueryDocumentSnapshot> _eventsForDay(
@@ -215,11 +161,6 @@ class _AgendaPageState extends State<AgendaPage>
     String familyId,
     List<UserModel> members,
   ) async {
-    final now = DateTime.now();
-    final firstDay = DateTime(now.year, 1, 1);
-    final weekNum =
-        ((now.difference(firstDay).inDays + firstDay.weekday - 1) / 7).ceil();
-    final weekOf = '${now.year}-W$weekNum';
     final title = template['title'] as String? ?? '';
     if (title.isEmpty) return;
     final who = template['defaultWho'] as String? ?? '';
@@ -245,9 +186,10 @@ class _AgendaPageState extends State<AgendaPage>
       'points': points,
       'isRecurring': false,
       'familyId': familyId,
-      'weekOf': weekOf,
       'dueDate': dateKey(d),
       'substeps': <Map<String, dynamic>>[],
+      if (FirebaseAuth.instance.currentUser != null)
+        'createdByUid': FirebaseAuth.instance.currentUser!.uid,
     });
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -396,253 +338,53 @@ class _AgendaPageState extends State<AgendaPage>
 
   Stream<QuerySnapshot>? _plannerStreamFor(String? familyId) {
     if (familyId == null || familyId.isEmpty) return null;
+    // Synlig månad ±1 vecka (Fas 2½).
+    final monthStart = DateTime(_focusedDay.year, _focusedDay.month, 1);
+    final monthEnd = DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
+    final from = dateKey(monthStart.subtract(const Duration(days: 7)));
+    final to = dateKey(monthEnd.add(const Duration(days: 7)));
     return FirebaseFirestore.instance
         .collection('planner_events')
         .where('familyId', isEqualTo: familyId)
+        .where('date', isGreaterThanOrEqualTo: from)
+        .where('date', isLessThanOrEqualTo: to)
         .snapshots();
   }
 
-  Stream<QuerySnapshot>? _workShiftsStreamFor(String? familyId) {
+  Stream<QuerySnapshot>? _recurringPlannerStream(String? familyId) {
     if (familyId == null || familyId.isEmpty) return null;
     return FirebaseFirestore.instance
-        .collection('work_shifts')
+        .collection('planner_events')
         .where('familyId', isEqualTo: familyId)
+        .where('isRecurring', isEqualTo: true)
         .snapshots();
   }
 
-  List<UserModel> _membersForGlance(List<UserModel> all) {
-    if (_filterPerson == null) return all;
-    return all.where((m) => m.name == _filterPerson).toList();
-  }
-
-  String? _glanceLineForPerson(
-    UserModel member,
-    List<QueryDocumentSnapshot> shiftDocs,
-    List<QueryDocumentSnapshot> allPlanner,
-    DateTime day,
+  List<QueryDocumentSnapshot> _mergePlannerDocs(
+    List<QueryDocumentSnapshot> dated,
+    List<QueryDocumentSnapshot> recurring,
   ) {
-    final parts = <String>[];
-
-    final dayShifts = shiftDocs.where((doc) {
-      final d = doc.data() as Map<String, dynamic>;
-      final date = parseDate(d['date']);
-      if (date == null || !isSameDay(date, day)) return false;
-      return assignedToPerson(d, uid: member.uid, name: member.name);
-    }).toList();
-
-    if (dayShifts.length == 1) {
-      final d = dayShifts.first.data() as Map<String, dynamic>;
-      final a = (d['startTime'] as String? ?? '').trim();
-      final b = (d['endTime'] as String? ?? '').trim();
-      if (a.isNotEmpty && b.isNotEmpty) {
-        parts.add('Jobb $a–$b');
-      } else if (a.isNotEmpty) {
-        parts.add('Jobb från $a');
-      }
-    } else if (dayShifts.length > 1) {
-      parts.add('${dayShifts.length} arbetspass');
+    final seen = <String>{};
+    final out = <QueryDocumentSnapshot>[];
+    for (final d in dated) {
+      if (seen.add(d.id)) out.add(d);
     }
-
-    final calForPerson = allPlanner.where((doc) {
-      final d = doc.data() as Map<String, dynamic>;
-      if (!_agendaEventSameDay(d, day)) return false;
-      if (!_agendaIsScheduleCalendarImport(d)) return false;
-      if (eventHasNoPersons(d)) return false;
-      return eventIncludesPerson(d, uid: member.uid, name: member.name);
-    }).toList();
-
-    if (calForPerson.isNotEmpty) {
-      parts.add(_schemaSpanFromDocs(calForPerson));
+    for (final d in recurring) {
+      if (seen.add(d.id)) out.add(d);
     }
-
-    if (parts.isEmpty) return null;
-    return parts.join(' · ');
-  }
-
-  String? _glanceSharedCalendar(
-    List<QueryDocumentSnapshot> allPlanner,
-    DateTime day,
-  ) {
-    final shared = allPlanner.where((doc) {
-      final d = doc.data() as Map<String, dynamic>;
-      if (!_agendaEventSameDay(d, day)) return false;
-      if (!_agendaIsScheduleCalendarImport(d)) return false;
-      return eventHasNoPersons(d);
-    }).toList();
-
-    if (shared.isEmpty) return null;
-    final span = _schemaSpanFromDocs(shared);
-    if (span == 'schema') return 'Gemensamt schema';
-    return 'Gemensamt $span';
-  }
-
-  Widget _buildScheduleGlanceStrip(
-    BuildContext context,
-    List<UserModel> members,
-    Color dayColor,
-    List<QueryDocumentSnapshot> shiftDocs,
-    List<QueryDocumentSnapshot> allPlanner,
-    DateTime day,
-  ) {
-    if (members.isEmpty) return const SizedBox.shrink();
-
-    final rows = <Widget>[];
-    for (final m in _membersForGlance(members)) {
-      final line =
-          _glanceLineForPerson(m, shiftDocs, allPlanner, day);
-      if (line == null) continue;
-      Color mc;
-      try {
-        mc = Color(m.colorValue as int);
-      } catch (_) {
-        mc = dayColor;
-      }
-      rows.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                margin: const EdgeInsets.only(top: 5),
-                decoration:
-                    BoxDecoration(color: mc, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.35,
-                      color: Colors.grey.shade800,
-                    ),
-                    children: [
-                      TextSpan(
-                        text: '${m.name.split(' ').first}: ',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      TextSpan(text: line),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    final shared = _glanceSharedCalendar(allPlanner, day);
-    if (shared != null) {
-      rows.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.groups_outlined,
-                  size: 18, color: dayColor.withValues(alpha: 0.85)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  shared,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.35,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (rows.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () {
-            Navigator.push<void>(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => WorkSchedulePage(
-                  openWithAllMembers: _filterPerson == null,
-                  initialPersonName: _filterPerson,
-                  initialDay: day,
-                ),
-              ),
-            );
-          },
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            decoration: BoxDecoration(
-              color: dayColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: dayColor.withValues(alpha: 0.25)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.schedule_rounded, size: 20, color: dayColor),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'SCHEMA & ARBETE (vald dag)',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.4,
-                          color: dayColor,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'Scheman',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: dayColor,
-                      ),
-                    ),
-                    Icon(Icons.chevron_right_rounded,
-                        size: 20, color: dayColor),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                ...rows,
-                const SizedBox(height: 4),
-                Text(
-                  'Tryck för hela dagen i Scheman',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade600,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
+    return out;
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    final provider = context.watch<FamilyProvider>();
+    context.select((FamilyProvider p) => (
+          p.currentUser,
+          p.familyMembers,
+          p.chores,
+        ));
+    final provider = context.read<FamilyProvider>();
     final user = provider.currentUser;
     final members = provider.familyMembers;
     final isFocus = user?.isFocusMode ?? false;
@@ -657,182 +399,237 @@ class _AgendaPageState extends State<AgendaPage>
         children: [
           StreamBuilder<QuerySnapshot>(
             stream: _plannerStreamFor(user?.familyId),
-            builder: (ctx, snap) {
-              final allEvents = snap.data?.docs ?? const <QueryDocumentSnapshot>[];
+            builder: (ctx, datedSnap) {
+              return StreamBuilder<QuerySnapshot>(
+                stream: _recurringPlannerStream(user?.familyId),
+                builder: (ctxR, recSnap) {
+              final allEvents = _mergePlannerDocs(
+                datedSnap.data?.docs ?? const [],
+                recSnap.data?.docs ?? const [],
+              );
               final eventsForSelected = _eventsForDay(allEvents, _selectedDay);
-              final shiftStream = _workShiftsStreamFor(user?.familyId);
-
-              Widget buildScroll(List<QueryDocumentSnapshot> shiftDocs) {
+              Widget buildScroll() {
                 final activitiesOnly = eventsForSelected;
+                final wide = WindowSize.of(context).isWide && !isFocus;
+                final weatherRow = !isFocus && provider.hasHomeLocation
+                    ? WeatherForecastRow(
+                        lat: provider.homeLat!,
+                        lon: provider.homeLon!,
+                        dayColor: dayColor,
+                      )
+                    : null;
+
+                final quickAdd = QuickAddBar(
+                  familyMembers: provider.familyMembers,
+                  familyId: user?.familyId ?? '',
+                  onFallbackToForm: (raw) {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => AddEventSheet(
+                          selectedDay: _selectedDay,
+                          familyMembers: provider.familyMembers,
+                          familyId: user?.familyId ?? '',
+                          initialTitle: raw,
+                        ),
+                    );
+                  },
+                );
+
+                List<Widget> dayBodySlivers() => [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+                          child: Text(
+                            () {
+                              try {
+                                return DateFormat('EEEE d MMMM', 'sv')
+                                    .format(_selectedDay);
+                              } catch (_) {
+                                return DateFormat('d MMMM').format(_selectedDay);
+                              }
+                            }(),
+                            style: AppTheme.sectionTitleStyle,
+                          ),
+                        ),
+                      ),
+                      if (_tab != AgendaTab.chores) ...[
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                            child: Text(
+                              'AKTIVITETER',
+                              style: AppTheme.sectionLabelStyle,
+                            ),
+                          ),
+                        ),
+                        if (activitiesOnly.isEmpty)
+                          SliverToBoxAdapter(
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 6),
+                              padding: const EdgeInsets.all(22),
+                              decoration: AppTheme.cardDecoration(),
+                              child: const Center(
+                                child: Text(
+                                  'Inga aktiviteter den här dagen.',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (_, i) {
+                                return RepaintBoundary(
+                                  child: AgendaActivityRow(
+                                    doc: activitiesOnly[i],
+                                    dayColor: dayColor,
+                                    listDay: _selectedDay,
+                                    familyMembers: members,
+                                    familyId: user?.familyId ?? '',
+                                    currentUser: user,
+                                  ),
+                                );
+                              },
+                              childCount: activitiesOnly.length,
+                            ),
+                          ),
+                      ],
+                      if (_tab != AgendaTab.activities) ...[
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 18, 16, 6),
+                            child: Text(
+                              'SYSSLOR',
+                              style: AppTheme.sectionLabelStyle,
+                            ),
+                          ),
+                        ),
+                        if (chores.isEmpty)
+                          SliverToBoxAdapter(
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 6),
+                              padding: const EdgeInsets.all(22),
+                              decoration: AppTheme.cardDecoration(),
+                              child: const Center(
+                                child: Text(
+                                  'Inga sysslor just nu.',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (_, i) => RepaintBoundary(
+                                child: AgendaChoreRow(
+                                  doc: chores[i],
+                                  dayColor: dayColor,
+                                  familyMembers: members,
+                                  familyId: user?.familyId ?? '',
+                                  currentUser: user,
+                                  allowDrag: _tab != AgendaTab.activities &&
+                                      canEditDoc(
+                                        user,
+                                        chores[i].data()
+                                            as Map<String, dynamic>,
+                                      ),
+                                  onComplete: _onChoreCompleted,
+                                ),
+                              ),
+                              childCount: chores.length,
+                            ),
+                          ),
+                      ],
+                      const SliverToBoxAdapter(
+                          child:
+                              SizedBox(height: WindowSize.navScrollPadding)),
+                    ];
+
+                if (wide) {
+                  return Column(
+                    children: [
+                      _buildHeader(context, dayColor),
+                      _buildTabs(dayColor),
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              flex: 4,
+                              child: ListView(
+                                physics: const BouncingScrollPhysics(),
+                                children: [
+                                  quickAdd,
+                                  ?weatherRow,
+                                  _buildCalendar(allEvents, dayColor),
+                                  _buildPersonFilter(members, dayColor),
+                                  if (_tab != AgendaTab.activities)
+                                    _buildChoreTemplatesStrip(
+                                      context,
+                                      user?.familyId,
+                                      members,
+                                      user?.isParent ?? false,
+                                      dayColor,
+                                    ),
+                                  const SizedBox(height: 24),
+                                  const SizedBox(
+                                      height: WindowSize.navScrollPadding),
+                                ],
+                              ),
+                            ),
+                            const VerticalDivider(width: 1),
+                            Expanded(
+                              flex: 6,
+                              child: CustomScrollView(
+                                physics: const BouncingScrollPhysics(),
+                                slivers: dayBodySlivers(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }
 
                 return CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(
-                      child: _buildHeader(context, dayColor)),
-                  // Snabbinmatning (Etapp 10): en rad → tolkad aktivitet.
-                  SliverToBoxAdapter(
-                    child: QuickAddBar(
-                      familyMembers: provider.familyMembers,
-                      familyId: user?.familyId ?? '',
-                      onFallbackToForm: (raw) {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (_) => AddEventSheet(
-                            selectedDay: _selectedDay,
-                            familyMembers: provider.familyMembers,
-                            familyId: user?.familyId ?? '',
-                            initialTitle: raw,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  if (!isFocus) ...[
-                    SliverToBoxAdapter(
-                      child: _buildTabs(dayColor),
-                    ),
-                    SliverToBoxAdapter(
-                      child: _buildCalendar(allEvents, dayColor),
-                    ),
-                    SliverToBoxAdapter(
-                      child: _buildPersonFilter(members, dayColor),
-                    ),
-                    if (_tab != AgendaTab.activities)
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(child: _buildHeader(context, dayColor)),
+                    SliverToBoxAdapter(child: quickAdd),
+                    if (!isFocus) ...[
+                      SliverToBoxAdapter(child: _buildTabs(dayColor)),
+                      if (weatherRow != null)
+                        SliverToBoxAdapter(child: weatherRow),
                       SliverToBoxAdapter(
-                        child: _buildChoreTemplatesStrip(
-                          context,
-                          user?.familyId,
-                          members,
-                          user?.isParent ?? false,
-                          dayColor,
-                        ),
-                      ),
-                  ],
-                  SliverToBoxAdapter(
-                    child: _buildScheduleGlanceStrip(
-                      context,
-                      members,
-                      dayColor,
-                      shiftDocs,
-                      allEvents,
-                      _selectedDay,
-                    ),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-                      child: Text(
-                        () {
-                          try {
-                            return DateFormat('EEEE d MMMM', 'sv')
-                                .format(_selectedDay);
-                          } catch (_) {
-                            return DateFormat('d MMMM').format(_selectedDay);
-                          }
-                        }(),
-                        style: AppTheme.sectionTitleStyle,
-                      ),
-                    ),
-                  ),
-                  if (_tab != AgendaTab.chores) ...[
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding:
-                            const EdgeInsets.fromLTRB(16, 8, 16, 6),
-                        child: Text(
-                          'AKTIVITETER',
-                          style: AppTheme.sectionLabelStyle,
-                        ),
-                      ),
-                    ),
-                    if (activitiesOnly.isEmpty)
+                          child: _buildCalendar(allEvents, dayColor)),
                       SliverToBoxAdapter(
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 6),
-                          padding: const EdgeInsets.all(22),
-                          decoration: AppTheme.cardDecoration(),
-                          child: const Center(
-                            child: Text(
-                              'Inga aktiviteter den här dagen.',
-                              style: TextStyle(color: Colors.grey),
-                            ),
+                          child: _buildPersonFilter(members, dayColor)),
+                      if (_tab != AgendaTab.activities)
+                        SliverToBoxAdapter(
+                          child: _buildChoreTemplatesStrip(
+                            context,
+                            user?.familyId,
+                            members,
+                            user?.isParent ?? false,
+                            dayColor,
                           ),
                         ),
-                      )
-                    else
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (_, i) {
-                            return _ActivityRow(
-                              doc: activitiesOnly[i],
-                              dayColor: dayColor,
-                              listDay: _selectedDay,
-                              familyMembers: members,
-                              familyId: user?.familyId ?? '',
-                            );
-                          },
-                          childCount: activitiesOnly.length,
-                        ),
-                      ),
+                    ],
+                    ...dayBodySlivers(),
                   ],
-                  if (_tab != AgendaTab.activities) ...[
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding:
-                            const EdgeInsets.fromLTRB(16, 18, 16, 6),
-                        child: Text(
-                          'SYSSLOR',
-                          style: AppTheme.sectionLabelStyle,
-                        ),
-                      ),
-                    ),
-                    if (chores.isEmpty)
-                      SliverToBoxAdapter(
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 6),
-                          padding: const EdgeInsets.all(22),
-                          decoration: AppTheme.cardDecoration(),
-                          child: const Center(
-                            child: Text(
-                              'Inga sysslor just nu.',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-                        ),
-                      )
-                    else
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
-                          (_, i) => _ChoreRow(
-                            doc: chores[i],
-                            dayColor: dayColor,
-                            familyMembers: members,
-                            familyId: user?.familyId ?? '',
-                            allowDrag: _tab != AgendaTab.activities,
-                          ),
-                          childCount: chores.length,
-                        ),
-                      ),
-                  ],
-                  const SliverToBoxAdapter(child: SizedBox(height: 140)),
-                ],
-              );
+                );
               }
 
-              if (shiftStream == null) {
-                return buildScroll(const <QueryDocumentSnapshot>[]);
-              }
-              return StreamBuilder<QuerySnapshot>(
-                stream: shiftStream,
-                builder: (ctx2, snap2) {
-                  final shiftDocs =
-                      snap2.data?.docs ?? const <QueryDocumentSnapshot>[];
-                  return buildScroll(shiftDocs);
+              return buildScroll();
                 },
               );
             },
@@ -847,6 +644,13 @@ class _AgendaPageState extends State<AgendaPage>
               foregroundColor: Colors.white,
               child: const Icon(Icons.add_rounded, size: 28),
             ),
+          ),
+          ConfettiWidget(
+            confettiController: _confettiController,
+            blastDirectionality: BlastDirectionality.explosive,
+            emissionFrequency: 0.1,
+            numberOfParticles: 20,
+            colors: [dayColor, Colors.amber, Colors.pink, Colors.purple],
           ),
         ],
       ),
@@ -941,22 +745,34 @@ class _AgendaPageState extends State<AgendaPage>
 
   Widget _buildHeader(BuildContext context, Color dayColor) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
-    return Container(
-      decoration: AppTheme.headerDecoration(),
-      padding: AppTheme.paddingBelowStatusBar(context, bottom: 16),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Planering',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: textColor,
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+      child: Container(
+        decoration: AppTheme.headerDecoration(),
+        padding: AppTheme.paddingBelowStatusBar(context, bottom: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Planering',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
               ),
             ),
-          ),
-        ],
+            IconButton(
+              tooltip: 'Statistik',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ChoreStatsPage()),
+                );
+              },
+              icon: Icon(Icons.bar_chart_rounded, color: textColor),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1067,8 +883,10 @@ class _AgendaPageState extends State<AgendaPage>
         } catch (e) {
           if (!context.mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Kunde inte flytta: $e'),
+            const SnackBar(
+              content: Text(
+                'Bara föräldrar eller den som skapat sysslan kan flytta den',
+              ),
               backgroundColor: Colors.red,
             ),
           );
@@ -1203,7 +1021,7 @@ class _AgendaPageState extends State<AgendaPage>
           ...familyMembers.map((m) {
             Color mc;
             try {
-              mc = Color(m.colorValue as int);
+              mc = Color(m.colorValue);
             } catch (_) {
               mc = dayColor;
             }
@@ -1263,19 +1081,22 @@ class _Pill extends StatelessWidget {
       );
 }
 
-class _ActivityRow extends StatelessWidget {
+class AgendaActivityRow extends StatelessWidget {
   final QueryDocumentSnapshot doc;
   final Color dayColor;
   final DateTime listDay;
   final List<UserModel> familyMembers;
   final String familyId;
+  final UserModel? currentUser;
 
-  const _ActivityRow({
+  const AgendaActivityRow({
+    super.key,
     required this.doc,
     required this.dayColor,
     required this.listDay,
     required this.familyMembers,
     required this.familyId,
+    this.currentUser,
   });
 
   Future<void> _handleMenu(BuildContext context, String value) async {
@@ -1455,46 +1276,52 @@ class _ActivityRow extends StatelessWidget {
               ),
             ),
           ),
-          PopupMenuButton<String>(
-            padding: const EdgeInsets.only(right: 4),
-            icon: Icon(Icons.more_vert_rounded,
-                color: Colors.grey.shade500, size: 22),
-            onSelected: (v) => _handleMenu(context, v),
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(value: 'edit', child: Text('Redigera')),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text('Ta bort',
-                    style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          ),
+          if (canEditDoc(currentUser, d))
+            PopupMenuButton<String>(
+              padding: const EdgeInsets.only(right: 4),
+              icon: Icon(Icons.more_vert_rounded,
+                  color: Colors.grey.shade500, size: 22),
+              onSelected: (v) => _handleMenu(context, v),
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(value: 'edit', child: Text('Redigera')),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Text('Ta bort',
+                      style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            ),
         ],
       ),
     );
   }
 }
 
-class _ChoreRow extends StatefulWidget {
+class AgendaChoreRow extends StatefulWidget {
   final QueryDocumentSnapshot doc;
   final Color dayColor;
   final List<UserModel> familyMembers;
   final String familyId;
+  final UserModel? currentUser;
   final bool allowDrag;
+  final VoidCallback onComplete;
 
-  const _ChoreRow({
+  const AgendaChoreRow({
+    super.key,
     required this.doc,
     required this.dayColor,
     required this.familyMembers,
     required this.familyId,
+    required this.onComplete,
+    this.currentUser,
     this.allowDrag = true,
   });
 
   @override
-  State<_ChoreRow> createState() => _ChoreRowState();
+  State<AgendaChoreRow> createState() => _AgendaChoreRowState();
 }
 
-class _ChoreRowState extends State<_ChoreRow> {
+class _AgendaChoreRowState extends State<AgendaChoreRow> {
   bool _saving = false;
 
   Future<void> _handleMenu(String value) async {
@@ -1538,9 +1365,29 @@ class _ChoreRowState extends State<_ChoreRow> {
 
   Future<void> _toggleDone(bool current) async {
     setState(() => _saving = true);
+    final nextDone = !current;
     try {
-      await widget.doc.reference.update({'isDone': !current});
-      if (!current) await NotificationService.cancel(widget.doc.id);
+      await ChoreService.completeChore(
+        choreId: widget.doc.id,
+        done: nextDone,
+      );
+      if (nextDone) {
+        await NotificationService.cancel(widget.doc.id);
+        widget.onComplete();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e.toString().contains('permission-denied')
+                  ? 'Du kan bara bocka av egna eller otilldelade sysslor.'
+                  : 'Kunde inte spara: $e',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1553,7 +1400,7 @@ class _ChoreRowState extends State<_ChoreRow> {
     final pik = d['piktogram'] as String? ?? '✅';
     final who = d['who'] as String? ?? '';
     final isDone = d['isDone'] == true;
-    final points = (d['points'] as int?) ?? 10;
+    final weight = (d['points'] as int?) ?? 0;
 
     final card = AnimatedOpacity(
       duration: const Duration(milliseconds: 250),
@@ -1597,27 +1444,18 @@ class _ChoreRowState extends State<_ChoreRow> {
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.shade50,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '+$points ⭐',
-                    maxLines: 1,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.amber,
-                    ),
+              if (weight > 0) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '★$weight',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade500,
                   ),
                 ),
-              ),
+              ],
               const SizedBox(width: 4),
               GestureDetector(
                 onTap: _saving ? null : () => _toggleDone(isDone),
@@ -1647,20 +1485,21 @@ class _ChoreRowState extends State<_ChoreRow> {
                           : null),
                 ),
               ),
-              PopupMenuButton<String>(
-                padding: EdgeInsets.zero,
-                icon: Icon(Icons.more_vert_rounded,
-                    color: Colors.grey.shade500, size: 22),
-                onSelected: _handleMenu,
-                itemBuilder: (ctx) => const [
-                  PopupMenuItem(value: 'edit', child: Text('Redigera')),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Text('Ta bort',
-                        style: TextStyle(color: Colors.red)),
-                  ),
-                ],
-              ),
+              if (canEditDoc(widget.currentUser, d))
+                PopupMenuButton<String>(
+                  padding: EdgeInsets.zero,
+                  icon: Icon(Icons.more_vert_rounded,
+                      color: Colors.grey.shade500, size: 22),
+                  onSelected: _handleMenu,
+                  itemBuilder: (ctx) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Redigera')),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Ta bort',
+                          style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
@@ -1731,7 +1570,9 @@ class _AddTypeSheet extends StatelessWidget {
     final bottomPad = MediaQuery.paddingOf(context).bottom;
     final kb = MediaQuery.viewInsetsOf(context).bottom;
 
-    return Padding(
+    return wrapBottomSheet(
+      context,
+      Padding(
       padding: EdgeInsets.only(bottom: kb),
       child: Container(
         constraints: BoxConstraints(
@@ -1770,7 +1611,7 @@ class _AddTypeSheet extends StatelessWidget {
               _TypeOption(
                 emoji: '🧹',
                 title: 'Syssla',
-                subtitle: 'Piktogram, delsteg och poäng',
+                subtitle: 'Piktogram, delsteg och vikt',
                 color: Colors.grey.shade700,
                 onTap: onChoreTap,
               ),
@@ -1804,6 +1645,7 @@ class _AddTypeSheet extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

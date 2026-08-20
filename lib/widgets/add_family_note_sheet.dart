@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../utils/layout.dart';
 import '../app_theme.dart';
 import '../models/family_note.dart';
 import '../models/user_model.dart';
@@ -122,92 +123,103 @@ class _AddFamilyNoteSheetState extends State<AddFamilyNoteSheet> {
   @override
   Widget build(BuildContext context) {
     final dayColor = AppTheme.getDayAccentColor();
-    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    final bottomPad = MediaQuery.paddingOf(context).bottom;
+    final kb = MediaQuery.viewInsetsOf(context).bottom;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
+    return wrapBottomSheet(
+      context,
+      Padding(
+      padding: EdgeInsets.only(bottom: kb),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.fromLTRB(20, 16, 20, 20 + bottomPad),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(height: 16),
+              Text(
+                'Lägg till notis',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.getTextColor(),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$_myNotesToday / $_maxNotesPerDay idag',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _text,
+                maxLength: _maxLen,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Kort meddelande till familjen…',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  counterText: '${_text.text.length}/$_maxLen',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _templates.map((t) {
+                  return ActionChip(
+                    label: Text(t, style: const TextStyle(fontSize: 12)),
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            _text.text = t;
+                            setState(() {});
+                          },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 48,
+                child: FilledButton(
+                  onPressed: _saving || _text.text.trim().isEmpty
+                      ? null
+                      : () => _save(_text.text),
+                  style: FilledButton.styleFrom(backgroundColor: dayColor),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Skicka'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Lägg till notis',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.getTextColor(),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '$_myNotesToday / $_maxNotesPerDay idag',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _text,
-            maxLength: _maxLen,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'Kort meddelande till familjen…',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              counterText: '${_text.text.length}/$_maxLen',
-            ),
-            onChanged: (_) => setState(() {}),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _templates.map((t) {
-              return ActionChip(
-                label: Text(t, style: const TextStyle(fontSize: 12)),
-                onPressed: _saving
-                    ? null
-                    : () {
-                        _text.text = t;
-                        setState(() {});
-                      },
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            height: 48,
-            child: FilledButton(
-              onPressed: _saving || _text.text.trim().isEmpty
-                  ? null
-                  : () => _save(_text.text),
-              style: FilledButton.styleFrom(backgroundColor: dayColor),
-              child: _saving
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Skicka'),
-            ),
-          ),
-        ],
+        ),
       ),
+    ),
     );
   }
 }

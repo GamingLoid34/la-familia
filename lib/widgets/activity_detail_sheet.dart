@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../utils/layout.dart';
 import '../app_theme.dart';
 import 'event_reactions_row.dart';
 import 'planner_event_leading.dart';
@@ -100,7 +101,9 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
         : timeStr;
 
     final location = (_data['location'] as String?)?.trim() ?? '';
-    final calDesc = (_data['calendarDescription'] as String?)?.trim() ?? '';
+    final calDesc = (_data['calendarDescription'] as String?)?.trim() ??
+        (_data['description'] as String?)?.trim() ??
+        '';
     final calUrl = (_data['calendarUrl'] as String?)?.trim() ?? '';
     final extras = _extendedPropsMap(_data);
     final hasExtraCalendarInfo = location.isNotEmpty ||
@@ -108,12 +111,12 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
         calUrl.isNotEmpty ||
         extras.isNotEmpty;
 
-    final screenW = MediaQuery.sizeOf(context).width;
     final maxH = MediaQuery.sizeOf(context).height * 0.85;
 
-    return Container(
-      width: screenW,
-      constraints: BoxConstraints(maxWidth: screenW, maxHeight: maxH),
+    return wrapBottomSheet(
+      context,
+      Container(
+      constraints: BoxConstraints(maxWidth: double.infinity, maxHeight: maxH),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -185,8 +188,7 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.place_outlined,
-                              size: 22, color: dayColor),
+                          const Text('📍', style: TextStyle(fontSize: 18)),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -299,6 +301,7 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
           ),
         ],
       ),
+    ),
     );
   }
 }

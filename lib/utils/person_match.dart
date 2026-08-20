@@ -16,6 +16,19 @@ String uidForName(List<UserModel> members, String name) {
   return '';
 }
 
+/// Första medlem vars namn förekommer i [text], längsta träffen vinner.
+/// Används t.ex. för "Emilios skolschema" → Emilio.
+UserModel? memberMatchingText(List<UserModel> members, String text) {
+  final hay = text.trim().toLowerCase();
+  if (hay.isEmpty) return null;
+  final hits = members.where((m) {
+    final n = m.name.trim();
+    return n.isNotEmpty && hay.contains(n.toLowerCase());
+  }).toList()
+    ..sort((a, b) => b.name.length.compareTo(a.name.length));
+  return hits.isEmpty ? null : hits.first;
+}
+
 /// Uids för en namnlista — okända namn utelämnas.
 List<String> uidsForNames(List<UserModel> members, List<String> names) =>
     names.map((n) => uidForName(members, n)).where((u) => u.isNotEmpty).toList();

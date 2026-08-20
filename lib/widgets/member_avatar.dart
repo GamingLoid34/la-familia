@@ -20,7 +20,7 @@ class FamilyMemberAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     Color mc;
     try {
-      mc = Color(member.colorValue as int);
+      mc = Color(member.colorValue);
     } catch (_) {
       mc = AppTheme.getDayAccentColor();
     }
@@ -40,7 +40,7 @@ class FamilyMemberAvatar extends StatelessWidget {
             ? CachedNetworkImage(
                 imageUrl: url,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
+                placeholder: (_, _) => Container(
                   color: mc.withValues(alpha: 0.15),
                   child: Center(
                     child: SizedBox(
@@ -53,7 +53,7 @@ class FamilyMemberAvatar extends StatelessWidget {
                     ),
                   ),
                 ),
-                errorWidget: (_, __, ___) => ColoredBox(
+                errorWidget: (_, _, _) => ColoredBox(
                   color: mc,
                   child: Center(
                     child: Text(

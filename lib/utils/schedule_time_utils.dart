@@ -49,13 +49,33 @@ bool plannerTimedEventIsActiveNow(Map<String, dynamic> d, DateTime now) {
   return !now.isBefore(s) && now.isBefore(e);
 }
 
+/// Absolut tidsintervall för ett arbetspass (nattpass → end nästa dygn).
+({DateTime start, DateTime end})? shiftInterval(Map<String, dynamic> shift) {
+  final day = parseYmdDate(shift['date']);
+  if (day == null) return null;
+  final st = parseHmOnDate(shift['startTime'] as String?, day);
+  if (st == null) return null;
+  var en = parseHmOnDate(shift['endTime'] as String?, day);
+  if (en == null) return null;
+  if (!en.isAfter(st)) {
+    en = en.add(const Duration(days: 1));
+  }
+  return (start: st, end: en);
+}
+
+/// True om passet overlappar [day]s kalenderdygn (inkl. nattpass fre→lör).
+bool shiftTouchesDay(Map<String, dynamic> shift, DateTime day) {
+  final interval = shiftInterval(shift);
+  if (interval == null) return false;
+  final dayStart = DateTime(day.year, day.month, day.day);
+  final dayEnd = dayStart.add(const Duration(days: 1));
+  return interval.start.isBefore(dayEnd) && interval.end.isAfter(dayStart);
+}
+
 bool workShiftIsActiveNow(Map<String, dynamic> d, DateTime now) {
-  final day = parseYmdDate(d['date']);
-  if (day == null || !sameCalendarDay(day, now)) return false;
-  final st = parseHmOnDate(d['startTime'] as String?, day);
-  final en = parseHmOnDate(d['endTime'] as String?, day);
-  if (st == null || en == null) return false;
-  return !now.isBefore(st) && now.isBefore(en);
+  final interval = shiftInterval(d);
+  if (interval == null) return false;
+  return !now.isBefore(interval.start) && now.isBefore(interval.end);
 }
 
 bool busySessionIsActiveNow(Map<String, dynamic> d, DateTime now) {

@@ -1,11 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import 'person_match.dart';
 import 'recurrence.dart';
 import 'schedule_time_utils.dart';
 
-/// Konfliktdetektering (ROADMAP Etapp 9.2): hittar tidsfönster där MER ÄN EN
-/// vuxen är upptagen samtidigt — då kan ingen hämta/lämna/vara hemma.
+/// Konfliktdetektering: vuxna som krockar + barn utan ledig förälder.
 
 class ScheduleConflict {
   final DateTime day;
@@ -13,12 +13,22 @@ class ScheduleConflict {
   final DateTime end;
   final List<UserModel> adults;
 
+  /// Barnhämtning: text för chip ("🚗 ons 17:00 — vem tar Liam?").
+  final String? pickupLabel;
+  final UserModel? child;
+  final String? eventTitle;
+
   const ScheduleConflict({
     required this.day,
     required this.start,
     required this.end,
     required this.adults,
+    this.pickupLabel,
+    this.child,
+    this.eventTitle,
   });
+
+  bool get isPickup => pickupLabel != null;
 }
 
 class _Interval {
@@ -42,9 +52,8 @@ List<_Interval> _busyIntervalsFor(
     if (!eventOccursOnDay(d, day)) continue;
     if (eventHasNoPersons(d)) continue;
     if (!eventIncludesPerson(d, uid: adult.uid, name: adult.name)) continue;
-    // För återkommande ligger 'date' på startdagen — bygg tider mot [day].
     final t = (d['time'] as String?)?.trim() ?? '';
-    if (t.isEmpty) continue; // heldags/odaterat räknas inte som blockerande
+    if (t.isEmpty) continue;
     final start = parseHmOnDate(t, day);
     if (start == null) continue;
     final endStr = (d['endTime'] as String?)?.trim() ?? '';
@@ -57,19 +66,39 @@ List<_Interval> _busyIntervalsFor(
 
   for (final doc in shifts) {
     final d = doc.data() as Map<String, dynamic>;
-    final date = parseYmdDate(d['date']);
-    if (date == null || !sameCalendarDay(date, day)) continue;
     if (!assignedToPerson(d, uid: adult.uid, name: adult.name)) continue;
-    final st = parseHmOnDate(d['startTime'] as String?, day);
-    final en = parseHmOnDate(d['endTime'] as String?, day);
-    if (st == null || en == null || !en.isAfter(st)) continue;
+    if (!shiftTouchesDay(d, day)) continue;
+    final interval = shiftInterval(d);
+    if (interval == null) continue;
+    // Klipp till dagens dygn så parvis-jämförelse fungerar.
+    final dayStart = DateTime(day.year, day.month, day.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final st =
+        interval.start.isBefore(dayStart) ? dayStart : interval.start;
+    final en = interval.end.isAfter(dayEnd) ? dayEnd : interval.end;
+    if (!en.isAfter(st)) continue;
     out.add(_Interval(st, en, adult));
   }
 
   return out;
 }
 
-/// Alla konflikter inom [weekStart] .. [weekStart]+6 dagar, sorterade på tid.
+bool _adultBusyDuring(
+  UserModel adult,
+  DateTime start,
+  DateTime end,
+  List<_Interval> busy,
+) {
+  for (final b in busy) {
+    if (b.adult.uid != adult.uid) continue;
+    final s = b.start.isAfter(start) ? b.start : start;
+    final e = b.end.isBefore(end) ? b.end : end;
+    if (e.isAfter(s)) return true;
+  }
+  return false;
+}
+
+/// Alla vuxen-krockar inom [weekStart] .. [weekStart]+6 dagar.
 List<ScheduleConflict> detectAdultConflicts({
   required List<UserModel> members,
   required List<QueryDocumentSnapshot> events,
@@ -90,7 +119,6 @@ List<ScheduleConflict> detectAdultConflicts({
     }
     if (all.length < 2) continue;
 
-    // Parvis överlapp mellan OLIKA vuxna; slå ihop per (start,end)-fönster.
     for (var a = 0; a < all.length; a++) {
       for (var b = a + 1; b < all.length; b++) {
         final x = all[a];
@@ -100,9 +128,10 @@ List<ScheduleConflict> detectAdultConflicts({
         final end = x.end.isBefore(y.end) ? x.end : y.end;
         if (!end.isAfter(start)) continue;
 
-        // Finns redan en konflikt med samma fönster? Lägg till vuxna i den.
-        final existing = conflicts.where((c) =>
-            c.start == start && c.end == end).toList();
+        final existing = conflicts
+            .where((c) =>
+                !c.isPickup && c.start == start && c.end == end)
+            .toList();
         if (existing.isNotEmpty) {
           final c = existing.first;
           for (final ad in [x.adult, y.adult]) {
@@ -122,4 +151,121 @@ List<ScheduleConflict> detectAdultConflicts({
 
   conflicts.sort((a, b) => a.start.compareTo(b.start));
   return conflicts;
+}
+
+/// Barn-event där ALLA föräldrar är upptagna i intervallet → hämtningschip.
+List<ScheduleConflict> detectPickupConflicts({
+  required List<UserModel> members,
+  required List<QueryDocumentSnapshot> events,
+  required List<QueryDocumentSnapshot> shifts,
+  required DateTime weekStart, // eller vald dag — 7 dagar från start
+  int dayCount = 7,
+}) {
+  final adults = members.where((m) => m.isParent).toList();
+  final children =
+      members.where((m) => !m.isParent).toList();
+  if (adults.isEmpty || children.isEmpty) return const [];
+
+  final out = <ScheduleConflict>[];
+  final seenHour = <String>{};
+
+  for (var i = 0; i < dayCount; i++) {
+    final day = DateTime(weekStart.year, weekStart.month, weekStart.day + i);
+    final busyByAdult = <String, List<_Interval>>{};
+    for (final adult in adults) {
+      busyByAdult[adult.uid] =
+          _busyIntervalsFor(adult, day, events, shifts);
+    }
+    final allBusy = busyByAdult.values.expand((e) => e).toList();
+
+    for (final doc in events) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (!eventOccursOnDay(d, day)) continue;
+      if (eventHasNoPersons(d)) continue;
+      // Schema-import räknas inte som hämtning.
+      if ((d['source'] as String?) == 'calendar' &&
+          (d['planningImportKind'] as String? ?? 'schedule') == 'schedule') {
+        continue;
+      }
+      final t = (d['time'] as String?)?.trim() ?? '';
+      if (t.isEmpty) continue;
+      final start = parseHmOnDate(t, day);
+      if (start == null) continue;
+      final endStr = (d['endTime'] as String?)?.trim() ?? '';
+      final end = endStr.isNotEmpty
+          ? (parseHmOnDate(endStr, day) ??
+              start.add(const Duration(hours: 1)))
+          : start.add(const Duration(hours: 1));
+      if (!end.isAfter(start)) continue;
+
+      UserModel? child;
+      for (final c in children) {
+        if (eventIncludesPerson(d, uid: c.uid, name: c.name)) {
+          child = c;
+          break;
+        }
+      }
+      if (child == null) continue;
+
+      final allParentsBusy = adults.every(
+        (a) => _adultBusyDuring(a, start, end, allBusy),
+      );
+      if (!allParentsBusy) continue;
+
+      final hourKey =
+          '${dateKeyLike(day)}_${start.hour}_${child.uid}';
+      if (!seenHour.add(hourKey)) continue;
+
+      final dayName = DateFormat('EEE', 'sv').format(day);
+      final hm = DateFormat('HH:mm').format(start);
+      final first = child.name.split(' ').first;
+      final title = (d['title'] as String? ?? '').trim();
+      final label = title.isEmpty
+          ? '🚗 $dayName $hm — vem tar $first?'
+          : '🚗 $dayName $hm — vem tar $first till $title?';
+
+      out.add(ScheduleConflict(
+        day: day,
+        start: start,
+        end: end,
+        adults: List<UserModel>.from(adults),
+        pickupLabel: label,
+        child: child,
+        eventTitle: title.isEmpty ? null : title,
+      ));
+    }
+  }
+
+  out.sort((a, b) => a.start.compareTo(b.start));
+  return out;
+}
+
+String dateKeyLike(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
+/// Vuxen-krockar + hämtningskonflikter, dedupeade och sorterade.
+List<ScheduleConflict> detectAllConflicts({
+  required List<UserModel> members,
+  required List<QueryDocumentSnapshot> events,
+  required List<QueryDocumentSnapshot> shifts,
+  required DateTime weekStart,
+  int dayCount = 7,
+}) {
+  final adult = detectAdultConflicts(
+    members: members,
+    events: events,
+    shifts: shifts,
+    weekStart: weekStart,
+  );
+  final pickup = detectPickupConflicts(
+    members: members,
+    events: events,
+    shifts: shifts,
+    weekStart: weekStart,
+    dayCount: dayCount,
+  );
+  final all = [...adult, ...pickup]..sort((a, b) => a.start.compareTo(b.start));
+  return all;
 }

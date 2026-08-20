@@ -1,6 +1,8 @@
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../main.dart';
 import '../app_theme.dart';
 
@@ -244,12 +246,49 @@ class _LoginPageState extends State<LoginPage> {
     final emailCtrl = TextEditingController();
     final pwdCtrl = TextEditingController();
     var isRegistering = false;
+    var joinRole = 'child';
 
     showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setStateBuilder) {
+            Widget roleBtn(String role, String label) {
+              final selected = joinRole == role;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => setStateBuilder(() => joinRole = role),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? AppTheme.dayPalette().base.withValues(alpha: 0.12)
+                          : Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: selected
+                            ? AppTheme.dayPalette().base
+                            : Colors.grey.shade300,
+                        width: selected ? 2 : 1,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: selected
+                            ? AppTheme.dayPalette().deep
+                            : Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+
             return AlertDialog(
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20)),
@@ -271,6 +310,29 @@ class _LoginPageState extends State<LoginPage> {
                       decoration:
                           const InputDecoration(labelText: 'Ditt förnamn'),
                     ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Jag är…',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        roleBtn('parent', 'Vuxen 👤'),
+                        const SizedBox(width: 6),
+                        roleBtn('youth', 'Ungdom 🧑'),
+                        const SizedBox(width: 6),
+                        roleBtn('child', 'Barn 🧒'),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: emailCtrl,
                       keyboardType: TextInputType.emailAddress,
@@ -292,7 +354,14 @@ class _LoginPageState extends State<LoginPage> {
                   child: const Text('Avbryt'),
                 ),
                 if (isRegistering)
-                  const CircularProgressIndicator()
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
                 else
                   ElevatedButton(
                     onPressed: () async {
@@ -308,27 +377,6 @@ class _LoginPageState extends State<LoginPage> {
                       final messenger = ScaffoldMessenger.of(context);
                       setStateBuilder(() => isRegistering = true);
                       try {
-                        final snapshot = await FirebaseFirestore.instance
-                            .collection('families')
-                            .where(
-                              'inviteCode',
-                              isEqualTo:
-                                  inviteCodeCtrl.text.trim().toUpperCase(),
-                            )
-                            .limit(1)
-                            .get();
-
-                        if (snapshot.docs.isEmpty) {
-                          messenger.showSnackBar(
-                            const SnackBar(
-                                content: Text('Ogiltig inbjudningskod.')),
-                          );
-                          setStateBuilder(() => isRegistering = false);
-                          return;
-                        }
-
-                        final familyId = snapshot.docs.first.id;
-
                         final uc = await FirebaseAuth.instance
                             .createUserWithEmailAndPassword(
                           email: emailCtrl.text.trim(),
@@ -336,15 +384,12 @@ class _LoginPageState extends State<LoginPage> {
                         );
 
                         if (uc.user != null) {
-                          await FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(uc.user!.uid)
-                              .set({
-                            'email': emailCtrl.text.trim(),
+                          await FirebaseFunctions.instance
+                              .httpsCallable('joinFamilyWithCode')
+                              .call<Map<String, dynamic>>({
+                            'code': inviteCodeCtrl.text.trim().toUpperCase(),
                             'name': nameCtrl.text.trim(),
-                            'familyId': familyId,
-                            'role': 'member',
-                            'createdAt': FieldValue.serverTimestamp(),
+                            'role': joinRole,
                           });
 
                           navigator.pop();
@@ -354,7 +399,9 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           );
                         }
-                      } catch (e) {
+                      } catch (e, stack) {
+                        developer.log('Invite join misslyckades',
+                            error: e, stackTrace: stack);
                         messenger.showSnackBar(
                             SnackBar(content: Text('Fel: $e')));
                         setStateBuilder(() => isRegistering = false);

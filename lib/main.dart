@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:ui';
+import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,8 +15,8 @@ import 'firebase_options.dart';
 
 // Import av dina sidor & tjänster
 import 'screens/dashboard_page.dart';
-import 'screens/family_week_page.dart';
-import 'screens/agenda_page.dart';
+import 'screens/kalender_page.dart';
+import 'screens/sysslor_page.dart';
 import 'screens/settings_page.dart';
 import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
@@ -26,10 +26,14 @@ import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
 import 'services/push_service.dart';
 import 'services/migration_service.dart';
+import 'utils/minute_ticker.dart';
+import 'utils/layout.dart';
+import 'widgets/offline_banner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MinuteTicker.ensureRunning();
   
   // Initiera svenska datuminställningar
   await initializeDateFormatting('sv_SE', null);
@@ -51,7 +55,7 @@ void main() async {
       };
     }
   } catch (e) {
-    debugPrint('Firebase init error: $e');
+    developer.log('Firebase init error: $e');
   }
 
   if (!kIsWeb) {
@@ -63,7 +67,7 @@ void main() async {
     final prefs = await SharedPreferences.getInstance();
     AppTheme.lowStimuli = prefs.getBool('lowStimuli') ?? false;
   } catch (e) {
-    debugPrint('Kunde inte läsa lowStimuli: $e');
+    developer.log('Kunde inte läsa lowStimuli: $e');
   }
 
   // Aktivera offline-cache för Firestore
@@ -118,7 +122,7 @@ class _MyAppState extends State<MyApp> {
       try {
         await FlutterDisplayMode.setHighRefreshRate();
       } catch (e) {
-        debugPrint('Kunde inte aktivera 120Hz: $e');
+        developer.log('Kunde inte aktivera 120Hz: $e');
       }
     }
   }
@@ -244,10 +248,9 @@ class _MainPageState extends State<MainPage> {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
     _pages = [
-      const DashboardPage(variant: DashboardVariant.me),
-      // Etapp 9: Familjen = veckans översikt (ersätter familje-dashboarden).
-      const FamilyWeekPage(),
-      const AgendaPage(initialTab: AgendaTab.all),
+      const DashboardPage(),
+      const KalenderPage(),
+      const SysslorPage(),
       const SettingsPage(),
     ];
     // Engångsmigration: tilldela unik medlemsfärg om saknas/default-grön.
@@ -289,52 +292,54 @@ class _MainPageState extends State<MainPage> {
     int weekday = DateTime.now().weekday;
     Color activeColor = AppTheme.getDayAccentColor(weekday);
 
-    final width = MediaQuery.of(context).size.width;
-    final isWide = width > 600;
+    final size = WindowSize.of(context);
+    final contentWidth = size.isExpanded
+        ? WindowSize.contentMaxWidth
+        : double.infinity;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       extendBody: true,
       body: Center(
-        child: Container(
-          width: isWide ? 430 : double.infinity,
-          decoration: isWide
-              ? const BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                )
-              : null,
-          child: ClipRect(
-            child: PageView(
-              controller: _pageController,
-              onPageChanged: (index) {
-                setState(() {
-                  _selectedIndex = index;
-                });
-              },
-              children: _pages,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: contentWidth),
+          child: OfflineBanner(
+            child: ClipRect(
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  setState(() {
+                    _selectedIndex = index;
+                  });
+                },
+                children: _pages,
+              ),
             ),
           ),
         ),
       ),
-      bottomNavigationBar: isWide
-          ? SafeArea(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [SizedBox(width: 430, child: _buildBottomNav(activeColor))],
-              ),
-            )
-          : _buildBottomNav(activeColor),
+      // heightFactor: 1 — annars expanderar Align/Center till full höjd och
+      // nav-pillen centreras vertikalt mitt på Fold (extendBody).
+      bottomNavigationBar: Align(
+        alignment: Alignment.bottomCenter,
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: size.isExpanded
+                ? WindowSize.navMaxWidth
+                : double.infinity,
+          ),
+          child: SafeArea(
+            top: false,
+            child: _buildBottomNav(activeColor),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildBottomNav(Color activeColor) {
-    // Frostat glas: innehållet skymtar bakom navet (extendBody är aktivt).
+    // Solid vit med hög alpha — BackdropFilter/blur togs bort (Fas 2½).
     return Container(
       margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
       decoration: BoxDecoration(
@@ -350,21 +355,19 @@ class _MainPageState extends State<MainPage> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: BottomNavigationBar(
+        child: BottomNavigationBar(
           items: const <BottomNavigationBarItem>[
             BottomNavigationBarItem(
               icon: Icon(Icons.home_rounded),
               label: 'Hem',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.groups_rounded),
-              label: 'Familjen',
+              icon: Icon(Icons.calendar_month_rounded),
+              label: 'Kalender',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.event_note_rounded),
-              label: 'Planering',
+              icon: Icon(Icons.checklist_rounded),
+              label: 'Sysslor',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.settings_rounded),
@@ -372,7 +375,7 @@ class _MainPageState extends State<MainPage> {
             ),
           ],
           currentIndex: _selectedIndex,
-          backgroundColor: Colors.white.withValues(alpha: 0.65),
+          backgroundColor: Colors.white.withValues(alpha: 0.94),
           selectedItemColor: activeColor,
           unselectedItemColor: Colors.grey.shade500,
           selectedIconTheme: const IconThemeData(size: 28),
@@ -381,7 +384,6 @@ class _MainPageState extends State<MainPage> {
           showUnselectedLabels: true,
           onTap: _onItemTapped,
           elevation: 0,
-          ),
         ),
       ),
     );

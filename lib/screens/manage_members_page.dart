@@ -184,8 +184,6 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         userData['familyId'] = _familyId; // Det var denna som saknades förut!
         userData['createdAt'] = FieldValue.serverTimestamp();
         userData['energy'] = 3;
-        userData['weeklyPoints'] = 0;
-        userData['points'] = 0;
         userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin')
             ? 'parent'
             : (dbRole == 'youth' ? 'youth' : 'child');
@@ -203,9 +201,15 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
       String msg = "Ett fel uppstod.";
       if (e.code == 'email-already-in-use') msg = "Denna e-postadress används redan.";
       if (e.code == 'invalid-email') msg = "E-postadressen är felaktigt formaterad.";
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(msg), backgroundColor: Colors.red));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

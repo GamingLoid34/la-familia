@@ -8,6 +8,7 @@ import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/notification_service.dart';
 import '../utils/date_utils.dart';
+import '../utils/layout.dart';
 import '../utils/quick_add_parser.dart';
 
 /// Snabbinmatning (ROADMAP Etapp 10 + röst): skriv ELLER tala in en rad →
@@ -261,6 +262,7 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
       'checklist': <dynamic>[],
       'source': 'manual',
       'createdBy': uid,
+      'createdByUid': uid,
       'isPending': false,
       'familyId': widget.familyId,
     };
@@ -291,11 +293,8 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
   }
 
   Future<void> _saveChore(QuickAddDraft d) async {
-    final now = DateTime.now();
-    final firstDay = DateTime(now.year, 1, 1);
-    final weekNum =
-        ((now.difference(firstDay).inDays + firstDay.weekday - 1) / 7).ceil();
     final assignee = d.persons.isNotEmpty ? d.persons.first : null;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
 
     await FirebaseFirestore.instance.collection('chores').add({
       'chore': d.title,
@@ -304,12 +303,12 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
       'whoUid': assignee?.uid ?? '',
       'whoColor': assignee?.color ?? '',
       'isDone': false,
-      'points': 10,
+      'points': 3,
       'isRecurring': false,
       'familyId': widget.familyId,
-      'weekOf': '${now.year}-W$weekNum',
       if (d.hasExplicitDate) 'dueDate': dateKey(d.date),
       'substeps': <Map<String, dynamic>>[],
+      'createdByUid': ?uid,
     });
   }
 
@@ -377,7 +376,9 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
     final dateLabel = DateFormat('EEEE d MMM', 'sv').format(d.date);
     final isShopping = d.intent == QuickAddIntent.shopping;
 
-    return Container(
+    return wrapBottomSheet(
+      context,
+      Container(
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -477,6 +478,7 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
           ),
         ],
       ),
+    ),
     );
   }
 }

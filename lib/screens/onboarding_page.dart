@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import '../app_theme.dart';
 import '../main.dart';
 import '../services/family_service.dart';
@@ -23,6 +24,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
   final _familyNameCtrl = TextEditingController();
   final _userNameCtrl = TextEditingController();
   bool _isLoading = false;
+  /// Join-roll: parent | youth | child (default Barn).
+  String _joinRole = 'child';
 
   @override
   void dispose() {
@@ -55,11 +58,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
     try {
       final db = FirebaseFirestore.instance;
       final tomorrow = DateTime.now().add(const Duration(days: 1));
-      final now = DateTime.now();
-      final firstDay = DateTime(now.year, 1, 1);
-      final weekNum =
-          ((now.difference(firstDay).inDays + firstDay.weekday - 1) / 7)
-              .ceil();
 
       final batch = db.batch();
 
@@ -74,6 +72,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         'checklist': <dynamic>[],
         'source': 'manual',
         'createdBy': uid,
+        'createdByUid': uid,
         'isPending': false,
         'familyId': familyId,
       });
@@ -99,11 +98,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
         'whoUid': '',
         'whoColor': '',
         'isDone': false,
-        'points': 10,
+        'points': 3,
         'isRecurring': false,
         'familyId': familyId,
-        'weekOf': '${now.year}-W$weekNum',
         'substeps': <Map<String, dynamic>>[],
+        'createdByUid': uid,
       });
 
       await batch.commit();
@@ -140,7 +139,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           'name': _userNameCtrl.text.trim(),
           'familyId': familyRef.id,
           'role': 'admin',
-          'points': 0,
           'color': assignedColor,
         }, SetOptions(merge: true));
 
@@ -170,50 +168,24 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final snapshot = await FirebaseFirestore.instance
-            .collection('families')
-            .where(
-              'inviteCode',
-              isEqualTo: _inviteCodeCtrl.text.trim().toUpperCase(),
-            )
-            .limit(1)
-            .get();
+      if (user == null) return;
 
-        if (!mounted) return;
-        if (snapshot.docs.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Ogiltig inbjudningskod.')),
-          );
-          setState(() => _isLoading = false);
-          return;
-        }
+      await FirebaseFunctions.instance
+          .httpsCallable('joinFamilyWithCode')
+          .call<Map<String, dynamic>>({
+        'code': _inviteCodeCtrl.text.trim().toUpperCase(),
+        'name': _userNameCtrl.text.trim(),
+        'role': _joinRole,
+      });
 
-        final familyId = snapshot.docs.first.id;
-
-        // Tilldela unik medlemsfärg från paletten innan vi skriver doc.
-        final assignedColor =
-            await FamilyService.assignNextAvailableColor(familyId);
-
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .set({
-          'name': _userNameCtrl.text.trim(),
-          'familyId': familyId,
-          'role': 'member',
-          'points': 0,
-          'color': assignedColor,
-        }, SetOptions(merge: true));
-
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const MainPage()),
-          );
-        }
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const MainPage()),
+        );
       }
-    } catch (e) {
+    } catch (e, stack) {
+      developer.log('joinFamily misslyckades', error: e, stackTrace: stack);
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('Fel: $e')));
@@ -221,6 +193,43 @@ class _OnboardingPageState extends State<OnboardingPage> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Widget _roleChoiceButton({
+    required String role,
+    required String label,
+    required Color accent,
+  }) {
+    final selected = _joinRole == role;
+    return Expanded(
+      child: Material(
+        color: selected ? accent.withValues(alpha: 0.15) : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () => setState(() => _joinRole = role),
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected ? accent : Colors.grey.shade300,
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: selected ? accent : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -338,6 +347,40 @@ class _OnboardingPageState extends State<OnboardingPage> {
                       textCapitalization: TextCapitalization.characters,
                       decoration: _fieldDecoration(
                           'Inbjudningskod', Icons.vpn_key_rounded),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Jag är…',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _roleChoiceButton(
+                          role: 'parent',
+                          label: 'Vuxen 👤',
+                          accent: palette.base,
+                        ),
+                        const SizedBox(width: 8),
+                        _roleChoiceButton(
+                          role: 'youth',
+                          label: 'Ungdom 🧑',
+                          accent: palette.base,
+                        ),
+                        const SizedBox(width: 8),
+                        _roleChoiceButton(
+                          role: 'child',
+                          label: 'Barn 🧒',
+                          accent: palette.base,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 14),
                     if (!_isLoading)

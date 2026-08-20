@@ -1,5 +1,6 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// Palett per veckodag — varje dag är en ädelsten eller metall.
 /// [light] är glansbandet som ger den "metalliska" lystern i gradienter.
@@ -117,7 +118,8 @@ class AppTheme {
       return Color(int.parse(withAlpha, radix: 16));
     } catch (e, stack) {
       // Logga och returnera defaultfärgen, undvik att smyga undan fel.
-      debugPrint('colorFromHex parse error for "$hex": $e\n$stack');
+      developer.log('colorFromHex parse error for "$hex"',
+          error: e, stackTrace: stack);
       final fallback = memberColorPalette.first;
       return Color(int.parse('0x$fallback'));
     }
@@ -195,58 +197,70 @@ class AppTheme {
   // ─── Event Icons ───────────────────────────────────────────────────────────
   static IconData getEventIcon(String title, String type) {
     final t = title.toLowerCase();
-    if (t.contains('läkare') || t.contains('bup') || t.contains('sjukhus'))
+    if (t.contains('läkare') || t.contains('bup') || t.contains('sjukhus')) {
       return Icons.local_hospital_rounded;
+    }
     if (t.contains('skola') || t.contains('läxa')) return Icons.school_rounded;
-    if (t.contains('tandläkare') || t.contains('tand'))
+    if (t.contains('tandläkare') || t.contains('tand')) {
       return Icons.medical_services_rounded;
+    }
     if (type == 'work' || t.contains('jobb')) return Icons.work_rounded;
-    if (type == 'food' || t.contains('middag') || t.contains('lunch'))
+    if (type == 'food' || t.contains('middag') || t.contains('lunch')) {
       return Icons.restaurant_rounded;
-    if (t.contains('sport') || t.contains('fotboll') || t.contains('simning'))
+    }
+    if (t.contains('sport') || t.contains('fotboll') || t.contains('simning')) {
       return Icons.sports_rounded;
+    }
     if (t.contains('möte')) return Icons.handshake_rounded;
     return Icons.event_rounded;
   }
 
-  // ─── Typography (Nunito — rundat, varmt, lättläst) ─────────────────────────
-  static TextTheme appTextTheme([TextTheme? base]) =>
-      GoogleFonts.nunitoTextTheme(base);
+  // ─── Typography (Nunito — bundlad lokalt, Fas 2½) ─────────────────────────
+  static TextTheme appTextTheme([TextTheme? base]) {
+    final b = base ?? ThemeData.light().textTheme;
+    return b.apply(fontFamily: 'Nunito');
+  }
 
-  static TextStyle get pageTitleStyle => GoogleFonts.nunito(
+  static TextStyle get pageTitleStyle => const TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 32,
         fontWeight: FontWeight.w800,
-        color: const Color(0xFF1A1A2E),
+        color: Color(0xFF1A1A2E),
         letterSpacing: -0.5,
       );
 
-  static TextStyle get sectionLabelStyle => GoogleFonts.nunito(
+  static TextStyle get sectionLabelStyle => TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 12,
         fontWeight: FontWeight.w800,
         color: dayPalette().deep,
         letterSpacing: 1.2,
       );
 
-  static TextStyle get sectionTitleStyle => GoogleFonts.nunito(
+  static TextStyle get sectionTitleStyle => const TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 20,
         fontWeight: FontWeight.w700,
-        color: const Color(0xFF1A1A2E),
+        color: Color(0xFF1A1A2E),
         letterSpacing: -0.3,
       );
 
-  static TextStyle get cardTitleStyle => GoogleFonts.nunito(
+  static TextStyle get cardTitleStyle => const TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 16,
         fontWeight: FontWeight.w700,
-        color: const Color(0xFF1A1A2E),
+        color: Color(0xFF1A1A2E),
       );
 
-  static TextStyle get bodyStyle => GoogleFonts.nunito(
+  static TextStyle get bodyStyle => const TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 14,
         fontWeight: FontWeight.w500,
-        color: const Color(0xFF1A1A2E),
+        color: Color(0xFF1A1A2E),
       );
 
-  static TextStyle get captionStyle => GoogleFonts.nunito(
+  static TextStyle get captionStyle => TextStyle(
+        fontFamily: 'Nunito',
         fontSize: 12,
         fontWeight: FontWeight.w500,
         color: Colors.grey.shade500,

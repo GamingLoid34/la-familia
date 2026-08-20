@@ -1,30 +1,33 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../utils/layout.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/notification_service.dart';
 import '../services/user_service.dart';
-import '../screens/agenda_page.dart';
 import '../utils/date_utils.dart';
 import 'activity_detail_sheet.dart';
 import 'member_avatar.dart';
 import 'planner_event_leading.dart';
 
-/// Dagens aktiviteter och sysslor för en medlem, med länk till planering.
+/// Dagens (eller vald dags) aktiviteter och sysslor för en medlem.
 class MemberDaySheet extends StatefulWidget {
   final UserModel member;
   final UserModel? currentUser;
   final List<QueryDocumentSnapshot> memberEvents;
   final List<QueryDocumentSnapshot> memberChores;
+  /// Den dag användaren öppnade (veckogrid-cell). Default = idag.
+  final DateTime day;
 
-  const MemberDaySheet({
+  MemberDaySheet({
     super.key,
     required this.member,
     required this.currentUser,
     required this.memberEvents,
     required this.memberChores,
-  });
+    DateTime? day,
+  }) : day = day ?? DateTime.now();
 
   @override
   State<MemberDaySheet> createState() => _MemberDaySheetState();
@@ -41,7 +44,7 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
 
   Color _memberColor() {
     try {
-      return Color(widget.member.colorValue as int);
+      return Color(widget.member.colorValue);
     } catch (_) {
       return AppTheme.getDayAccentColor();
     }
@@ -56,8 +59,25 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
     final mc = _memberColor();
     final isSelf = widget.member.uid == widget.currentUser?.uid;
     final dayColor = AppTheme.getDayAccentColor();
+    final day = DateTime(widget.day.year, widget.day.month, widget.day.day);
+    final now = DateTime.now();
+    final isToday =
+        day.year == now.year && day.month == now.month && day.day == now.day;
+    String dayHeading;
+    try {
+      dayHeading = DateFormat('EEEE d MMM', 'sv').format(day);
+    } catch (_) {
+      dayHeading = DateFormat('EEEE d MMM').format(day);
+    }
+    if (dayHeading.isNotEmpty) {
+      dayHeading =
+          '${dayHeading[0].toUpperCase()}${dayHeading.substring(1)}';
+    }
+    final firstName = widget.member.name.split(' ').first;
 
-    return DraggableScrollableSheet(
+    return wrapBottomSheet(
+      context,
+      DraggableScrollableSheet(
       initialChildSize: 0.72,
       minChildSize: 0.45,
       maxChildSize: 0.95,
@@ -102,18 +122,29 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Idag: ${_energyLabel(_energyDisplay)}',
+                                dayHeading,
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
                                 ),
                               ),
+                              if (isToday) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Idag: ${_energyLabel(_energyDisplay)}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
                       ],
                     ),
-                    if (isSelf) ...[
+                    if (isSelf && isToday) ...[
                       const SizedBox(height: 16),
                       Text(
                         'Din energi idag',
@@ -157,37 +188,13 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
                       ),
                     ],
                     const SizedBox(height: 20),
-                    OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute<void>(
-                            builder: (_) => AgendaPage(
-                              initialPersonFilterUid: widget.member.uid,
-                              initialTab: AgendaTab.all,
-                              initialPersonFilter: widget.member.name,
-                            ),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.calendar_month_rounded, size: 20),
-                      label: const Text('Öppna i planering (filtrerat)'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: dayColor,
-                        side: BorderSide(color: dayColor.withValues(alpha: 0.5)),
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 12,
-                          horizontal: 16,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text('AKTIVITETER IDAG', style: AppTheme.sectionLabelStyle),
+                    Text('AKTIVITETER', style: AppTheme.sectionLabelStyle),
                     const SizedBox(height: 10),
                     if (widget.memberEvents.isEmpty)
                       Text(
-                        'Inga aktiviteter med ${widget.member.name.split(' ').first} idag.',
+                        isToday
+                            ? 'Inga aktiviteter med $firstName idag.'
+                            : 'Inga aktiviteter med $firstName den här dagen.',
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                       )
                     else
@@ -209,7 +216,7 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
                     const SizedBox(height: 10),
                     if (widget.memberChores.isEmpty)
                       Text(
-                        'Inga sysslor tilldelade ${widget.member.name.split(' ').first} just nu.',
+                        'Inga sysslor tilldelade $firstName just nu.',
                         style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                       )
                     else
@@ -221,6 +228,7 @@ class _MemberDaySheetState extends State<MemberDaySheet> {
           ),
         );
       },
+    ),
     );
   }
 }
@@ -306,8 +314,17 @@ class _EventTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
-    final dt = parseDateTime(d);
-    final timeStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
+    final start = (d['time'] as String?)?.trim() ?? '';
+    final end = (d['endTime'] as String?)?.trim() ?? '';
+    String timeStr;
+    if (start.isNotEmpty && end.isNotEmpty) {
+      timeStr = '$start–$end';
+    } else if (start.isNotEmpty) {
+      timeStr = start;
+    } else {
+      final dt = parseDateTime(d);
+      timeStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),

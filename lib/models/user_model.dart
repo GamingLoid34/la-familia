@@ -11,8 +11,6 @@ class UserModel {
   /// `parent` | `focus` | `youth` | `child` — fokus = avskalad vy för alla roller.
   final String viewMode;
   final int energy; // 1-4
-  final int weeklyPoints;
-  final DateTime? pointsResetDate;
   final String? familyId;
   /// Valfri profilbild (Firebase Storage URL).
   final String? avatarUrl;
@@ -25,8 +23,6 @@ class UserModel {
     required this.role,
     required this.viewMode,
     required this.energy,
-    required this.weeklyPoints,
-    this.pointsResetDate,
     this.familyId,
     this.avatarUrl,
   });
@@ -49,12 +45,6 @@ class UserModel {
       role: data['role'] ?? 'parent',
       viewMode: _defaultViewMode(data),
       energy: (data['energy'] as int?) ?? 3,
-      weeklyPoints: (data['weeklyPoints'] as int?) ??
-          (data['points'] as int?) ??
-          0,
-      pointsResetDate: data['pointsResetDate'] != null
-          ? (data['pointsResetDate'] as dynamic).toDate()
-          : null,
       familyId: data['familyId'] as String?,
       avatarUrl: data['avatarUrl'] as String?,
     );
@@ -68,8 +58,6 @@ class UserModel {
       'role': role,
       'viewMode': viewMode,
       'energy': energy,
-      'weeklyPoints': weeklyPoints,
-      'pointsResetDate': pointsResetDate,
       'familyId': familyId,
       if (avatarUrl != null) 'avatarUrl': avatarUrl,
     };
@@ -82,8 +70,6 @@ class UserModel {
     String? role,
     String? viewMode,
     int? energy,
-    int? weeklyPoints,
-    DateTime? pointsResetDate,
     String? familyId,
     String? avatarUrl,
   }) {
@@ -95,16 +81,13 @@ class UserModel {
       role: role ?? this.role,
       viewMode: viewMode ?? this.viewMode,
       energy: energy ?? this.energy,
-      weeklyPoints: weeklyPoints ?? this.weeklyPoints,
-      pointsResetDate: pointsResetDate ?? this.pointsResetDate,
       familyId: familyId ?? this.familyId,
       avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 
-  /// Returns the user's color as a Flutter Color object.
-  /// Behåller `dynamic`-typ för bakåtkompatibilitet; Fas 6 typar om till `int`.
-  dynamic get colorValue {
+  /// Returns the user's color as ARGB int for `Color(...)`.
+  int get colorValue {
     try {
       return int.parse(color.startsWith('0x') ? color : '0xFF$color', radix: 16);
     } catch (e, stack) {

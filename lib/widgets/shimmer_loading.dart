@@ -14,7 +14,7 @@ class ShimmerListPlaceholder extends StatelessWidget {
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           child: Shimmer.fromColors(
-            baseColor: AppTheme.getCardColor().withOpacity(0.5),
+            baseColor: AppTheme.getCardColor().withValues(alpha: 0.5),
             highlightColor: AppTheme.getCardColor(),
             child: Container(
               height: 70,

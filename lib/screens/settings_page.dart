@@ -6,15 +6,20 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
+import '../utils/layout.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../services/family_service.dart';
 import '../services/notification_service.dart';
 import '../services/push_service.dart';
 import '../services/user_service.dart';
+import '../widgets/ai_planner_sheet.dart';
+import '../widgets/food_prefs_sheet.dart';
+import '../widgets/home_location_sheet.dart';
 import 'manage_members_page.dart';
 import 'manage_routines_page.dart';
 import 'invite_page.dart';
+import 'vardagsplan_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -30,6 +35,12 @@ class _SettingsPageState extends State<SettingsPage>
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   String? _familyName;
+  double? _homeLat;
+  double? _homeLon;
+  String? _homeName;
+  List<String> _foodAllergier = [];
+  List<String> _foodOgillar = [];
+  List<String> _foodGillar = [];
   bool _loading = true;
 
   // Notification toggles
@@ -37,6 +48,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _notifChore = true;
   bool _notifTransition = true;
   bool _notifFamily = true;
+  bool _aiPlannerLoading = false;
 
   @override
   void initState() {
@@ -82,7 +94,30 @@ class _SettingsPageState extends State<SettingsPage>
               .get()
               .timeout(const Duration(seconds: 4));
           if (famDoc.exists) {
-            familyName = famDoc.data()?['name'] as String?;
+            final fd = famDoc.data();
+            familyName = fd?['name'] as String?;
+            _homeLat = (fd?['homeLat'] as num?)?.toDouble();
+            _homeLon = (fd?['homeLon'] as num?)?.toDouble();
+            _homeName = fd?['homeName'] as String?;
+            final prefs = fd?['foodPrefs'];
+            if (prefs is Map) {
+              _foodAllergier = (prefs['allergier'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+              _foodOgillar = (prefs['ogillar'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+              _foodGillar = (prefs['gillar'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+            } else {
+              _foodAllergier = [];
+              _foodOgillar = [];
+              _foodGillar = [];
+            }
           }
         } catch (e, stack) {
           developer.log('Misslyckades hämta familjenamn', error: e, stackTrace: stack);
@@ -180,12 +215,15 @@ class _SettingsPageState extends State<SettingsPage>
   Widget build(BuildContext context) {
     super.build(context);
     final dayColor = AppTheme.getDayAccentColor();
+    final maxW = WindowSize.of(context).isExpanded
+        ? WindowSize.settingsMaxWidth
+        : 430.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430),
+          constraints: BoxConstraints(maxWidth: maxW),
           child: Container(
             decoration: AppTheme.getBackground(),
             child: CustomScrollView(
@@ -203,12 +241,10 @@ class _SettingsPageState extends State<SettingsPage>
                   SliverToBoxAdapter(child: _buildProfileCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFamilyCard(dayColor)),
                   SliverToBoxAdapter(child: _buildNotificationsCard(dayColor)),
-                  if (_currentUser?.isParent ?? false)
-                    SliverToBoxAdapter(child: _buildMaintenanceCard(dayColor)),
                   SliverToBoxAdapter(child: _buildAboutCard()),
                   SliverToBoxAdapter(child: _buildSignOutButton()),
                 ],
-                const SliverToBoxAdapter(child: SizedBox(height: 120)),
+                const SliverToBoxAdapter(child: SizedBox(height: WindowSize.navScrollPadding + 20)),
               ],
             ),
           ),
@@ -235,7 +271,7 @@ class _SettingsPageState extends State<SettingsPage>
     final user = _currentUser!;
     Color avatarColor;
     try {
-      avatarColor = Color(user.colorValue as int);
+      avatarColor = Color(user.colorValue);
     } catch (_) {
       avatarColor = dayColor;
     }
@@ -314,7 +350,7 @@ class _SettingsPageState extends State<SettingsPage>
                 final m = _familyMembers[i];
                 Color mc;
                 try {
-                  mc = Color(m.colorValue as int);
+                  mc = Color(m.colorValue);
                 } catch (_) {
                   mc = dayColor;
                 }
@@ -341,6 +377,62 @@ class _SettingsPageState extends State<SettingsPage>
           ),
           const SizedBox(height: 16),
         ],
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.home_work_outlined, color: dayColor, size: 22),
+          title: const Text('Hemposition',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text(
+            _homeName ?? 'Ej angiven — behövs för väder',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+          trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
+          onTap: _currentUser?.familyId == null
+              ? null
+              : () => showHomeLocationSheet(
+                    context,
+                    familyId: _currentUser!.familyId!,
+                    currentName: _homeName,
+                    currentLat: _homeLat,
+                    currentLon: _homeLon,
+                    onSaved: _loadData,
+                  ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.restaurant_menu_rounded, color: dayColor, size: 22),
+          title: const Text('Matpreferenser',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text(
+            [
+              if (_foodAllergier.isNotEmpty)
+                'Allergier: ${_foodAllergier.join(', ')}',
+              if (_foodOgillar.isNotEmpty) 'Ogillar: ${_foodOgillar.length}',
+              if (_foodGillar.isNotEmpty) 'Gillar: ${_foodGillar.length}',
+            ].isEmpty
+                ? 'Allergier, ogillar, gillar — för AI-menyn'
+                : [
+                    if (_foodAllergier.isNotEmpty)
+                      'Allergier: ${_foodAllergier.join(', ')}',
+                    if (_foodOgillar.isNotEmpty)
+                      'Ogillar: ${_foodOgillar.length}',
+                    if (_foodGillar.isNotEmpty) 'Gillar: ${_foodGillar.length}',
+                  ].join(' · '),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+          trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
+          onTap: _currentUser?.familyId == null
+              ? null
+              : () => showFoodPrefsSheet(
+                    context,
+                    familyId: _currentUser!.familyId!,
+                    allergier: _foodAllergier,
+                    ogillar: _foodOgillar,
+                    gillar: _foodGillar,
+                    onSaved: _loadData,
+                  ),
+        ),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -391,8 +483,73 @@ class _SettingsPageState extends State<SettingsPage>
                     builder: (_) => const ManageRoutinesPage())),
           ),
         ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Text('🧭', style: TextStyle(fontSize: 14)),
+            label: Text('Vardagsplan — hela veckoupplägget',
+                style: TextStyle(color: dayColor, fontSize: 13)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const VardagsplanPage())),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: _aiPlannerLoading
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: dayColor,
+                    ),
+                  )
+                : const Text('🧪', style: TextStyle(fontSize: 14)),
+            label: Text('Testa AI-planeraren',
+                style: TextStyle(color: dayColor, fontSize: 13)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: _aiPlannerLoading ? null : _testAiPlanner,
+          ),
+        ),
       ]),
     );
+  }
+
+  Future<void> _testAiPlanner() async {
+    setState(() => _aiPlannerLoading = true);
+    try {
+      await runAiPlannerFlow(context);
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      final msg = e.message ?? 'Kunde inte hämta AI-förslag.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Kunde inte hämta AI-förslag: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _aiPlannerLoading = false);
+    }
   }
 
   // ─── NOTIFICATIONS CARD ──────────────────────────────────────────────────────
@@ -413,7 +570,7 @@ class _SettingsPageState extends State<SettingsPage>
           subtitle: const Text('15 min innan',
               style: TextStyle(fontSize: 12)),
           value: _notifActivity,
-          activeColor: dayColor,
+          activeThumbColor: dayColor,
           onChanged: (v) async {
             if (!v) {
               // Avbokar BARA aktivitetspåminnelser — sysslor/övergångar rörs ej.
@@ -430,7 +587,7 @@ class _SettingsPageState extends State<SettingsPage>
           subtitle: const Text('"Om 10 min: byta aktivitet" — extra förvarning',
               style: TextStyle(fontSize: 12)),
           value: _notifTransition,
-          activeColor: dayColor,
+          activeThumbColor: dayColor,
           onChanged: (v) async {
             if (!v) {
               await NotificationService.cancelByPayloads({'transition'});
@@ -444,7 +601,7 @@ class _SettingsPageState extends State<SettingsPage>
           title: const Text('Syssla tilldelad',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
           value: _notifChore,
-          activeColor: dayColor,
+          activeThumbColor: dayColor,
           onChanged: (v) async {
             if (!v) {
               await NotificationService.cancelByPayloads({'chore'});
@@ -461,7 +618,7 @@ class _SettingsPageState extends State<SettingsPage>
               'Push när någon skriver på tavlan, reagerar eller tilldelar',
               style: TextStyle(fontSize: 12)),
           value: _notifFamily,
-          activeColor: dayColor,
+          activeThumbColor: dayColor,
           onChanged: (v) async {
             setState(() => _notifFamily = v);
             await _savePreference('notifFamily', v);
@@ -478,145 +635,13 @@ class _SettingsPageState extends State<SettingsPage>
               'Lugnare utseende: platta färger, inga skuggor eller gradienter',
               style: TextStyle(fontSize: 12)),
           value: AppTheme.lowStimuli,
-          activeColor: dayColor,
+          activeThumbColor: dayColor,
           onChanged: (v) {
             setState(() => AppTheme.lowStimuli = v);
             _savePreference('lowStimuli', v);
             // Rita om alla flikar direkt — inte bara denna sida.
             context.read<FamilyProvider>().refreshUi();
           },
-        ),
-      ]),
-    );
-  }
-
-  // ─── MAINTENANCE CARD (endast förälder — ta bort efter migrering) ───────────
-  bool _migrating = false;
-
-  Future<void> _runMigration({
-    required String functionName,
-    required String title,
-    required String body,
-  }) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Avbryt'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Kör migrering'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true || !mounted) return;
-
-    setState(() => _migrating = true);
-    try {
-      final result = await FirebaseFunctions.instance
-          .httpsCallable(functionName)
-          .call<Map<String, dynamic>>();
-      final migrated = result.data['migrated'] ?? 0;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Klart! $migrated dokument uppdaterade. ✅'),
-            backgroundColor: const Color(0xFF6BAE75),
-          ),
-        );
-      }
-    } catch (e, stack) {
-      developer.log('$functionName misslyckades', error: e, stackTrace: stack);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Migrering misslyckades: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _migrating = false);
-    }
-  }
-
-  Future<void> _runDateMigration() => _runMigration(
-        functionName: 'migrateDateFormatOnce',
-        title: 'Migrera datumformat?',
-        body: 'Paddar alla gamla datum (t.ex. 2026-5-3 → 2026-05-03) i '
-            'aktiviteter, sysslor och arbetspass.\n\nKör detta EN gång, och '
-            'helst efter att en Firestore-backup tagits. Det är säkert att '
-            'köra igen vid avbrott.',
-      );
-
-  Future<void> _runPersonUidBackfill() => _runMigration(
-        functionName: 'backfillPersonUids',
-        title: 'Koppla personer via uid?',
-        body: 'Fyller i uid-kopplingar för befintliga aktiviteter, sysslor, '
-            'arbetspass och upptagen-sessioner utifrån namnen. Gör att '
-            'namnbyten inte längre tappar kopplingar.\n\nIdempotent — säker '
-            'att köra igen.',
-      );
-
-  Widget _buildMaintenanceCard(Color dayColor) {
-    return _Card(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.build_rounded, color: dayColor, size: 20),
-          const SizedBox(width: 8),
-          Text('Underhåll', style: AppTheme.cardTitleStyle),
-        ]),
-        const SizedBox(height: 8),
-        Text(
-          'Engångsåtgärd för att standardisera datumformat i databasen.',
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            icon: _migrating
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(Icons.update_rounded, size: 16, color: dayColor),
-            label: Text(
-              _migrating ? 'Migrerar…' : 'Migrera datumformat',
-              style: TextStyle(color: dayColor, fontSize: 13),
-            ),
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: _migrating ? null : _runDateMigration,
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            icon: Icon(Icons.link_rounded, size: 16, color: dayColor),
-            label: Text(
-              'Koppla personer via uid',
-              style: TextStyle(color: dayColor, fontSize: 13),
-            ),
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: _migrating ? null : _runPersonUidBackfill,
-          ),
         ),
       ]),
     );
@@ -631,7 +656,7 @@ class _SettingsPageState extends State<SettingsPage>
           'assets/images/logo.png',
           width: 72,
           fit: BoxFit.contain,
-          errorBuilder: (_, __, e) =>
+          errorBuilder: (_, _, e) =>
               const Icon(Icons.favorite_rounded, size: 48, color: Colors.grey),
         ),
         const SizedBox(height: 10),

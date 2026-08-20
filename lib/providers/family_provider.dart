@@ -15,9 +15,20 @@ class FamilyProvider extends ChangeNotifier {
   List<QueryDocumentSnapshot> _todayDateEvents = [];
   List<QueryDocumentSnapshot> _tomorrowDateEvents = [];
   List<QueryDocumentSnapshot> _recurringEvents = [];
+  List<QueryDocumentSnapshot> _todayEventsCached = [];
+  List<QueryDocumentSnapshot> _tomorrowEventsCached = [];
   List<FamilyNote> _todayNotes = [];
   List<QueryDocumentSnapshot> _routines = [];
   List<QueryDocumentSnapshot> _todayMeals = [];
+
+  double? _homeLat;
+  double? _homeLon;
+  String? _homeName;
+  Map<String, List<String>> _foodPrefs = const {
+    'allergier': [],
+    'ogillar': [],
+    'gillar': [],
+  };
 
   bool _isLoading = true;
 
@@ -30,46 +41,49 @@ class FamilyProvider extends ChangeNotifier {
   StreamSubscription? _notesSub;
   StreamSubscription? _routinesSub;
   StreamSubscription? _mealsSub;
+  StreamSubscription? _familyDocSub;
 
   UserModel? get currentUser => _currentUser;
   List<UserModel> get familyMembers => _familyMembers;
   List<QueryDocumentSnapshot> get chores => _chores;
 
-  /// Dagens händelser: events med dagens datum + återkommande som
-  /// infaller idag (expanderade i klienten, deduplicerade på doc-id).
-  List<QueryDocumentSnapshot> get todayEvents {
-    final now = DateTime.now();
-    final seen = <String>{};
-    final out = <QueryDocumentSnapshot>[];
-    for (final doc in _todayDateEvents) {
-      if (seen.add(doc.id)) out.add(doc);
-    }
-    for (final doc in _recurringEvents) {
-      if (seen.contains(doc.id)) continue;
-      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, now)) {
-        seen.add(doc.id);
-        out.add(doc);
-      }
-    }
-    return out;
-  }
+  /// Dagens händelser (cachad — stabil referens för context.select).
+  List<QueryDocumentSnapshot> get todayEvents => _todayEventsCached;
 
-  /// Morgondagens händelser — för "I morgon"-vyn på Hem (NPF: förutsägbarhet).
-  List<QueryDocumentSnapshot> get tomorrowEvents {
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
-    final seen = <String>{};
-    final out = <QueryDocumentSnapshot>[];
-    for (final doc in _tomorrowDateEvents) {
-      if (seen.add(doc.id)) out.add(doc);
+  /// Morgondagens händelser (cachad).
+  List<QueryDocumentSnapshot> get tomorrowEvents => _tomorrowEventsCached;
+
+  void _rebuildEventCaches() {
+    final now = DateTime.now();
+    final tomorrow = now.add(const Duration(days: 1));
+
+    final todaySeen = <String>{};
+    final todayOut = <QueryDocumentSnapshot>[];
+    for (final doc in _todayDateEvents) {
+      if (todaySeen.add(doc.id)) todayOut.add(doc);
     }
     for (final doc in _recurringEvents) {
-      if (seen.contains(doc.id)) continue;
-      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, tomorrow)) {
-        seen.add(doc.id);
-        out.add(doc);
+      if (todaySeen.contains(doc.id)) continue;
+      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, now)) {
+        todaySeen.add(doc.id);
+        todayOut.add(doc);
       }
     }
-    return out;
+    _todayEventsCached = todayOut;
+
+    final tomSeen = <String>{};
+    final tomOut = <QueryDocumentSnapshot>[];
+    for (final doc in _tomorrowDateEvents) {
+      if (tomSeen.add(doc.id)) tomOut.add(doc);
+    }
+    for (final doc in _recurringEvents) {
+      if (tomSeen.contains(doc.id)) continue;
+      if (recurringOccursOnDay(doc.data() as Map<String, dynamic>, tomorrow)) {
+        tomSeen.add(doc.id);
+        tomOut.add(doc);
+      }
+    }
+    _tomorrowEventsCached = tomOut;
   }
 
   List<FamilyNote> get todayNotes => _todayNotes;
@@ -80,6 +94,15 @@ class FamilyProvider extends ChangeNotifier {
   /// Dagens middag(ar) — för "Ikväll"-kortet på Hem (ROADMAP Etapp 12).
   List<QueryDocumentSnapshot> get todayMeals => _todayMeals;
 
+  double? get homeLat => _homeLat;
+  double? get homeLon => _homeLon;
+  String? get homeName => _homeName;
+  bool get hasHomeLocation => _homeLat != null && _homeLon != null;
+  Map<String, List<String>> get foodPrefs => _foodPrefs;
+  List<String> get foodAllergier => _foodPrefs['allergier'] ?? const [];
+  List<String> get foodOgillar => _foodPrefs['ogillar'] ?? const [];
+  List<String> get foodGillar => _foodPrefs['gillar'] ?? const [];
+
   bool get isLoading => _isLoading;
 
   /// Tvinga omritning av alla lyssnande vyer — används när globala
@@ -88,10 +111,11 @@ class FamilyProvider extends ChangeNotifier {
 
   /// Hemskärms-widgeten matas debounced vid varje dataändring (Etapp 13).
   Timer? _widgetDebounce;
+  /// Coalescar burst av stream-updates (Fas 2½).
+  Timer? _notifyTimer;
+  bool _notifyPending = false;
 
-  @override
-  void notifyListeners() {
-    super.notifyListeners();
+  void _scheduleHomeWidgetUpdate() {
     _widgetDebounce?.cancel();
     _widgetDebounce = Timer(const Duration(seconds: 2), () {
       WidgetService.updateFromData(
@@ -99,6 +123,22 @@ class FamilyProvider extends ChangeNotifier {
         todayEvents: todayEvents,
         routines: _routines,
       );
+    });
+  }
+
+  @override
+  void notifyListeners() {
+    if (_notifyTimer?.isActive ?? false) {
+      _notifyPending = true;
+      return;
+    }
+    super.notifyListeners();
+    _scheduleHomeWidgetUpdate();
+    _notifyTimer = Timer(const Duration(milliseconds: 50), () {
+      if (_notifyPending) {
+        _notifyPending = false;
+        notifyListeners();
+      }
     });
   }
 
@@ -119,6 +159,8 @@ class FamilyProvider extends ChangeNotifier {
     _todayDateEvents = [];
     _tomorrowDateEvents = [];
     _recurringEvents = [];
+    _todayEventsCached = [];
+    _tomorrowEventsCached = [];
     _todayNotes = [];
     _isLoading = false;
 
@@ -133,6 +175,15 @@ class FamilyProvider extends ChangeNotifier {
     _routines = [];
     _mealsSub?.cancel();
     _todayMeals = [];
+    _familyDocSub?.cancel();
+    _homeLat = null;
+    _homeLon = null;
+    _homeName = null;
+    _foodPrefs = const {
+      'allergier': [],
+      'ogillar': [],
+      'gillar': [],
+    };
 
     notifyListeners();
   }
@@ -154,6 +205,7 @@ class FamilyProvider extends ChangeNotifier {
   void _subscribeToFamilyData(String? familyId) {
     if (familyId == null || familyId.isEmpty) {
       _familySub?.cancel();
+      _familyDocSub?.cancel();
       _choresSub?.cancel();
       _eventsSub?.cancel();
       _tomorrowSub?.cancel();
@@ -168,10 +220,61 @@ class FamilyProvider extends ChangeNotifier {
       _todayDateEvents = [];
       _tomorrowDateEvents = [];
       _recurringEvents = [];
+      _todayEventsCached = [];
+      _tomorrowEventsCached = [];
       _todayNotes = [];
+      _homeLat = null;
+      _homeLon = null;
+      _homeName = null;
+      _foodPrefs = const {
+        'allergier': [],
+        'ogillar': [],
+        'gillar': [],
+      };
       notifyListeners();
       return;
     }
+
+    // Familjedokument (hemposition m.m.)
+    _familyDocSub?.cancel();
+    _familyDocSub = FirebaseFirestore.instance
+        .collection('families')
+        .doc(familyId)
+        .snapshots()
+        .listen((snap) {
+      if (snap.exists) {
+        final d = snap.data()!;
+        _homeLat = (d['homeLat'] as num?)?.toDouble();
+        _homeLon = (d['homeLon'] as num?)?.toDouble();
+        _homeName = d['homeName'] as String?;
+        final prefs = d['foodPrefs'];
+        if (prefs is Map) {
+          List<String> listOf(String key) =>
+              (prefs[key] as List?)?.whereType<String>().toList() ?? [];
+          _foodPrefs = {
+            'allergier': listOf('allergier'),
+            'ogillar': listOf('ogillar'),
+            'gillar': listOf('gillar'),
+          };
+        } else {
+          _foodPrefs = const {
+            'allergier': [],
+            'ogillar': [],
+            'gillar': [],
+          };
+        }
+      } else {
+        _homeLat = null;
+        _homeLon = null;
+        _homeName = null;
+        _foodPrefs = const {
+          'allergier': [],
+          'ogillar': [],
+          'gillar': [],
+        };
+      }
+      notifyListeners();
+    });
 
     // Lyssna på familjemedlemmar
     _familySub?.cancel();
@@ -205,6 +308,7 @@ class FamilyProvider extends ChangeNotifier {
         .where('date', isEqualTo: dateKey(now))
         .snapshots().listen((snap) {
       _todayDateEvents = snap.docs;
+      _rebuildEventCaches();
       notifyListeners();
     });
 
@@ -215,6 +319,7 @@ class FamilyProvider extends ChangeNotifier {
         .where('date', isEqualTo: dateKey(now.add(const Duration(days: 1))))
         .snapshots().listen((snap) {
       _tomorrowDateEvents = snap.docs;
+      _rebuildEventCaches();
       notifyListeners();
     });
 
@@ -225,6 +330,7 @@ class FamilyProvider extends ChangeNotifier {
         .where('isRecurring', isEqualTo: true)
         .snapshots().listen((snap) {
       _recurringEvents = snap.docs;
+      _rebuildEventCaches();
       notifyListeners();
     });
 
@@ -278,6 +384,7 @@ class FamilyProvider extends ChangeNotifier {
     _routinesSub?.cancel();
     _mealsSub?.cancel();
     _widgetDebounce?.cancel();
+    _notifyTimer?.cancel();
     super.dispose();
   }
 }

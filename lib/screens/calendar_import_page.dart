@@ -2,13 +2,15 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
 import '../models/user_model.dart';
+import '../services/calendar_feed_service.dart';
 import '../services/family_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/person_match.dart';
@@ -145,8 +147,93 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
             ? null
             : _confirmPurgeAllCalendarImports,
         onDeleteImport: _confirmDeleteCalendarImport,
+        onToggleAutoSync: _toggleAutoSync,
+        onSyncNow: _syncNow,
       ),
     );
+  }
+
+  Future<void> _toggleAutoSync(String docId, bool value) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('calendar_imports')
+          .doc(docId)
+          .update({'autoSync': value});
+      await _loadData();
+    } catch (e, stack) {
+      developer.log('autoSync-toggle misslyckades', error: e, stackTrace: stack);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kunde inte spara: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _syncNow(String docId) async {
+    Map<String, dynamic>? imp;
+    for (final m in _calendarImports) {
+      if (m['id'] == docId) {
+        imp = m;
+        break;
+      }
+    }
+    if (imp == null) return;
+    final url = (imp['feedUrl'] as String?)?.trim().isNotEmpty == true
+        ? (imp['feedUrl'] as String).trim()
+        : ((imp['url'] as String?) ?? '').trim();
+    if (url.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Denna import har ingen URL att synka.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final name = imp['name'] as String? ?? 'Kalender';
+    final person = (imp['person'] as String?) ??
+        (imp['assignedMember'] as String?);
+    final personUid = imp['personUid'] as String?;
+    final kind = (imp['planningImportKind'] as String?) ??
+        (imp['targetType'] as String?) ??
+        'schedule';
+
+    try {
+      final result = await CalendarFeedService.subscribe(
+        url: url,
+        name: name,
+        person: person,
+        personUid: personUid,
+        targetType: kind,
+        importId: docId,
+      );
+      if (!mounted) return;
+      _showImportResult(result.eventCount, name);
+      await _loadData();
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message ?? 'Synkning misslyckades'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } catch (e, stack) {
+      developer.log('Synka nu misslyckades', error: e, stackTrace: stack);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Synkning misslyckades: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
   }
 
   void _showAddCalendarDialog() {
@@ -181,6 +268,12 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                           borderRadius: BorderRadius.circular(12)),
                       isDense: true,
                     ),
+                    onChanged: (v) {
+                      final guessed = memberMatchingText(_familyMembers, v);
+                      if (guessed != null && selectedMember == null) {
+                        setS(() => selectedMember = guessed.name);
+                      }
+                    },
                   ),
                   const SizedBox(height: 16),
                   const Text('Vem gäller kalendern?',
@@ -196,13 +289,16 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
                         isExpanded: true,
-                        hint: const Text('Välj familjemedlem (Frivilligt)'),
+                        hint: Text(planningImportKind == 'schedule'
+                            ? 'Välj familjemedlem (krävs för schema)'
+                            : 'Välj familjemedlem (frivilligt)'),
                         value: selectedMember,
                         items: [
-                          const DropdownMenuItem<String>(
-                            value: null,
-                            child: Text('Gemensam kalender / Ingen specifik'),
-                          ),
+                          if (planningImportKind != 'schedule')
+                            const DropdownMenuItem<String>(
+                              value: null,
+                              child: Text('Gemensam kalender / Ingen specifik'),
+                            ),
                           ..._familyMembers.map((m) => DropdownMenuItem(
                                 value: m.name,
                                 child: Text(m.name),
@@ -277,25 +373,43 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                                   ? 'Importerad kalender'
                                   : nameCtrl.text.trim();
                               if (url.isEmpty) return;
+                              final member = selectedMember ??
+                                  memberMatchingText(_familyMembers, name)?.name;
+                              if (planningImportKind == 'schedule' &&
+                                  (member == null || member.isEmpty)) {
+                                setS(() {
+                                  errorMsg =
+                                      'Välj vem schemat gäller, annars syns det inte i kalendern.';
+                                });
+                                return;
+                              }
                               setS(() {
                                 loading = true;
                                 errorMsg = null;
+                                if (member != null) selectedMember = member;
                               });
                               try {
-                                final resp = await http
-                                    .get(Uri.parse(url))
-                                    .timeout(const Duration(seconds: 10));
-                                final content = utf8.decode(resp.bodyBytes);
-                                final count = await _parseAndSaveIcs(
-                                  content,
-                                  name,
-                                  url,
-                                  selectedMember,
-                                  planningImportKind,
+                                final personUid = member == null
+                                    ? null
+                                    : uidForName(_familyMembers, member);
+                                final result = await CalendarFeedService.subscribe(
+                                  url: url,
+                                  name: name,
+                                  person: member,
+                                  personUid: (personUid == null || personUid.isEmpty)
+                                      ? null
+                                      : personUid,
+                                  targetType: planningImportKind,
                                 );
                                 if (ctx.mounted) Navigator.pop(ctx);
-                                _showImportResult(count, name);
+                                _showImportResult(result.eventCount, name);
                                 await _loadData();
+                              } on FirebaseFunctionsException catch (e) {
+                                setS(() {
+                                  loading = false;
+                                  errorMsg = e.message ??
+                                      'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
+                                });
                               } catch (e, stack) {
                                 developer.log(
                                     'Fel vid hämtning/tolkning av ICS URL',
@@ -332,9 +446,22 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                               final name = nameCtrl.text.trim().isEmpty
                                   ? 'Importerad kalender'
                                   : nameCtrl.text.trim();
+                              final member = selectedMember ??
+                                  memberMatchingText(
+                                          _familyMembers, nameCtrl.text)
+                                      ?.name;
+                              if (planningImportKind == 'schedule' &&
+                                  (member == null || member.isEmpty)) {
+                                setS(() {
+                                  errorMsg =
+                                      'Välj vem schemat gäller, annars syns det inte i kalendern.';
+                                });
+                                return;
+                              }
                               setS(() {
                                 loading = true;
                                 errorMsg = null;
+                                if (member != null) selectedMember = member;
                               });
                               try {
                                 final result =
@@ -355,12 +482,15 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                                   });
                                   return;
                                 }
-                                final content = utf8.decode(bytes);
+                                final content = utf8.decode(
+                                  bytes,
+                                  allowMalformed: true,
+                                );
                                 final count = await _parseAndSaveIcs(
                                   content,
                                   name,
                                   '',
-                                  selectedMember,
+                                  member,
                                   planningImportKind,
                                 );
                                 if (ctx.mounted) Navigator.pop(ctx);
@@ -678,7 +808,7 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
       final ref = FirebaseFirestore.instance.collection('planner_events').doc();
       final fields = <String, dynamic>{
         'title': title,
-        'piktogram': '📋',
+        'piktogram': kind == 'activity' ? '📋' : '📚',
         'type': 'activity',
         'date': dateKey(dtStart),
         'time': startHm,
@@ -692,6 +822,7 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
         'calendarName': name,
         'calendarImportId': importRef.id,
         'createdBy': uid,
+        'createdByUid': uid,
         'isPending': false,
         'familyId': familyId,
       };
@@ -733,12 +864,20 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
       batch.set(importRef, {
         'name': name,
         'url': url,
+        'feedUrl': '',
         'familyId': familyId,
         'lastSync': FieldValue.serverTimestamp(),
         'eventCount': count,
         'source': url.isEmpty ? 'file' : 'url',
+        'autoSync': false,
         'planningImportKind': kind,
+        'targetType': kind,
         'assignedMember': ?assignedMember,
+        'person': ?assignedMember,
+        'personUid': assignedMember == null
+            ? null
+            : uidForName(_familyMembers, assignedMember),
+        'createdByUid': uid,
       });
       await batch.commit();
     }
@@ -850,6 +989,8 @@ class _ImportCard extends StatelessWidget {
   final VoidCallback onAddTap;
   final VoidCallback? onPurgeTap;
   final void Function(String id) onDeleteImport;
+  final void Function(String id, bool value) onToggleAutoSync;
+  final void Function(String id) onSyncNow;
 
   const _ImportCard({
     required this.dayColor,
@@ -857,7 +998,26 @@ class _ImportCard extends StatelessWidget {
     required this.onAddTap,
     required this.onPurgeTap,
     required this.onDeleteImport,
+    required this.onToggleAutoSync,
+    required this.onSyncNow,
   });
+
+  String _formatLastSync(dynamic raw) {
+    DateTime? dt;
+    if (raw is Timestamp) dt = raw.toDate();
+    if (dt == null) return 'Aldrig synkad';
+    try {
+      return 'Senast synkad ${DateFormat('d MMM HH:mm', 'sv').format(dt)}';
+    } catch (_) {
+      return 'Senast synkad ${DateFormat('d MMM HH:mm').format(dt)}';
+    }
+  }
+
+  bool _hasFeedUrl(Map<String, dynamic> imp) {
+    final feed = (imp['feedUrl'] as String?)?.trim() ?? '';
+    final url = (imp['url'] as String?)?.trim() ?? '';
+    return feed.isNotEmpty || url.isNotEmpty;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -875,58 +1035,108 @@ class _ImportCard extends StatelessWidget {
           ]),
           const SizedBox(height: 8),
           Text(
-            'Importera händelser från Google Kalender, Outlook eller Apple Kalender.',
+            'Prenumerera på skolschema via ICS-länk (synkas automatiskt) '
+            'eller ladda upp en engångsfil.',
             style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 6),
           Text(
             'Vid import väljer du schema (skola/job) eller aktivitet (t.ex. sport). '
-            'Schema visas under Scheman; aktiviteter även i planering och hem. '
-            'Start- och sluttid sparas när ICS-filen innehåller det.',
+            'Schema visas under Scheman; aktiviteter även i planering och hem.',
             style: TextStyle(
                 fontSize: 12, color: Colors.grey.shade600, height: 1.35),
           ),
           if (calendarImports.isNotEmpty) ...[
             const SizedBox(height: 12),
             for (final imp in calendarImports)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(children: [
-                  Icon(Icons.check_circle_rounded, color: dayColor, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      imp['name'] as String? ?? 'Kalender',
-                      style: const TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w500),
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.fromLTRB(12, 10, 4, 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle_rounded,
+                            color: dayColor, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            imp['name'] as String? ?? 'Kalender',
+                            style: const TextStyle(
+                                fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        Text(
+                          (imp['planningImportKind'] as String? ??
+                                      imp['targetType'] as String? ??
+                                      'schedule') ==
+                                  'activity'
+                              ? 'Aktivitet'
+                              : 'Schema',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: dayColor,
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.delete_outline_rounded,
+                              size: 22, color: Colors.grey.shade600),
+                          tooltip: 'Ta bort prenumeration och händelser',
+                          onPressed: () {
+                            final id = imp['id'];
+                            if (id is String) onDeleteImport(id);
+                          },
+                        ),
+                      ],
                     ),
-                  ),
-                  Text(
-                    (imp['planningImportKind'] as String? ?? 'schedule') ==
-                            'activity'
-                        ? 'Aktivitet'
-                        : 'Schema',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: dayColor,
+                    Padding(
+                      padding: const EdgeInsets.only(left: 24, right: 8),
+                      child: Text(
+                        '${_formatLastSync(imp['lastSync'])} · '
+                        '${imp['eventCount'] ?? 0} händelser'
+                        '${imp['autoSync'] == true ? '' : (imp['source'] == 'file' ? ' · engångsfil' : '')}',
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey.shade600),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${imp['eventCount'] ?? 0} st',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.delete_outline_rounded,
-                        size: 22, color: Colors.grey.shade600),
-                    tooltip: 'Ta bort import och händelser',
-                    onPressed: () {
-                      final id = imp['id'];
-                      if (id is String) onDeleteImport(id);
-                    },
-                  ),
-                ]),
+                    if (_hasFeedUrl(imp)) ...[
+                      SwitchListTile(
+                        contentPadding: const EdgeInsets.only(left: 12),
+                        dense: true,
+                        title: const Text('Automatisk synk',
+                            style: TextStyle(fontSize: 13)),
+                        subtitle: const Text('Uppdateras varje natt',
+                            style: TextStyle(fontSize: 11)),
+                        value: imp['autoSync'] == true,
+                        activeThumbColor: dayColor,
+                        onChanged: (v) {
+                          final id = imp['id'];
+                          if (id is String) onToggleAutoSync(id, v);
+                        },
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            final id = imp['id'];
+                            if (id is String) onSyncNow(id);
+                          },
+                          icon: Icon(Icons.sync_rounded,
+                              size: 18, color: dayColor),
+                          label: Text('Synka nu',
+                              style: TextStyle(color: dayColor, fontSize: 13)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             const SizedBox(height: 8),
           ] else
