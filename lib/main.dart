@@ -1,7 +1,8 @@
 import 'dart:async';
-import 'dart:ui';
+import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -14,8 +15,8 @@ import 'firebase_options.dart';
 
 // Import av dina sidor & tjänster
 import 'screens/dashboard_page.dart';
-import 'screens/planner_page.dart';
-import 'screens/chores_page.dart';
+import 'screens/kalender_page.dart';
+import 'screens/sysslor_page.dart';
 import 'screens/settings_page.dart';
 import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
@@ -23,9 +24,16 @@ import 'screens/splash_screen.dart';
 import 'app_theme.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
+import 'services/push_service.dart';
+import 'services/migration_service.dart';
+import 'utils/minute_ticker.dart';
+import 'utils/layout.dart';
+import 'widgets/offline_banner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  MinuteTicker.ensureRunning();
   
   // Initiera svenska datuminställningar
   await initializeDateFormatting('sv_SE', null);
@@ -36,23 +44,31 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     
-    // Aktivera Firebase Crashlytics
-    FlutterError.onError = (errorDetails) {
-      FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
-    };
-    
-    // Fånga asynkrona fel som inte fångas av Flutter
-    PlatformDispatcher.instance.onError = (error, stack) {
-      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-      return true;
-    };
-    
+    // Crashlytics stöds inte på web; undvik att krascha vid felrapportering.
+    if (!kIsWeb) {
+      FlutterError.onError = (errorDetails) {
+        FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+      };
+      PlatformDispatcher.instance.onError = (error, stack) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+        return true;
+      };
+    }
   } catch (e) {
-    debugPrint('Firebase init error: $e');
+    developer.log('Firebase init error: $e');
   }
 
-  // Initiera Notistjänsten
-  await NotificationService.initialize();
+  if (!kIsWeb) {
+    await NotificationService.initialize();
+  }
+
+  // Lågstimuli-läge (NPF) — laddas före första frame så UI:t aldrig "blinkar".
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    AppTheme.lowStimuli = prefs.getBool('lowStimuli') ?? false;
+  } catch (e) {
+    developer.log('Kunde inte läsa lowStimuli: $e');
+  }
 
   // Aktivera offline-cache för Firestore
   FirebaseFirestore.instance.settings = const Settings(
@@ -89,6 +105,15 @@ class _MyAppState extends State<MyApp> {
     // Aktivera 120Hz efter att första framen ritats
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _enableHighRefreshRate();
+      if (!kIsWeb) {
+        SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: Color(0xFFF7F7F7),
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ));
+      }
     });
   }
 
@@ -97,7 +122,7 @@ class _MyAppState extends State<MyApp> {
       try {
         await FlutterDisplayMode.setHighRefreshRate();
       } catch (e) {
-        debugPrint('Kunde inte aktivera 120Hz: $e');
+        developer.log('Kunde inte aktivera 120Hz: $e');
       }
     }
   }
@@ -124,7 +149,7 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'La Familia',
       debugShowCheckedModeBanner: false,
-      
+
       // Språkstöd för svenska
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -143,6 +168,7 @@ class _MyAppState extends State<MyApp> {
           seedColor: AppTheme.getNpfDayColor(_weekday),
           brightness: Brightness.light,
         ),
+        textTheme: AppTheme.appTextTheme(ThemeData.light().textTheme),
       ),
       home: const SplashScreen(),
     );
@@ -215,18 +241,33 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
   late PageController _pageController;
-
-  final List<Widget> _pages = [
-    const DashboardPage(),
-    const PlannerPage(),
-    const ChoresPage(),
-    const SettingsPage(),
-  ];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _selectedIndex);
+    _pages = [
+      const DashboardPage(),
+      const KalenderPage(),
+      const SysslorPage(),
+      const SettingsPage(),
+    ];
+    // Engångsmigration: tilldela unik medlemsfärg om saknas/default-grön.
+    // Fire-and-forget; den loggar internt och blockerar aldrig UI.
+    MigrationService.backfillMemberColors();
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      SharedPreferences.getInstance().then((prefs) {
+        if (prefs.getBool('notifPermissionAsked') != true) {
+          NotificationService.requestPermissions().then((_) {
+            prefs.setBool('notifPermissionAsked', true);
+          });
+        }
+      });
+      // FCM: registrera enhetens token + visa förgrunds-pushar (Etapp 11).
+      PushService.init();
+    }
   }
 
   @override
@@ -251,61 +292,64 @@ class _MainPageState extends State<MainPage> {
     int weekday = DateTime.now().weekday;
     Color activeColor = AppTheme.getDayAccentColor(weekday);
 
-    final width = MediaQuery.of(context).size.width;
-    final isWide = width > 600;
+    final size = WindowSize.of(context);
+    final contentWidth = size.isExpanded
+        ? WindowSize.contentMaxWidth
+        : double.infinity;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       extendBody: true,
       body: Center(
-        child: Container(
-          width: isWide ? 430 : double.infinity,
-          decoration: isWide
-              ? const BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                )
-              : null,
-          child: ClipRect(
-            child: PageView(
-              controller: _pageController,
-              onPageChanged: (index) {
-                setState(() {
-                  _selectedIndex = index;
-                });
-              },
-              children: _pages,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: contentWidth),
+          child: OfflineBanner(
+            child: ClipRect(
+              child: PageView(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  setState(() {
+                    _selectedIndex = index;
+                  });
+                },
+                children: _pages,
+              ),
             ),
           ),
         ),
       ),
-      bottomNavigationBar: isWide
-          ? SafeArea(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [SizedBox(width: 430, child: _buildBottomNav(activeColor))],
-              ),
-            )
-          : _buildBottomNav(activeColor),
+      // heightFactor: 1 — annars expanderar Align/Center till full höjd och
+      // nav-pillen centreras vertikalt mitt på Fold (extendBody).
+      bottomNavigationBar: Align(
+        alignment: Alignment.bottomCenter,
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: size.isExpanded
+                ? WindowSize.navMaxWidth
+                : double.infinity,
+          ),
+          child: SafeArea(
+            top: false,
+            child: _buildBottomNav(activeColor),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildBottomNav(Color activeColor) {
+    // Solid vit med hög alpha — BackdropFilter/blur togs bort (Fas 2½).
     return Container(
       margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -314,15 +358,15 @@ class _MainPageState extends State<MainPage> {
         child: BottomNavigationBar(
           items: const <BottomNavigationBarItem>[
             BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
+              icon: Icon(Icons.home_rounded),
               label: 'Hem',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.calendar_month_rounded),
-              label: 'Planering',
+              label: 'Kalender',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.cleaning_services_rounded),
+              icon: Icon(Icons.checklist_rounded),
               label: 'Sysslor',
             ),
             BottomNavigationBarItem(
@@ -331,9 +375,9 @@ class _MainPageState extends State<MainPage> {
             ),
           ],
           currentIndex: _selectedIndex,
-          backgroundColor: Colors.white,
+          backgroundColor: Colors.white.withValues(alpha: 0.94),
           selectedItemColor: activeColor,
-          unselectedItemColor: Colors.grey.shade400,
+          unselectedItemColor: Colors.grey.shade500,
           selectedIconTheme: const IconThemeData(size: 28),
           unselectedIconTheme: const IconThemeData(size: 24),
           type: BottomNavigationBarType.fixed,

@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../app_theme.dart';
 import '../firebase_options.dart';
+import '../services/family_service.dart';
 
 class ManageMembersPage extends StatefulWidget {
   const ManageMembersPage({super.key});
@@ -17,24 +21,13 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  String _selectedColor = 'ff2196f3';
+  String _selectedColor = AppTheme.memberColorPalette.first;
   String _selectedRole = 'Barn';
   String? _editingId;
   String? _familyId;
   bool _isLoading = false;
-
-  final List<String> _colors = [
-    'ff2196f3',
-    'fff44336',
-    'ff4caf50',
-    'ffff9800',
-    'ff9c27b0',
-    'ffe91e63',
-    'ff795548',
-    'ff607d8b',
-    'ff6bae75', // NPF Grön
-    'ffedd87a', // NPF Gul
-  ];
+  String? _avatarUrl;
+  bool _uploadingAvatar = false;
 
   @override
   void initState() {
@@ -50,8 +43,20 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         setState(() {
           _familyId = doc.data()?['familyId'] as String?;
         });
+        // När vi är i create-läge: föreslå nästa lediga färg så syskon inte
+        // hamnar på samma som föräldern.
+        if (_editingId == null) {
+          await _preselectNextAvailableColor();
+        }
       }
     }
+  }
+
+  Future<void> _preselectNextAvailableColor() async {
+    final fid = _familyId;
+    if (fid == null || fid.isEmpty) return;
+    final next = await FamilyService.assignNextAvailableColor(fid);
+    if (mounted) setState(() => _selectedColor = next);
   }
 
   void _resetForm() {
@@ -59,11 +64,14 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     _emailController.clear();
     _passwordController.clear();
     setState(() {
-      _selectedColor = 'ff2196f3';
+      _selectedColor = AppTheme.memberColorPalette.first;
       _selectedRole = 'Barn';
       _editingId = null;
+      _avatarUrl = null;
     });
     FocusScope.of(context).unfocus();
+    // Föreslå nästa lediga färg igen efter sparat barn.
+    _preselectNextAvailableColor();
   }
 
   void _editMember(DocumentSnapshot doc) {
@@ -73,7 +81,8 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     
     setState(() {
       _editingId = doc.id;
-      _selectedColor = data['color'] ?? 'ff2196f3';
+      _selectedColor = data['color'] ?? AppTheme.memberColorPalette.first;
+      _avatarUrl = data['avatarUrl'] as String?;
       
       // Översätt databas-roll till rullgardin
       final r = data['role'] ?? 'child';
@@ -175,9 +184,9 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         userData['familyId'] = _familyId; // Det var denna som saknades förut!
         userData['createdAt'] = FieldValue.serverTimestamp();
         userData['energy'] = 3;
-        userData['weeklyPoints'] = 0;
-        userData['points'] = 0;
-        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin') ? 'parent' : 'child';
+        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin')
+            ? 'parent'
+            : (dbRole == 'youth' ? 'youth' : 'child');
 
         await FirebaseFirestore.instance.collection('users').doc(uid).set(userData);
         
@@ -192,11 +201,62 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
       String msg = "Ett fel uppstod.";
       if (e.code == 'email-already-in-use') msg = "Denna e-postadress används redan.";
       if (e.code == 'invalid-email') msg = "E-postadressen är felaktigt formaterad.";
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(msg), backgroundColor: Colors.red));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    final uid = _editingId;
+    if (uid == null) return;
+
+    final picker = ImagePicker();
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+    if (x == null) return;
+
+    setState(() => _uploadingAvatar = true);
+    try {
+      final bytes = await x.readAsBytes();
+      final ref = FirebaseStorage.instance.ref().child('user_avatars/$uid.jpg');
+      await ref.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+      final url = await ref.getDownloadURL();
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'avatarUrl': url,
+      });
+      if (mounted) {
+        setState(() => _avatarUrl = url);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profilbild uppdaterad')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Kunde inte ladda upp bild: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
     }
   }
 
@@ -256,16 +316,88 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                       Wrap(
                         spacing: 12,
                         runSpacing: 12,
-                        children: _colors.map((colorHex) => GestureDetector(
-                          onTap: () => setState(() => _selectedColor = colorHex),
-                          child: CircleAvatar(
-                            backgroundColor: Color(int.parse(colorHex, radix: 16)),
-                            radius: 18,
-                            child: _selectedColor == colorHex ? const Icon(Icons.check, color: Colors.white, size: 18) : null,
-                          ),
-                        )).toList(),
+                        children: AppTheme.memberColorPalette
+                            .map((colorHex) => GestureDetector(
+                                  onTap: () => setState(
+                                      () => _selectedColor = colorHex),
+                                  child: CircleAvatar(
+                                    backgroundColor:
+                                        AppTheme.colorFromHex(colorHex),
+                                    radius: 18,
+                                    child: _selectedColor.toLowerCase() ==
+                                            colorHex.toLowerCase()
+                                        ? const Icon(Icons.check,
+                                            color: Colors.white, size: 18)
+                                        : null,
+                                  ),
+                                ))
+                            .toList(),
                       ),
                       const SizedBox(height: 20),
+                      if (_editingId != null) ...[
+                        const Text(
+                          'Profilbild',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: _uploadingAvatar ? null : _pickAndUploadAvatar,
+                              child: CircleAvatar(
+                                radius: 36,
+                                backgroundColor: Color(int.parse(
+                                  _selectedColor.startsWith('0x')
+                                      ? _selectedColor
+                                      : '0xFF$_selectedColor',
+                                )),
+                                backgroundImage: _avatarUrl != null &&
+                                        _avatarUrl!.isNotEmpty
+                                    ? CachedNetworkImageProvider(_avatarUrl!)
+                                    : null,
+                                child: _uploadingAvatar
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : (_avatarUrl == null || _avatarUrl!.isEmpty)
+                                        ? const Icon(Icons.add_a_photo_rounded,
+                                            color: Colors.white, size: 28)
+                                        : null,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _uploadingAvatar
+                                        ? null
+                                        : _pickAndUploadAvatar,
+                                    icon: const Icon(Icons.photo_library_rounded),
+                                    label: const Text('Välj foto'),
+                                  ),
+                                  Text(
+                                    'Visas på hem-skärmen och i familjevyn.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ],
 
                       _input("Namn", _nameController, Icons.person),
                       const SizedBox(height: 10),
@@ -347,6 +479,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                           var name = data['name'] ?? 'Okänd';
                           var email = data['email'] ?? '';
                           var colorStr = data['color'] ?? 'ff2196f3';
+                          final avatarUrl = data['avatarUrl'] as String?;
                           Color avatarColor;
                           try {
                             avatarColor = Color(int.parse(colorStr.startsWith('0x') ? colorStr : '0xFF$colorStr'));
@@ -364,8 +497,13 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: avatarColor,
-                                child: Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?', 
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                                    ? CachedNetworkImageProvider(avatarUrl)
+                                    : null,
+                                child: avatarUrl != null && avatarUrl.isNotEmpty
+                                    ? null
+                                    : Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?',
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                               ),
                               title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Text(email, style: const TextStyle(fontSize: 12)),

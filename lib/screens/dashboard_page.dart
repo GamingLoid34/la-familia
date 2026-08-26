@@ -5,14 +5,19 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
+import '../utils/date_utils.dart';
+import '../utils/layout.dart';
+import '../utils/minute_ticker.dart';
+import '../utils/person_match.dart';
 import '../services/user_service.dart';
-import '../widgets/shimmer_list_placeholder.dart';
 import '../widgets/activity_detail_sheet.dart';
+import '../widgets/routine_card.dart';
+import '../widgets/today_chores_sheet.dart';
+import '../widgets/planner_event_leading.dart';
+import '../widgets/weather_widgets.dart';
+import 'meal_planner_page.dart';
 import 'timer_page.dart';
 import 'shopping_list_page.dart';
-import 'screen_rules_page.dart';
-import 'family_status_page.dart';
-import 'work_schedule_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -26,39 +31,17 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   bool get wantKeepAlive => true;
 
-  static DateTime? _parseDate(dynamic v) {
-    try {
-      if (v is Timestamp) return v.toDate();
-      if (v is String) {
-        final p = v.split('-');
-        if (p.length >= 3) return DateTime(int.parse(p[0]), int.parse(p[1]), int.parse(p[2]));
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  static DateTime? _parseDateTime(Map<String, dynamic> d) {
-    try {
-      final base = _parseDate(d['date']);
-      if (base == null) return null;
-      final timeStr = d['time'] as String? ?? '';
-      if (timeStr.isNotEmpty) {
-        final tp = timeStr.split(':');
-        if (tp.length >= 2) {
-          return DateTime(base.year, base.month, base.day,
-              int.parse(tp[0]), int.parse(tp[1]));
-        }
-      }
-      return base;
-    } catch (_) {}
-    return null;
+  @override
+  void initState() {
+    super.initState();
+    MinuteTicker.ensureRunning();
   }
 
   List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
     final list = rawDocs.toList();
     list.sort((a, b) {
-      final dA = _parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = _parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;
@@ -67,20 +50,23 @@ class _DashboardPageState extends State<DashboardPage>
     return list;
   }
 
-  void _showEnergyDialog(UserModel user) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _EnergySheet(user: user),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    
-    // Hämta vår samlade data via Provider!
-    final familyProvider = context.watch<FamilyProvider>();
+
+    // Selectera dataskivor — bygger bara om när dessa referenser ändras (Fas 2½).
+    context.select((FamilyProvider p) => (
+          p.isLoading,
+          p.currentUser,
+          p.todayEvents,
+          p.tomorrowEvents,
+          p.chores,
+          p.routines,
+          p.todayMeals,
+          p.familyMembers,
+          p.todayNotes,
+        ));
+    final familyProvider = context.read<FamilyProvider>();
 
     if (familyProvider.isLoading) {
       return Container(
@@ -100,49 +86,335 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  /// Kalender som importerats som ”schema” visas bara under Scheman, inte på hem.
+  bool _showEventOnHome(Map<String, dynamic> d) {
+    if (d['source'] == 'calendar') {
+      final kind = d['planningImportKind'] as String? ?? 'schedule';
+      return kind == 'activity';
+    }
+    return true;
+  }
+
+  List<QueryDocumentSnapshot> _eventsForMe(
+    List<QueryDocumentSnapshot> todayEvents,
+    UserModel? me,
+  ) {
+    if (me == null) return todayEvents;
+    return todayEvents.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (!_showEventOnHome(d)) return false;
+      if (eventHasNoPersons(d)) return true;
+      return eventIncludesPerson(d, uid: me.uid, name: me.name);
+    }).toList();
+  }
+
+  List<QueryDocumentSnapshot> _choresForMe(
+    List<QueryDocumentSnapshot> chores,
+    UserModel? me,
+  ) {
+    List<QueryDocumentSnapshot> list;
+    if (me == null) {
+      list = chores.toList();
+    } else {
+      list = chores
+          .where((doc) => assignedToPerson(
+              doc.data() as Map<String, dynamic>,
+              uid: me.uid,
+              name: me.name))
+          .toList();
+    }
+    return list
+        .where((doc) =>
+            (doc.data() as Map<String, dynamic>)['isDone'] != true)
+        .toList();
+  }
+
   Widget _buildParentView(FamilyProvider provider) {
     final user = provider.currentUser;
-    final members = provider.familyMembers;
-    final todayEvents = provider.todayEvents;
-    final chores = provider.chores;
+    final todayEvents = _eventsForMe(provider.todayEvents, user);
+    final chores = _choresForMe(provider.chores, user);
+
+    if (!WindowSize.of(context).isWide) {
+      return CustomScrollView(
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _buildHeader(user)),
+          // Rutin visas på Hem: morgonrutin före 12, kvällsrutin från 18.
+          ..._myRoutineSlivers(provider, user),
+          // Ikväll-kort: dagens middag om planerad (Etapp 12).
+          if (provider.todayMeals.isNotEmpty)
+            SliverToBoxAdapter(child: _buildTonightMeal(provider)),
+          SliverToBoxAdapter(
+            child: _buildSection(
+              'MIN DAGSLINJE',
+              _buildTimeline(todayEvents),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: _buildSection(
+              'MINA SYSSLOR',
+              _buildChoreSummary(
+                chores,
+                onlyAssignedTo: user?.name,
+                onlyAssignedToUid: user?.uid,
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
+          ),
+          if (DateTime.now().hour >= 18)
+            SliverToBoxAdapter(
+              child: _buildSection(
+                  'I MORGON', _buildTomorrowPreview(provider, user)),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+        ],
+      );
+    }
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(child: _buildHeader(user, members)),
+        SliverToBoxAdapter(child: _buildHeader(user)),
         SliverToBoxAdapter(
-          child: _buildSection(
-            'DAGSTIDSLINJE',
-            _buildTimeline(todayEvents),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: WindowSize.navScrollPadding),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Vänster: dagslinje + sysslor
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildSection(
+                          'MIN DAGSLINJE',
+                          _buildTimeline(todayEvents),
+                        ),
+                        _buildSection(
+                          'MINA SYSSLOR',
+                          _buildChoreSummary(
+                            chores,
+                            onlyAssignedTo: user?.name,
+                            onlyAssignedToUid: user?.uid,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Höger: rutin / ikväll / imorgon / snabbverktyg
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ..._routineColumnChildren(provider, user),
+                        if (provider.todayMeals.isNotEmpty)
+                          _buildTonightMeal(provider),
+                        if (DateTime.now().hour >= 18)
+                          _buildSection(
+                            'I MORGON',
+                            _buildTomorrowPreview(provider, user),
+                          ),
+                        _buildSection('SNABBVERKTYG', _buildQuickTools()),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
-        SliverToBoxAdapter(
-          child: _buildSection('HÄRNÄST', _buildNextCard(todayEvents)),
-        ),
-        SliverToBoxAdapter(
-          child: _buildSection(
-              'FAMILJENS ENERGI', _buildEnergySection(members)),
-        ),
-        SliverToBoxAdapter(
-          child: _buildSection('SYSSLOR IDAG', _buildChoreSummary(chores)),
-        ),
-        SliverToBoxAdapter(
-          child: _buildSection('SNABBVERKTYG', _buildQuickTools()),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 100)),
       ],
+    );
+  }
+
+  List<Widget> _routineColumnChildren(
+      FamilyProvider provider, UserModel? user) {
+    if (user == null) return const [];
+    final hour = DateTime.now().hour;
+    final String? wantedType =
+        hour < 12 ? 'morning' : (hour >= 18 ? 'evening' : null);
+    if (wantedType == null) return const [];
+    final docs = provider.routines.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      return d['ownerUid'] == user.uid &&
+          (d['type'] as String? ?? 'morning') == wantedType;
+    }).toList();
+    if (docs.isEmpty) return const [];
+    return [
+      _buildSection(
+        wantedType == 'morning' ? 'MIN MORGON' : 'MIN KVÄLL',
+        Column(
+          children: [
+            for (final doc in docs)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: RoutineCard(routineDoc: doc),
+              ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildTonightMeal(FamilyProvider provider) {
+    final d = provider.todayMeals.first.data() as Map<String, dynamic>;
+    final title = d['title'] as String? ?? '';
+    if (title.isEmpty) return const SizedBox.shrink();
+    final emoji = d['emoji'] as String? ?? '🍽️';
+    final palette = AppTheme.dayPalette();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const MealPlannerPage())),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: AppTheme.cardDecoration(radius: 16),
+            child: Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 22)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Ikväll: $title',
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    color: palette.deep, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Min rutin för rätt tid på dygnet: morgon före 12, kväll från 18.
+  List<Widget> _myRoutineSlivers(FamilyProvider provider, UserModel? user) {
+    if (user == null) return const [];
+    final hour = DateTime.now().hour;
+    final String? wantedType =
+        hour < 12 ? 'morning' : (hour >= 18 ? 'evening' : null);
+    if (wantedType == null) return const [];
+
+    final docs = provider.routines.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      return d['ownerUid'] == user.uid &&
+          (d['type'] as String? ?? 'morning') == wantedType;
+    }).toList();
+    if (docs.isEmpty) return const [];
+
+    return [
+      SliverToBoxAdapter(
+        child: _buildSection(
+          wantedType == 'morning' ? 'MIN MORGON' : 'MIN KVÄLL',
+          Column(
+            children: [
+              for (final doc in docs)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: RoutineCard(routineDoc: doc),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// Kvällens förhandsvisning av morgondagen — förutsägbarhet minskar ångest.
+  Widget _buildTomorrowPreview(FamilyProvider provider, UserModel? user) {
+    final events = _getSortedDocs(
+      _eventsForMe(provider.tomorrowEvents, user),
+    );
+    final dayColor = AppTheme.getDayAccentColor();
+
+    if (events.isEmpty) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(
+          children: [
+            const Text('😌', style: TextStyle(fontSize: 20)),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                'Inget planerat i morgon — sov gott!',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
+      decoration: AppTheme.cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: events.map((doc) {
+          final d = doc.data() as Map<String, dynamic>;
+          final t = (d['time'] as String? ?? '').trim();
+          final title = d['title'] as String? ?? '';
+          final pik = d['piktogram'] as String? ?? '📅';
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Text(pik, style: const TextStyle(fontSize: 18)),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 48,
+                  child: Text(
+                    t.isEmpty ? '–' : t,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: dayColor,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
   Widget _buildFocusView(FamilyProvider provider) {
     final user = provider.currentUser;
     final name = user?.name.split(' ').first ?? '';
-    final docs = _getSortedDocs(provider.todayEvents);
+    final docs = _getSortedDocs(
+      _eventsForMe(provider.todayEvents, user),
+    );
         
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(child: _buildHeader(user, provider.familyMembers)),
+        SliverToBoxAdapter(child: _buildHeader(user)),
         if (docs.isNotEmpty) ...[
           SliverToBoxAdapter(child: _buildFocusMainCard(docs.first)),
           if (docs.length > 1)
@@ -189,13 +461,22 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  /// "om 45 min" istället för bara klockslag — NPF: hur länge till, inte när.
+  String _untilLabel(Duration left) {
+    if (left.inMinutes < 1) return 'nu!';
+    if (left.inMinutes < 60) return 'om ${left.inMinutes} min';
+    final h = left.inHours;
+    final m = left.inMinutes % 60;
+    return m == 0 ? 'om $h h' : 'om $h h $m min';
+  }
+
   Widget _buildFocusMainCard(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDateTime(data);
+    final date = parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
     final dayColor = AppTheme.getDayAccentColor();
+    final palette = AppTheme.dayPalette();
 
     return Container(
       margin: const EdgeInsets.all(16),
@@ -203,19 +484,78 @@ class _DashboardPageState extends State<DashboardPage>
       decoration: AppTheme.cardDecoration(),
       child: Column(
         children: [
-          Text(piktogram, style: const TextStyle(fontSize: 64)),
+          PlannerEventLeadingHero(data: data, accentColor: dayColor),
           const SizedBox(height: 12),
           Text(title,
               style: const TextStyle(
                   fontSize: 24, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center),
           const SizedBox(height: 6),
-          Text(timeStr,
-              style: TextStyle(
-                  fontSize: 18,
-                  color: dayColor,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 16),
+          ValueListenableBuilder<DateTime>(
+            valueListenable: MinuteTicker.now,
+            builder: (context, now, _) {
+              final left = date?.difference(now);
+              final started = left != null && left.isNegative;
+              final showBar =
+                  left != null && !started && left.inMinutes <= 60;
+              return Column(
+                children: [
+                  Text(
+                    started
+                        ? 'Pågår nu · började $timeStr'
+                        : (left != null
+                            ? '$timeStr · ${_untilLabel(left)}'
+                            : timeStr),
+                    style: TextStyle(
+                        fontSize: 18,
+                        color: dayColor,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  if (showBar) ...[
+                    const SizedBox(height: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: (left.inSeconds / 3600).clamp(0.0, 1.0),
+                        minHeight: 10,
+                        backgroundColor:
+                            palette.base.withValues(alpha: 0.15),
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(dayColor),
+                      ),
+                    ),
+                  ],
+                  if (left != null &&
+                      !started &&
+                      left.inMinutes >= 1) ...[
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      icon: Icon(Icons.timer_rounded,
+                          size: 18, color: palette.deep),
+                      label: Text('Starta nedräkning',
+                          style: TextStyle(color: palette.deep)),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                            color: dayColor.withValues(alpha: 0.4)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => TimerPage(
+                            initialSeconds: left.inSeconds,
+                            label: 'Tills $title börjar',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
           Text('Du klarar det! 💪',
               style: TextStyle(
                   fontSize: 15, color: Colors.grey.shade500)),
@@ -226,10 +566,10 @@ class _DashboardPageState extends State<DashboardPage>
 
   Widget _buildFocusSmallCard(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
-    final piktogram = data['piktogram'] as String? ?? '📅';
     final title = data['title'] as String? ?? '';
-    final date = _parseDateTime(data);
+    final date = parseDateTime(data);
     final timeStr = date != null ? DateFormat('HH:mm').format(date) : '';
+    final dayColor = AppTheme.getDayAccentColor();
     return Container(
       width: 130,
       margin: const EdgeInsets.only(right: 10),
@@ -238,7 +578,11 @@ class _DashboardPageState extends State<DashboardPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(piktogram, style: const TextStyle(fontSize: 28)),
+          PlannerEventLeading(
+            data: data,
+            accentColor: dayColor,
+            emojiSize: 28,
+          ),
           const SizedBox(height: 4),
           Text(title,
               style: const TextStyle(
@@ -254,8 +598,7 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildHeader(UserModel? user, List<UserModel> members) {
-    final dayColor = AppTheme.getDayAccentColor();
+  Widget _buildHeader(UserModel? user) {
     final now = DateTime.now();
     final weekday = now.weekday;
     final textColor = AppTheme.getNpfTextColor(weekday);
@@ -263,52 +606,81 @@ class _DashboardPageState extends State<DashboardPage>
     final dateStr = DateFormat('d MMMM', 'sv').format(now);
     final firstName = user?.name.split(' ').first ?? '';
 
-    return Container(
-      decoration: BoxDecoration(
-        color: dayColor,
-        borderRadius:
-            const BorderRadius.vertical(bottom: Radius.circular(28)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(dayName,
-                    style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: textColor)),
-              ),
-              GestureDetector(
-                onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => const FamilyStatusPage())),
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+      child: Container(
+        decoration: AppTheme.headerDecoration(weekday),
+        child: Stack(
+          children: [
+            // Mjuka ljuscirklar — ger djup utan att störa läsbarheten.
+            // Utelämnas i lågstimuli-läge.
+            if (!AppTheme.lowStimuli) ...[
+              Positioned(
+                top: -36,
+                right: -28,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
+                  width: 140,
+                  height: 140,
                   decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.people_rounded,
-                          color: textColor, size: 16),
-                      const SizedBox(width: 4),
-                      Text('Familjestatus',
-                          style: TextStyle(
-                              color: textColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ],
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.10),
                   ),
                 ),
               ),
+              Positioned(
+                bottom: -50,
+                right: 60,
+                child: Container(
+                  width: 110,
+                  height: 110,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.07),
+                  ),
+                ),
+              ),
+            ],
+            Padding(
+              padding: AppTheme.paddingBelowStatusBar(context),
+              child: _buildHeaderContent(user, textColor, dayName, dateStr,
+                  firstName),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeaderContent(UserModel? user, Color textColor, String dayName,
+      String dateStr, String firstName) {
+    final provider = context.watch<FamilyProvider>();
+    final hasWeather = provider.hasHomeLocation;
+
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  dayName,
+                  style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: textColor),
+                ),
+              ),
+              if (hasWeather) ...[
+                WeatherHeaderBadge(
+                  lat: provider.homeLat!,
+                  lon: provider.homeLon!,
+                  textColor: textColor,
+                ),
+                const SizedBox(width: 8),
+              ],
+              if (user != null)
+                _DashboardViewModeToggle(user: user, textColor: textColor),
             ],
           ),
           const SizedBox(height: 2),
@@ -318,113 +690,10 @@ class _DashboardPageState extends State<DashboardPage>
                   color: textColor.withValues(alpha: 0.85))),
           const SizedBox(height: 4),
           if (firstName.isNotEmpty)
-            Text('God morgon, $firstName! ☀️',
+            Text('God morgon, $firstName!',
                 style: TextStyle(fontSize: 15, color: textColor)),
-          const SizedBox(height: 16),
-          if (members.isNotEmpty)
-            SizedBox(
-              height: 86,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: members.length,
-                itemBuilder: (_, i) =>
-                    _buildAvatarWidget(members[i], textColor, user),
-              ),
-            ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAvatarWidget(
-      UserModel member, Color textColor, UserModel? currentUser) {
-    final isMe = member.uid == currentUser?.uid;
-    Color avatarColor;
-    try {
-      avatarColor = Color(member.colorValue as int);
-    } catch (_) {
-      avatarColor = AppTheme.getDayAccentColor();
-    }
-    final energyColor = _energyColor(member.energy);
-    final initial =
-        member.name.isNotEmpty ? member.name[0].toUpperCase() : '?';
-
-    return GestureDetector(
-      onTap: () {
-        if (isMe) {
-          _showEnergyDialog(member);
-        }
-      },
-      child: Padding(
-        padding: const EdgeInsets.only(right: 16),
-        child: Column(
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: avatarColor,
-                  child: Text(initial,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18)),
-                ),
-                Positioned(
-                  right: -2,
-                  bottom: -2,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: energyColor,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-                if (isMe)
-                  Positioned(
-                    top: -4,
-                    right: -4,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.grey.shade200)),
-                      child: Icon(Icons.edit,
-                          size: 10,
-                          color: AppTheme.getTextColor()),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(member.name.split(' ').first,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: textColor.withValues(alpha: 0.9), 
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Color _energyColor(int energy) {
-    switch (energy) {
-      case 4:
-        return const Color(0xFF6BAE75);
-      case 3:
-        return const Color(0xFFEDD87A);
-      case 2:
-        return const Color(0xFFE8A5B0);
-      default:
-        return const Color(0xFFD95F4B);
-    }
+      );
   }
 
   Widget _buildTimeline(List<QueryDocumentSnapshot> rawDocs) {
@@ -442,7 +711,7 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(width: 10),
             Flexible(
               child: Text(
-                'Inga aktiviteter idag — lägg till i Planering!',
+                'Inga aktiviteter för dig idag — lägg till under Planering.',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
               ),
             ),
@@ -450,276 +719,112 @@ class _DashboardPageState extends State<DashboardPage>
         ),
       );
     }
-    final now = DateTime.now();
     return SizedBox(
       height: 125,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        itemCount: docs.length,
-        itemBuilder: (_, i) {
-          final d = docs[i].data() as Map<String, dynamic>;
-          final date = _parseDateTime(d);
-          final title = d['title'] as String? ?? '';
-          final piktogram = d['piktogram'] as String? ?? '📅';
-          final dayColor = AppTheme.getDayAccentColor();
-          final isCurrent = date != null &&
-              date.isBefore(now) &&
-              date.add(const Duration(hours: 1)).isAfter(now);
-          return GestureDetector(
-            onTap: () => _openDetail(docs[i]),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.only(right: 10, bottom: 8, top: 4),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 10),
-              transformAlignment: Alignment.center,
-              transform: isCurrent
-                  ? (Matrix4.identity()..scale(1.05))
-                  : Matrix4.identity(),
-              decoration: BoxDecoration(
-                color: isCurrent
-                    ? dayColor
-                    : dayColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(16),
-                border: isCurrent 
-                    ? null 
-                    : Border.all(color: dayColor.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(piktogram,
-                      style: const TextStyle(fontSize: 18)),
-                  const SizedBox(height: 2),
-                  Text(
-                    date != null
-                        ? DateFormat('HH:mm').format(date)
-                        : '',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: isCurrent
-                          ? Colors.white
-                          : Colors.grey.shade700,
-                    ),
+      child: ValueListenableBuilder<DateTime>(
+        valueListenable: MinuteTicker.now,
+        builder: (context, now, _) {
+          return ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            itemCount: docs.length,
+            itemBuilder: (_, i) {
+              final d = docs[i].data() as Map<String, dynamic>;
+              final date = parseDateTime(d);
+              final title = d['title'] as String? ?? '';
+              final dayColor = AppTheme.getDayAccentColor();
+              final isCurrent = date != null &&
+                  date.isBefore(now) &&
+                  date.add(const Duration(hours: 1)).isAfter(now);
+              return GestureDetector(
+                onTap: () => _openDetail(docs[i]),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin:
+                      const EdgeInsets.only(right: 10, bottom: 8, top: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  transformAlignment: Alignment.center,
+                  transform: isCurrent
+                      ? Matrix4.diagonal3Values(1.05, 1.05, 1.05)
+                      : Matrix4.identity(),
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? dayColor
+                        : dayColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: isCurrent
+                        ? null
+                        : Border.all(color: dayColor.withValues(alpha: 0.3)),
                   ),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: isCurrent
-                          ? Colors.white
-                          : AppTheme.getTextColor(),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  if (isCurrent)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.25),
-                        borderRadius: BorderRadius.circular(8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PlannerEventLeading(
+                        data: d,
+                        accentColor: dayColor,
+                        emojiSize: 18,
+                        leadingStyle: isCurrent
+                            ? PlannerEventLeadingStyle.onColoredSurface
+                            : PlannerEventLeadingStyle.normal,
                       ),
-                      child: const Text('NU',
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildNextCard(List<QueryDocumentSnapshot> rawDocs) {
-    final docs = _getSortedDocs(rawDocs);
-        
-    if (docs.isEmpty) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-        decoration: AppTheme.cardDecoration(),
-        child: Column(
-          children: [
-            const Text('✨', style: TextStyle(fontSize: 36)),
-            const SizedBox(height: 10),
-            Text('Inget planerat härnäst',
-                style: AppTheme.sectionTitleStyle,
-                textAlign: TextAlign.center),
-            const SizedBox(height: 6),
-            Text(
-              'Tryck på Planering för att lägga till',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-
-    final now = DateTime.now();
-    QueryDocumentSnapshot? targetDoc;
-    for (var d in docs) {
-      final dt = _parseDateTime(d.data() as Map<String, dynamic>);
-      if (dt != null && dt.add(const Duration(hours: 1)).isAfter(now)) {
-        targetDoc = d;
-        break;
-      }
-    }
-    final doc = targetDoc ?? docs.last;
-
-    final d = doc.data() as Map<String, dynamic>;
-    final title = d['title'] as String? ?? '';
-    final piktogram = d['piktogram'] as String? ?? '📅';
-    final date = _parseDateTime(d);
-    final checklist =
-        (d['checklist'] as List? ?? []).cast<Map<String, dynamic>>();
-    final dayColor = AppTheme.getDayAccentColor();
-    final diffMin = date != null
-        ? date.difference(now).inMinutes
-        : 0;
-    final timeLabel = diffMin <= 0
-        ? 'NU PÅGÅR'
-        : diffMin < 60
-            ? 'OM ${diffMin} MIN'
-            : 'OM ${(diffMin / 60).round()} H';
-    final timeStr =
-        date != null ? DateFormat('HH:mm').format(date) : '';
-
-    return GestureDetector(
-      onTap: () => _openDetail(doc),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: AppTheme.cardDecoration().copyWith(
-          border: Border(
-            left: BorderSide(color: dayColor, width: 6),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: dayColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(timeLabel,
-                    style: TextStyle(
-                        color: dayColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text(piktogram,
-                      style: const TextStyle(fontSize: 40)),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title,
-                            style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                        Text(timeStr,
-                            style: TextStyle(
-                                fontSize: 14,
-                                color: dayColor,
-                                fontWeight: FontWeight.w600)),
-                      ],
-                    ),
+                      const SizedBox(height: 2),
+                      Text(
+                        date != null
+                            ? DateFormat('HH:mm').format(date)
+                            : '',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: isCurrent
+                              ? Colors.white
+                              : Colors.grey.shade700,
+                        ),
+                      ),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: isCurrent
+                              ? Colors.white
+                              : AppTheme.getTextColor(),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (isCurrent)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text('NU',
+                              style: TextStyle(
+                                  fontSize: 9,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                    ],
                   ),
-                ],
-              ),
-              if (checklist.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                ...checklist.map((item) => _ChecklistTile(
-                      item: item,
-                      docId: doc.id,
-                      dayColor: dayColor,
-                    )),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEnergySection(List<UserModel> members) {
-    if (members.isEmpty) {
-      return Container(
-        height: 110,
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        child: const ShimmerListPlaceholder(),
-      );
-    }
-    return SizedBox(
-      height: 110,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: members.length,
-        itemBuilder: (_, i) {
-          final m = members[i];
-          Color avatarColor;
-          try {
-            avatarColor = Color(m.colorValue as int);
-          } catch (_) {
-            avatarColor = AppTheme.getDayAccentColor();
-          }
-          final energyText = ['', '😔 Låg', '😌 OK', '😊 Bra', '🚀 Topp'][
-              m.energy.clamp(1, 4)];
-          return Container(
-            width: 85,
-            margin: const EdgeInsets.only(right: 10),
-            padding: const EdgeInsets.all(10),
-            decoration: AppTheme.cardDecoration(radius: 16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: avatarColor,
-                  child: Text(
-                      m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold)),
                 ),
-                const SizedBox(height: 4),
-                Text(m.name.split(' ').first,
-                    style: const TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis),
-                Text(energyText,
-                    style: const TextStyle(fontSize: 10),
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
+              );
+            },
           );
         },
       ),
     );
   }
 
-  Widget _buildChoreSummary(List<QueryDocumentSnapshot> chores) {
+  Widget _buildChoreSummary(
+    List<QueryDocumentSnapshot> chores, {
+    String? onlyAssignedTo,
+    String? onlyAssignedToUid,
+  }) {
     final total = chores.length;
     final done = chores.where((d) {
       final data = d.data() as Map<String, dynamic>;
@@ -728,8 +833,36 @@ class _DashboardPageState extends State<DashboardPage>
     final dayColor = AppTheme.getDayAccentColor();
     final progress = total > 0 ? done / total : 0.0;
 
+    if (total == 0 && onlyAssignedTo != null) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: AppTheme.cardDecoration(),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_outline_rounded,
+                color: dayColor, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Inga väntande sysslor just nu.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return GestureDetector(
-      onTap: () {},
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => TodayChoresSheet(
+            onlyAssignedTo: onlyAssignedTo,
+            onlyAssignedToUid: onlyAssignedToUid),
+      ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16),
         padding: const EdgeInsets.all(20),
@@ -766,11 +899,18 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Widget _buildQuickTools() {
-    final tools = [
-      {'emoji': '⏱️', 'label': 'Timer', 'page': const TimerPage()},
-      {'emoji': '📱', 'label': 'Skärmtid', 'page': const ScreenRulesPage()},
-      {'emoji': '🛒', 'label': 'Inköp', 'page': const ShoppingListPage()},
-      {'emoji': '💼', 'label': 'Arbete', 'page': const WorkSchedulePage()},
+    final palette = AppTheme.dayPalette();
+    final tools = <Map<String, dynamic>>[
+      {
+        'icon': Icons.timer_rounded,
+        'label': 'Timer',
+        'page': const TimerPage(),
+      },
+      {
+        'icon': Icons.shopping_cart_rounded,
+        'label': 'Inköp',
+        'page': const ShoppingListPage(),
+      },
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -784,18 +924,28 @@ class _DashboardPageState extends State<DashboardPage>
                             builder: (_) => t['page'] as Widget)),
                     child: Container(
                       margin: const EdgeInsets.only(right: 6),
-                      height: 80,
-                      decoration: AppTheme.cardDecoration(radius: 16),
+                      height: 88,
+                      decoration: AppTheme.cardDecoration(radius: 18),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(t['emoji'] as String,
-                              style: const TextStyle(fontSize: 26)),
-                          const SizedBox(height: 4),
+                          // Färgad mjuk bricka bakom ikonen — dagens kulör.
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: palette.base.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: Icon(t['icon'] as IconData,
+                                size: 24, color: palette.deep),
+                          ),
+                          const SizedBox(height: 6),
                           Text(t['label'] as String,
-                              style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.getTextColor()),
                               overflow: TextOverflow.ellipsis),
                         ],
                       ),
@@ -842,197 +992,59 @@ class _DashboardPageState extends State<DashboardPage>
   }
 }
 
-class _EnergySheet extends StatelessWidget {
+/// Snabbväxling hem-skärmen: samma alternativ som under Inställningar.
+class _DashboardViewModeToggle extends StatelessWidget {
   final UserModel user;
-  const _EnergySheet({required this.user});
+  final Color textColor;
 
-  @override
-  Widget build(BuildContext context) {
-    final levels = [
-      {'energy': 1, 'emoji': '😔', 'label': 'Låg energi'},
-      {'energy': 2, 'emoji': '😌', 'label': 'Lite trött'},
-      {'energy': 3, 'emoji': '😊', 'label': 'Bra energi'},
-      {'energy': 4, 'emoji': '🚀', 'label': 'Full energi!'},
-    ];
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40, height: 4,
-            decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(height: 16),
-          Text('Hur mår du idag?',
-              style: AppTheme.sectionTitleStyle),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: levels.map((l) {
-              final selected = user.energy == l['energy'];
-              return GestureDetector(
-                onTap: () {
-                  UserService.updateEnergy(
-                      user.uid, l['energy'] as int);
-                  Navigator.pop(context);
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? AppTheme.getDayAccentColor()
-                            .withValues(alpha: 0.15)
-                        : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(16),
-                    border: selected
-                        ? Border.all(
-                            color: AppTheme.getDayAccentColor(),
-                            width: 2)
-                        : null,
-                  ),
-                  child: Column(
-                    children: [
-                      Text(l['emoji'] as String,
-                          style: const TextStyle(fontSize: 32)),
-                      const SizedBox(height: 4),
-                      Text(l['label'] as String,
-                          style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-}
-
-class _ChecklistTile extends StatefulWidget {
-  final Map<String, dynamic> item;
-  final String docId;
-  final Color dayColor;
-
-  const _ChecklistTile({
-    required this.item,
-    required this.docId,
-    required this.dayColor,
+  const _DashboardViewModeToggle({
+    required this.user,
+    required this.textColor,
   });
 
   @override
-  State<_ChecklistTile> createState() => _ChecklistTileState();
-}
-
-class _ChecklistTileState extends State<_ChecklistTile>
-    with SingleTickerProviderStateMixin {
-  late bool _isDone;
-  late AnimationController _anim;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _isDone = widget.item['isDone'] == true;
-    _anim = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 200));
-    _scale = Tween<double>(begin: 1.0, end: 1.2)
-        .chain(CurveTween(curve: Curves.elasticOut))
-        .animate(_anim);
-  }
-
-  @override
-  void dispose() {
-    _anim.dispose();
-    super.dispose();
-  }
-
-  void _toggle() {
-    setState(() => _isDone = !_isDone);
-    _anim.forward().then((_) => _anim.reverse());
-    FirebaseFirestore.instance
-        .collection('planner_events')
-        .doc(widget.docId)
-        .get()
-        .then((doc) {
-      if (!doc.exists) return;
-      final list = List<Map<String, dynamic>>.from(
-          (doc.data()!['checklist'] as List? ?? []));
-      final idx = list.indexWhere(
-          (e) => e['item'] == widget.item['item']);
-      if (idx != -1) {
-        list[idx] = {...list[idx], 'isDone': _isDone};
-        doc.reference.update({'checklist': list});
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _toggle,
-      child: Container(
-        height: 56,
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: _isDone
-              ? widget.dayColor.withValues(alpha: 0.08)
-              : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            ScaleTransition(
-              scale: _scale,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color:
-                      _isDone ? widget.dayColor : Colors.transparent,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                      color: _isDone
-                          ? widget.dayColor
-                          : Colors.grey.shade400,
-                      width: 2),
-                ),
-                child: _isDone
-                    ? const Icon(Icons.check,
-                        color: Colors.white, size: 16)
-                    : null,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                widget.item['item'] as String? ?? '',
-                style: TextStyle(
-                    fontSize: 15,
-                    decoration: _isDone
-                        ? TextDecoration.lineThrough
-                        : null,
-                    color: _isDone
-                        ? Colors.grey.shade400
-                        : AppTheme.getTextColor()),
-              ),
-            ),
-          ],
-        ),
+    final modes = <String>[];
+    final labels = <String>[];
+    if (user.isParent) {
+      modes.addAll(['parent', 'focus']);
+    } else if (user.role == 'youth') {
+      modes.addAll(['youth', 'focus']);
+    } else {
+      modes.addAll(['child', 'focus']);
+    }
+    labels.addAll(['Allt', 'Fokus']);
+    final selectedIndex = modes.contains(user.viewMode)
+        ? modes.indexOf(user.viewMode)
+        : 0;
+
+    return ToggleButtons(
+      direction: Axis.horizontal,
+      borderRadius: BorderRadius.circular(12),
+      selectedColor: textColor,
+      fillColor: textColor.withValues(alpha: 0.22),
+      color: textColor.withValues(alpha: 0.65),
+      selectedBorderColor: Colors.transparent,
+      borderColor: textColor.withValues(alpha: 0.35),
+      constraints: const BoxConstraints(
+        minHeight: 34,
+        minWidth: 0,
       ),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      isSelected: List.generate(modes.length, (i) => i == selectedIndex),
+      onPressed: (index) async {
+        await UserService.updateViewMode(user.uid, modes[index]);
+      },
+      children: [
+        for (final l in labels)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              l,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+            ),
+          ),
+      ],
     );
   }
 }

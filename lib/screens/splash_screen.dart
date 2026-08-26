@@ -38,7 +38,7 @@ class _SplashScreenState extends State<SplashScreen>
         Navigator.pushReplacement(
           context,
           PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const AuthWrapper(),
+            pageBuilder: (_, _, _) => const AuthWrapper(),
             transitionDuration: Duration.zero,
           ),
         );

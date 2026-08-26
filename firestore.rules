@@ -1,92 +1,225 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Hjälpfunktion för att hämta inloggad användares familyId
-    function getUserFamilyId() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.familyId;
-    }
 
-    // Hjälpfunktion för inloggningskrav
     function isAuth() {
       return request.auth != null;
     }
 
+    function myDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myFamilyId() {
+      return myDoc().familyId;
+    }
+
+    function iAmParent() {
+      return myDoc().role == 'parent' || myDoc().role == 'admin';
+    }
+
+    // Onboarding: egen doc får få familyId/role första gången (tomt familyId).
+    function selfJoiningFamily(userId) {
+      return request.auth.uid == userId
+        && (!('familyId' in resource.data)
+            || resource.data.familyId == null
+            || resource.data.familyId == '');
+    }
+
     // 1. ANVÄNDARE (users)
     match /users/{userId} {
-      // Man får läsa och skriva sin egen profil (även om man saknar familyId än)
-      allow read, write: if isAuth() && request.auth.uid == userId;
-      
-      // Man får läsa andra användare i SAMMA familj
-      allow read: if isAuth() 
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && resource.data.familyId == getUserFamilyId();
+      allow read: if isAuth() && (request.auth.uid == userId
+          || resource.data.familyId == myFamilyId());
+      // Egen doc skapas vid onboarding (skapa familj) och av SecondaryApp-flödet.
+      allow create: if isAuth() && request.auth.uid == userId;
+      allow update: if isAuth() && (
+        // Jag själv: allt UTOM role och familyId — undantag: första familjekopplingen.
+        (request.auth.uid == userId
+          && (!request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['role', 'familyId'].toSet())
+              || selfJoiningFamily(userId)))
+        ||
+        // Förälder: får ändra familjemedlemmar (namn, färg, roll, viewMode...) — aldrig familyId.
+        (iAmParent() && resource.data.familyId == myFamilyId()
+          && !request.resource.data.diff(resource.data).affectedKeys()
+               .hasAny(['familyId'].toSet()))
+      );
+      allow delete: if isAuth() && iAmParent() && resource.data.familyId == myFamilyId();
     }
 
     // 2. FAMILJER (families)
     match /families/{familyId} {
-      // Tillåt alla inloggade att läsa (behövs för att söka på inbjudningskod)
-      allow read: if isAuth();
-      // Alla inloggade får skapa en ny familj
+      // Endast medlemmar läser. Kodsökning vid join går via callable (admin-SDK).
+      allow read: if isAuth() && familyId == myFamilyId();
       allow create: if isAuth();
-      // Bara medlemmar i familjen får uppdatera familjedokumentet
-      allow update: if isAuth() && familyId == getUserFamilyId();
+      allow update: if isAuth() && familyId == myFamilyId() && iAmParent();
     }
 
-    // 3. KÄRNDATA (Låst till familjens ID)
-    // Här kräver vi nu att man FAKTISKT har ett familyId för att få prata med dessa samlingar
-    
-    match /chores/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
-    }
-    
+    // 3. KÄRNDATA
+
     match /planner_events/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+        iAmParent()
+        || resource.data.createdByUid == request.auth.uid
+        // Vem som helst i familjen får reagera och bocka packlista.
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['reactions', 'checklist'].toSet())
+      );
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
     }
 
-    match /shopping_items/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
-    }
-    
-    match /calendar_imports/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
-    }
-    
-    match /chore_templates/{docId} {
-      allow read: if isAuth() && (resource.data.familyId == getUserFamilyId() || resource.data.familyId == "");
-      allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
-    }
-
-    match /activity_templates/{docId} {
-      allow read: if isAuth() && (resource.data.familyId == getUserFamilyId() || resource.data.familyId == "");
-      allow update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    match /chores/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+        iAmParent()
+        || resource.data.createdByUid == request.auth.uid
+        // Delsteg/återkommande datum (isDone går via completeChore-callable):
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['doneSteps', 'doneDates'].toSet())
+      );
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
     }
 
-    match /screen_rules/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+    // Rättviselogg — endast server (admin-SDK) skriver.
+    match /chore_log/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow write: if false;
     }
 
     match /work_shifts/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
+      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    match /routines/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      // Alla får bocka av steg; bara föräldrar redigerar rutinen själv.
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+        iAmParent()
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['doneDate', 'doneSteps'].toSet())
+      );
+      allow create: if isAuth()
+          && request.resource.data.familyId == myFamilyId() && iAmParent();
+      allow delete: if isAuth()
+          && resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    match /family_notes/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth()
+        && request.resource.data.familyId == myFamilyId()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.text.size() <= 140;
+      allow delete: if isAuth()
+        && resource.data.familyId == myFamilyId()
+        && resource.data.fromUid == request.auth.uid;
+      // Notiser är inte editerbara — radera och skapa ny.
+      allow update: if false;
+    }
+
+    match /shopping_items/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /calendar_imports/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    match /chore_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
+      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /activity_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
+      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /busy_sessions/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth()
+        && request.resource.data.familyId == myFamilyId()
+        && request.resource.data.userUid == request.auth.uid;
+      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+    }
+
+    // Matplanering (ROADMAP Etapp 12): en middag per dag och familj.
+    match /meals/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // Familjens rättbibliotek (AI-veckomeny).
+    match /dishes/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && (iAmParent() || request.resource.data.createdByUid == request.auth.uid);
+      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
     }
 
     match /countdowns/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == getUserFamilyId();
-      allow create: if isAuth() && request.resource.data.familyId == getUserFamilyId();
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
-    // Subcollection för points_history under users
-    match /users/{userId}/points_history/{docId} {
-      allow read: if isAuth() && (request.auth.uid == userId || get(/databases/$(database)/documents/users/$(userId)).data.familyId == getUserFamilyId());
-      allow write: if isAuth() && request.auth.uid == userId;
+    // ─── MyMirai (delar Firebase-projekt med La Familia) ─────────────────
+    // OBS: DENNA FIL är enda källan för Firestore-regler i projektet
+    // la-familia-5d9f5. Deploya ALDRIG regler från MyMirais repo — det
+    // skriver över allt nedan och öppnar La Familias data.
+    match /documents/{docId} {
+      allow read, delete: if isAuth()
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuth()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuth()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      // Subcollections ärver INTE förälderns regler — chat_turns ägs av
+      // dokumentägaren (verifieras via get() på förälderdokumentet).
+      match /chat_turns/{turnId} {
+        allow read, write: if isAuth()
+          && get(/databases/$(database)/documents/documents/$(docId)).data.ownerUid == request.auth.uid;
+      }
+    }
+
+    // MyMirai: familjeägda collections (familyId på varje dokument).
+    match /homework/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /decks/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /flashcards/{docId} {
+      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // MyMirai: personlig statistik — dokument-ID är användarens uid.
+    match /user_stats/{uid} {
+      allow read, write: if isAuth() && request.auth.uid == uid;
+
+      match /daily/{dateId} {
+        allow read, write: if isAuth() && request.auth.uid == uid;
+      }
     }
 
     // Stäng ute allt annat

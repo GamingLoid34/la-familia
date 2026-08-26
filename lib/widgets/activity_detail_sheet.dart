@@ -2,7 +2,11 @@ import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../utils/layout.dart';
 import '../app_theme.dart';
+import 'event_reactions_row.dart';
+import 'planner_event_leading.dart';
 
 DateTime? _parseDate(dynamic v) {
   try {
@@ -15,6 +19,28 @@ DateTime? _parseDate(dynamic v) {
     developer.log('Fel vid tolkning av datum i ActivityDetailSheet', error: e, stackTrace: stack);
   }
   return null;
+}
+
+String _prettyIcsExtendedKey(String k) {
+  var s = k.trim();
+  if (s.toUpperCase().startsWith('X-')) {
+    s = s.substring(2);
+  }
+  return s.replaceAll('_', ' ').replaceAll('-', ' ').trim();
+}
+
+Map<String, String> _extendedPropsMap(Map<String, dynamic> data) {
+  final raw = data['calendarExtendedProps'];
+  if (raw is! Map) return {};
+  final out = <String, String>{};
+  for (final e in raw.entries) {
+    final v = e.value;
+    if (v == null) continue;
+    final s = v.toString().trim();
+    if (s.isEmpty) continue;
+    out[e.key.toString()] = s;
+  }
+  return out;
 }
 
 class ActivityDetailSheet extends StatefulWidget {
@@ -40,6 +66,16 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
 
   bool get _allDone => _checklist.isNotEmpty && _checklist.every((i) => i['isDone'] == true);
 
+  Future<void> _openExternalUrl(String raw) async {
+    var u = Uri.tryParse(raw.trim());
+    if (u == null || !u.hasScheme) {
+      u = Uri.tryParse('https://${raw.trim()}');
+    }
+    if (u != null && await canLaunchUrl(u)) {
+      await launchUrl(u, mode: LaunchMode.externalApplication);
+    }
+  }
+
   Future<void> _toggleItem(int index) async {
     final newList = List<Map<String, dynamic>>.from(_checklist);
     newList[index] = {...newList[index], 'isDone': !(newList[index]['isDone'] == true)};
@@ -50,7 +86,6 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
   @override
   Widget build(BuildContext context) {
     final dayColor = AppTheme.getDayAccentColor();
-    final pik = _data['piktogram'] as String? ?? '📅';
     final title = _data['title'] as String? ?? '';
     final date = _parseDate(_data['date']);
     final persons = (_data['persons'] as List? ?? []).cast<String>();
@@ -60,9 +95,28 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
         : (date != null && (date.hour != 0 || date.minute != 0)
             ? DateFormat('HH:mm').format(date)
             : '');
+    final endTime = (_data['endTime'] as String?)?.trim() ?? '';
+    final timeLine = timeStr.isNotEmpty && endTime.isNotEmpty
+        ? '$timeStr – $endTime'
+        : timeStr;
 
-    return Container(
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
+    final location = (_data['location'] as String?)?.trim() ?? '';
+    final calDesc = (_data['calendarDescription'] as String?)?.trim() ??
+        (_data['description'] as String?)?.trim() ??
+        '';
+    final calUrl = (_data['calendarUrl'] as String?)?.trim() ?? '';
+    final extras = _extendedPropsMap(_data);
+    final hasExtraCalendarInfo = location.isNotEmpty ||
+        calDesc.isNotEmpty ||
+        calUrl.isNotEmpty ||
+        extras.isNotEmpty;
+
+    final maxH = MediaQuery.sizeOf(context).height * 0.85;
+
+    return wrapBottomSheet(
+      context,
+      Container(
+      constraints: BoxConstraints(maxWidth: double.infinity, maxHeight: maxH),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -80,33 +134,131 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Giant piktogram
-                  Text(pik, style: const TextStyle(fontSize: 64)),
-                  const SizedBox(height: 12),
-                  // Title
-                  Text(title,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center),
-                  const SizedBox(height: 8),
-                  // Time
-                  if (timeStr.isNotEmpty)
-                    Text(timeStr,
-                      style: TextStyle(fontSize: 18, color: dayColor, fontWeight: FontWeight.w600)),
-                  // Persons
-                  if (persons.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      children: persons.map((p) => Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: dayColor.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20)),
-                        child: Text(p, style: TextStyle(color: dayColor, fontWeight: FontWeight.w600)),
-                      )).toList(),
+                  Center(
+                    child: Column(
+                      children: [
+                        PlannerEventLeadingHero(
+                            data: _data, accentColor: dayColor),
+                        const SizedBox(height: 12),
+                        Text(title,
+                            style: const TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center),
+                        const SizedBox(height: 8),
+                        if (timeLine.isNotEmpty)
+                          Text(timeLine,
+                              style: TextStyle(
+                                  fontSize: 18,
+                                  color: dayColor,
+                                  fontWeight: FontWeight.w600)),
+                        if (persons.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            children: persons
+                                .map((p) => Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                          color: dayColor.withValues(alpha: 0.1),
+                                          borderRadius:
+                                              BorderRadius.circular(20)),
+                                      child: Text(p,
+                                          style: TextStyle(
+                                              color: dayColor,
+                                              fontWeight: FontWeight.w600)),
+                                    ))
+                                .toList(),
+                          ),
+                        ],
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: 20),
+                  EventReactionsRow(eventRef: widget.docSnapshot.reference),
+                  if (hasExtraCalendarInfo) ...[
+                    const SizedBox(height: 24),
+                    Text('MER INFORMATION',
+                        style: AppTheme.sectionLabelStyle),
+                    const SizedBox(height: 10),
+                    if (location.isNotEmpty) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('📍', style: TextStyle(fontSize: 18)),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              location,
+                              style: TextStyle(
+                                fontSize: 16,
+                                height: 1.35,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (calDesc.isNotEmpty || calUrl.isNotEmpty || extras.isNotEmpty)
+                        const SizedBox(height: 14),
+                    ],
+                    if (calDesc.isNotEmpty)
+                      SelectableText(
+                        calDesc,
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.45,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    if (calUrl.isNotEmpty) ...[
+                      if (calDesc.isNotEmpty) const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => _openExternalUrl(calUrl),
+                          icon: Icon(Icons.link_rounded, color: dayColor),
+                          label: Text(
+                            'Öppna länk',
+                            style: TextStyle(
+                                color: dayColor, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (extras.isNotEmpty) ...[
+                      if (calDesc.isNotEmpty || calUrl.isNotEmpty)
+                        const SizedBox(height: 8),
+                      for (final k in (extras.keys.toList()..sort()))
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _prettyIcsExtendedKey(k),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              SelectableText(
+                                extras[k]!,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  height: 1.4,
+                                  color: Colors.grey.shade800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ],
                   // Checklist
                   if (_checklist.isNotEmpty) ...[
@@ -149,6 +301,7 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
           ),
         ],
       ),
+    ),
     );
   }
 }

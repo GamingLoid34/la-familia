@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:developer' as developer;
 import 'dart:math';
 import '../app_theme.dart';
 
@@ -24,10 +25,10 @@ class _InvitePageState extends State<InvitePage> {
 
   String _generateRandomString(int len) {
     var r = Random();
-    const _chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     return List.generate(
       len,
-      (index) => _chars[r.nextInt(_chars.length)],
+      (index) => chars[r.nextInt(chars.length)],
     ).join();
   }
 
@@ -64,7 +65,7 @@ class _InvitePageState extends State<InvitePage> {
         }
       }
     } catch (e) {
-      debugPrint("Invite error: $e");
+      developer.log('Invite error: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

@@ -47,17 +47,20 @@ class _OfflineBannerState extends State<OfflineBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.paddingOf(context).top;
     return Column(
       children: [
         AnimatedContainer(
           duration: const Duration(milliseconds: 300),
-          height: _isOffline ? 30 : 0,
+          clipBehavior: Clip.hardEdge,
+          height: _isOffline ? 30 + topInset : 0,
           width: double.infinity,
+          padding: EdgeInsets.only(top: _isOffline ? topInset : 0),
           color: Colors.amber[200],
           alignment: Alignment.center,
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: const Text(
+          child: const SingleChildScrollView(
+            physics: NeverScrollableScrollPhysics(),
+            child: Text(
               'Du är offline — visar sparad data',
               style: TextStyle(
                 color: Colors.black87,

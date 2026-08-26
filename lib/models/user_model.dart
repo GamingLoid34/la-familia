@@ -1,14 +1,19 @@
+import 'dart:developer' as developer;
+
+import '../app_theme.dart';
+
 class UserModel {
   final String uid;
   final String name;
   final String email;
   final String color; // Hex string e.g. 'ff2196f3'
   final String role; // 'parent', 'child', 'youth'
-  final String viewMode; // 'parent', 'focus', 'youth'
+  /// `parent` | `focus` | `youth` | `child` — fokus = avskalad vy för alla roller.
+  final String viewMode;
   final int energy; // 1-4
-  final int weeklyPoints;
-  final DateTime? pointsResetDate;
   final String? familyId;
+  /// Valfri profilbild (Firebase Storage URL).
+  final String? avatarUrl;
 
   const UserModel({
     required this.uid,
@@ -18,27 +23,30 @@ class UserModel {
     required this.role,
     required this.viewMode,
     required this.energy,
-    required this.weeklyPoints,
-    this.pointsResetDate,
     this.familyId,
+    this.avatarUrl,
   });
+
+  static String _defaultViewMode(Map<String, dynamic> data) {
+    final v = data['viewMode'] as String?;
+    if (v != null && v.isNotEmpty) return v;
+    final r = data['role'] as String? ?? 'parent';
+    if (r == 'youth') return 'youth';
+    if (r == 'child') return 'child';
+    return 'parent';
+  }
 
   factory UserModel.fromMap(String uid, Map<String, dynamic> data) {
     return UserModel(
       uid: uid,
       name: data['name'] ?? '',
       email: data['email'] ?? '',
-      color: data['color'] ?? 'ff6bae75',
+      color: data['color'] ?? AppTheme.memberColorPalette.first,
       role: data['role'] ?? 'parent',
-      viewMode: data['viewMode'] ?? 'parent',
+      viewMode: _defaultViewMode(data),
       energy: (data['energy'] as int?) ?? 3,
-      weeklyPoints: (data['weeklyPoints'] as int?) ??
-          (data['points'] as int?) ??
-          0,
-      pointsResetDate: data['pointsResetDate'] != null
-          ? (data['pointsResetDate'] as dynamic).toDate()
-          : null,
       familyId: data['familyId'] as String?,
+      avatarUrl: data['avatarUrl'] as String?,
     );
   }
 
@@ -50,9 +58,8 @@ class UserModel {
       'role': role,
       'viewMode': viewMode,
       'energy': energy,
-      'weeklyPoints': weeklyPoints,
-      'pointsResetDate': pointsResetDate,
       'familyId': familyId,
+      if (avatarUrl != null) 'avatarUrl': avatarUrl,
     };
   }
 
@@ -63,9 +70,8 @@ class UserModel {
     String? role,
     String? viewMode,
     int? energy,
-    int? weeklyPoints,
-    DateTime? pointsResetDate,
     String? familyId,
+    String? avatarUrl,
   }) {
     return UserModel(
       uid: uid,
@@ -75,22 +81,25 @@ class UserModel {
       role: role ?? this.role,
       viewMode: viewMode ?? this.viewMode,
       energy: energy ?? this.energy,
-      weeklyPoints: weeklyPoints ?? this.weeklyPoints,
-      pointsResetDate: pointsResetDate ?? this.pointsResetDate,
       familyId: familyId ?? this.familyId,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 
-  /// Returns the user's color as a Flutter Color object.
-  dynamic get colorValue {
+  /// Returns the user's color as ARGB int for `Color(...)`.
+  int get colorValue {
     try {
       return int.parse(color.startsWith('0x') ? color : '0xFF$color', radix: 16);
-    } catch (_) {
-      return 0xFF6BAE75;
+    } catch (e, stack) {
+      developer.log('UserModel.colorValue parse error for "$color"',
+          error: e, stackTrace: stack);
+      return int.parse('0xFF${AppTheme.memberColorPalette.first}', radix: 16);
     }
   }
 
-  bool get isParent => role == 'parent';
+  /// Förälder eller admin — styr import, familjehantering, vyläge m.m.
+  bool get isParent => role == 'parent' || role == 'admin';
   bool get isFocusMode => viewMode == 'focus';
   bool get isYouthMode => viewMode == 'youth';
+  bool get isChildMode => viewMode == 'child';
 }

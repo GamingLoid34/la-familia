@@ -1,10 +1,34 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../app_theme.dart';
 import '../models/user_model.dart';
 
 class FamilyService {
   static final _db = FirebaseFirestore.instance;
   static final _auth = FirebaseAuth.instance;
+
+  /// Returnerar nästa lediga färg från [AppTheme.memberColorPalette] för en
+  /// given familj. Om alla färger redan är tagna, börjar om från början
+  /// (modulo paletten).
+  ///
+  /// Jämförelsen är case-insensitiv eftersom befintliga färger lagras med
+  /// olika case-konventioner (gamla `ff6bae75` vs. nya `ff2A6F97`).
+  static Future<String> assignNextAvailableColor(String familyId) async {
+    final snap = await _db
+        .collection('users')
+        .where('familyId', isEqualTo: familyId)
+        .get();
+    final usedColors = snap.docs
+        .map((d) => ((d.data()['color'] as String?) ?? '').toLowerCase())
+        .where((c) => c.isNotEmpty)
+        .toSet();
+    for (final color in AppTheme.memberColorPalette) {
+      if (!usedColors.contains(color.toLowerCase())) return color;
+    }
+    // Alla färger tagna — välj nästa i wrap-around-ordning.
+    return AppTheme.memberColorPalette[
+        usedColors.length % AppTheme.memberColorPalette.length];
+  }
 
   /// Stream of all family members for the given familyId.
   static Stream<List<UserModel>> getFamilyMembersStream(String familyId) {

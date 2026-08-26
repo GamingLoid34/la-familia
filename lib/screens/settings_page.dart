@@ -1,18 +1,25 @@
-import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../app_theme.dart';
+import '../utils/layout.dart';
 import '../models/user_model.dart';
+import '../providers/family_provider.dart';
 import '../services/family_service.dart';
+import '../services/notification_service.dart';
+import '../services/push_service.dart';
 import '../services/user_service.dart';
+import '../widgets/ai_planner_sheet.dart';
+import '../widgets/food_prefs_sheet.dart';
+import '../widgets/home_location_sheet.dart';
 import 'manage_members_page.dart';
+import 'manage_routines_page.dart';
 import 'invite_page.dart';
-import 'screen_rules_page.dart';
+import 'vardagsplan_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -28,14 +35,20 @@ class _SettingsPageState extends State<SettingsPage>
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   String? _familyName;
+  double? _homeLat;
+  double? _homeLon;
+  String? _homeName;
+  List<String> _foodAllergier = [];
+  List<String> _foodOgillar = [];
+  List<String> _foodGillar = [];
   bool _loading = true;
-
-  List<Map<String, dynamic>> _calendarImports = [];
 
   // Notification toggles
   bool _notifActivity = true;
   bool _notifChore = true;
-  bool _notifReward = true;
+  bool _notifTransition = true;
+  bool _notifFamily = true;
+  bool _aiPlannerLoading = false;
 
   @override
   void initState() {
@@ -49,7 +62,8 @@ class _SettingsPageState extends State<SettingsPage>
     setState(() {
       _notifActivity = prefs.getBool('notifActivity') ?? true;
       _notifChore = prefs.getBool('notifChore') ?? true;
-      _notifReward = prefs.getBool('notifReward') ?? true;
+      _notifTransition = prefs.getBool('notifTransition') ?? true;
+      _notifFamily = prefs.getBool('notifFamily') ?? true;
     });
   }
 
@@ -80,22 +94,33 @@ class _SettingsPageState extends State<SettingsPage>
               .get()
               .timeout(const Duration(seconds: 4));
           if (famDoc.exists) {
-            familyName = famDoc.data()?['name'] as String?;
+            final fd = famDoc.data();
+            familyName = fd?['name'] as String?;
+            _homeLat = (fd?['homeLat'] as num?)?.toDouble();
+            _homeLon = (fd?['homeLon'] as num?)?.toDouble();
+            _homeName = fd?['homeName'] as String?;
+            final prefs = fd?['foodPrefs'];
+            if (prefs is Map) {
+              _foodAllergier = (prefs['allergier'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+              _foodOgillar = (prefs['ogillar'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+              _foodGillar = (prefs['gillar'] as List?)
+                      ?.whereType<String>()
+                      .toList() ??
+                  [];
+            } else {
+              _foodAllergier = [];
+              _foodOgillar = [];
+              _foodGillar = [];
+            }
           }
         } catch (e, stack) {
           developer.log('Misslyckades hämta familjenamn', error: e, stackTrace: stack);
-        }
-        try {
-          final impsSnap = await FirebaseFirestore.instance
-              .collection('calendar_imports')
-              .where('familyId', isEqualTo: user.familyId)
-              .get()
-              .timeout(const Duration(seconds: 4));
-          for (final d in impsSnap.docs) {
-            _calendarImports.add({...d.data(), 'id': d.id});
-          }
-        } catch (e, stack) {
-          developer.log('Misslyckades hämta kalendrar', error: e, stackTrace: stack);
         }
       }
       if (mounted) {
@@ -108,7 +133,11 @@ class _SettingsPageState extends State<SettingsPage>
       }
     } catch (e, stack) {
       developer.log('Settings _loadData error', error: e, stackTrace: stack);
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -119,6 +148,65 @@ class _SettingsPageState extends State<SettingsPage>
     await _loadData();
   }
 
+  /// Full vy (parent/youth/child i data) visas som ”Allt”; avskalad vy som ”Fokus”.
+  Widget _buildViewModeControl(UserModel user, Color dayColor) {
+    final segments = <ButtonSegment<String>>[];
+    if (user.isParent) {
+      segments.addAll(const [
+        ButtonSegment<String>(
+            value: 'parent',
+            label: Text('Allt', style: TextStyle(fontSize: 12))),
+        ButtonSegment<String>(
+            value: 'focus',
+            label: Text('Fokus', style: TextStyle(fontSize: 12))),
+      ]);
+    } else if (user.role == 'youth') {
+      segments.addAll(const [
+        ButtonSegment<String>(
+            value: 'youth',
+            label: Text('Allt', style: TextStyle(fontSize: 12))),
+        ButtonSegment<String>(
+            value: 'focus',
+            label: Text('Fokus', style: TextStyle(fontSize: 12))),
+      ]);
+    } else {
+      segments.addAll(const [
+        ButtonSegment<String>(
+            value: 'child',
+            label: Text('Allt', style: TextStyle(fontSize: 12))),
+        ButtonSegment<String>(
+            value: 'focus',
+            label: Text('Fokus', style: TextStyle(fontSize: 12))),
+      ]);
+    }
+
+    var selected = user.viewMode;
+    final allowed = segments.map((s) => s.value).toSet();
+    if (!allowed.contains(selected)) {
+      selected = segments.first.value;
+    }
+
+    return SegmentedButton<String>(
+      segments: segments,
+      selected: {selected},
+      onSelectionChanged: (s) {
+        if (s.isNotEmpty) _changeViewMode(s.first);
+      },
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return dayColor;
+          return null;
+        }),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return Colors.white;
+          }
+          return AppTheme.getTextColor();
+        }),
+      ),
+    );
+  }
+
   Future<void> _signOut() async {
     await FirebaseAuth.instance.signOut();
   }
@@ -127,18 +215,21 @@ class _SettingsPageState extends State<SettingsPage>
   Widget build(BuildContext context) {
     super.build(context);
     final dayColor = AppTheme.getDayAccentColor();
+    final maxW = WindowSize.of(context).isExpanded
+        ? WindowSize.settingsMaxWidth
+        : 430.0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430),
+          constraints: BoxConstraints(maxWidth: maxW),
           child: Container(
             decoration: AppTheme.getBackground(),
             child: CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
-                SliverToBoxAdapter(child: _buildHeader(dayColor)),
+                SliverToBoxAdapter(child: _buildHeader(context, dayColor)),
                 if (_loading)
                   const SliverToBoxAdapter(
                     child: Padding(
@@ -149,12 +240,11 @@ class _SettingsPageState extends State<SettingsPage>
                 else ...[
                   SliverToBoxAdapter(child: _buildProfileCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFamilyCard(dayColor)),
-                  SliverToBoxAdapter(child: _buildCalendarCard(dayColor)),
                   SliverToBoxAdapter(child: _buildNotificationsCard(dayColor)),
                   SliverToBoxAdapter(child: _buildAboutCard()),
                   SliverToBoxAdapter(child: _buildSignOutButton()),
                 ],
-                const SliverToBoxAdapter(child: SizedBox(height: 120)),
+                const SliverToBoxAdapter(child: SizedBox(height: WindowSize.navScrollPadding + 20)),
               ],
             ),
           ),
@@ -164,14 +254,11 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   // ─── HEADER ─────────────────────────────────────────────────────────────────
-  Widget _buildHeader(Color dayColor) {
+  Widget _buildHeader(BuildContext context, Color dayColor) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     return Container(
-      decoration: BoxDecoration(
-        color: dayColor,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 20),
+      decoration: AppTheme.headerDecoration(),
+      padding: AppTheme.paddingBelowStatusBar(context),
       child: Text('Inställningar',
           style: TextStyle(
               fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
@@ -184,7 +271,7 @@ class _SettingsPageState extends State<SettingsPage>
     final user = _currentUser!;
     Color avatarColor;
     try {
-      avatarColor = Color(user.colorValue as int);
+      avatarColor = Color(user.colorValue);
     } catch (_) {
       avatarColor = dayColor;
     }
@@ -229,33 +316,7 @@ class _SettingsPageState extends State<SettingsPage>
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                    value: 'parent',
-                    label: Text('Förälder', style: TextStyle(fontSize: 12))),
-                ButtonSegment(
-                    value: 'focus',
-                    label: Text('Fokus', style: TextStyle(fontSize: 12))),
-                ButtonSegment(
-                    value: 'youth',
-                    label: Text('Ungdom', style: TextStyle(fontSize: 12))),
-              ],
-              selected: {user.viewMode},
-              onSelectionChanged: (s) { if (s.isNotEmpty) _changeViewMode(s.first); },
-              style: ButtonStyle(
-                backgroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) return dayColor;
-                  return null;
-                }),
-                foregroundColor: WidgetStateProperty.resolveWith((states) {
-                  if (states.contains(WidgetState.selected)) {
-                    return Colors.white;
-                  }
-                  return AppTheme.getTextColor();
-                }),
-              ),
-            ),
+            child: _buildViewModeControl(user, dayColor),
           ),
         ],
       ),
@@ -264,6 +325,9 @@ class _SettingsPageState extends State<SettingsPage>
 
   // ─── FAMILY CARD ─────────────────────────────────────────────────────────────
   Widget _buildFamilyCard(Color dayColor) {
+    if (_currentUser != null && !_currentUser!.isParent) {
+      return const SizedBox.shrink();
+    }
     return _Card(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -286,7 +350,7 @@ class _SettingsPageState extends State<SettingsPage>
                 final m = _familyMembers[i];
                 Color mc;
                 try {
-                  mc = Color(m.colorValue as int);
+                  mc = Color(m.colorValue);
                 } catch (_) {
                   mc = dayColor;
                 }
@@ -313,6 +377,62 @@ class _SettingsPageState extends State<SettingsPage>
           ),
           const SizedBox(height: 16),
         ],
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.home_work_outlined, color: dayColor, size: 22),
+          title: const Text('Hemposition',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text(
+            _homeName ?? 'Ej angiven — behövs för väder',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+          trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
+          onTap: _currentUser?.familyId == null
+              ? null
+              : () => showHomeLocationSheet(
+                    context,
+                    familyId: _currentUser!.familyId!,
+                    currentName: _homeName,
+                    currentLat: _homeLat,
+                    currentLon: _homeLon,
+                    onSaved: _loadData,
+                  ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.restaurant_menu_rounded, color: dayColor, size: 22),
+          title: const Text('Matpreferenser',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          subtitle: Text(
+            [
+              if (_foodAllergier.isNotEmpty)
+                'Allergier: ${_foodAllergier.join(', ')}',
+              if (_foodOgillar.isNotEmpty) 'Ogillar: ${_foodOgillar.length}',
+              if (_foodGillar.isNotEmpty) 'Gillar: ${_foodGillar.length}',
+            ].isEmpty
+                ? 'Allergier, ogillar, gillar — för AI-menyn'
+                : [
+                    if (_foodAllergier.isNotEmpty)
+                      'Allergier: ${_foodAllergier.join(', ')}',
+                    if (_foodOgillar.isNotEmpty)
+                      'Ogillar: ${_foodOgillar.length}',
+                    if (_foodGillar.isNotEmpty) 'Gillar: ${_foodGillar.length}',
+                  ].join(' · '),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
+          trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
+          onTap: _currentUser?.familyId == null
+              ? null
+              : () => showFoodPrefsSheet(
+                    context,
+                    familyId: _currentUser!.familyId!,
+                    allergier: _foodAllergier,
+                    ogillar: _foodOgillar,
+                    gillar: _foodGillar,
+                    onSaved: _loadData,
+                  ),
+        ),
+        const SizedBox(height: 8),
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
@@ -345,334 +465,90 @@ class _SettingsPageState extends State<SettingsPage>
             ),
           ),
         ]),
-      ]),
-    );
-  }
-
-  // ─── CALENDAR SOURCES ────────────────────────────────────────────────────────
-  Widget _buildCalendarCard(Color dayColor) {
-    return _Card(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(Icons.calendar_month_rounded, color: dayColor, size: 20),
-          const SizedBox(width: 8),
-          Text('Kalenderimport', style: AppTheme.cardTitleStyle),
-        ]),
         const SizedBox(height: 8),
-        Text('Importera händelser från Google Kalender, Outlook eller Apple Kalender.',
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade500)),
-        if (_calendarImports.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          for (final imp in _calendarImports)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(children: [
-                Icon(Icons.check_circle_rounded, color: dayColor, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(imp['name'] as String? ?? 'Kalender',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                ),
-                Text('${imp['eventCount'] ?? 0} händelser',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                const SizedBox(width: 4),
-                GestureDetector(
-                  onTap: () => _deleteCalendarImport(imp['id'] as String),
-                  child: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade400),
-                ),
-              ]),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Text('🌅', style: TextStyle(fontSize: 14)),
+            label: Text('Morgon- & kvällsrutiner',
+                style: TextStyle(color: dayColor, fontSize: 13)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
             ),
-          const SizedBox(height: 8),
-        ] else
-          const SizedBox(height: 16),
-        OutlinedButton.icon(
-          icon: Icon(Icons.add_rounded, color: dayColor),
-          label: Text('Lägg till kalender', style: TextStyle(color: dayColor)),
-          style: OutlinedButton.styleFrom(
-            side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const ManageRoutinesPage())),
           ),
-          onPressed: _showAddCalendarDialog,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Text('🧭', style: TextStyle(fontSize: 14)),
+            label: Text('Vardagsplan — hela veckoupplägget',
+                style: TextStyle(color: dayColor, fontSize: 13)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const VardagsplanPage())),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: _aiPlannerLoading
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: dayColor,
+                    ),
+                  )
+                : const Text('🧪', style: TextStyle(fontSize: 14)),
+            label: Text('Testa AI-planeraren',
+                style: TextStyle(color: dayColor, fontSize: 13)),
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: dayColor.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: _aiPlannerLoading ? null : _testAiPlanner,
+          ),
         ),
       ]),
     );
   }
 
-  // ─── CALENDAR IMPORT LOGIC ───────────────────────────────────────────────────
-
-  void _showAddCalendarDialog() {
-    final urlCtrl = TextEditingController();
-    final nameCtrl = TextEditingController();
-    bool loading = false;
-    String? errorMsg;
-
-    showDialog(
-      context: context,
-      barrierDismissible: !loading,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('Lägg till kalender'),
-          content: SizedBox(
-            width: 360,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: nameCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Kalendernamn',
-                      hintText: 'T.ex. Mammas kalender',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Alternativ 1 — ICS-länk:',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: urlCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'ICS-URL',
-                      hintText: 'https://calendar.google.com/calendar/ical/...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.link_rounded, size: 18),
-                      label: const Text('Hämta från URL'),
-                      onPressed: loading
-                          ? null
-                          : () async {
-                              final url = urlCtrl.text.trim();
-                              final name = nameCtrl.text.trim().isEmpty
-                                  ? 'Importerad kalender'
-                                  : nameCtrl.text.trim();
-                              if (url.isEmpty) return;
-                              setS(() { loading = true; errorMsg = null; });
-                              try {
-                                final resp = await http.get(Uri.parse(url))
-                                    .timeout(const Duration(seconds: 10));
-                                final content = utf8.decode(resp.bodyBytes);
-                                final count = await _parseAndSaveIcs(content, name, url);
-                                if (ctx.mounted) Navigator.pop(ctx);
-                                _showImportResult(count, name);
-                                await _loadData();
-                              } catch (e, stack) {
-                                developer.log('Fel vid hämtning/tolkning av ICS URL', error: e, stackTrace: stack);
-                                setS(() {
-                                  loading = false;
-                                  errorMsg =
-                                      'Kunde inte hämta URL. Prova att ladda upp filen direkt istället.';
-                                });
-                              }
-                            },
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Alternativ 2 — Ladda upp .ics-fil:',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.upload_file_rounded, size: 18),
-                      label: const Text('Välj .ics-fil'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.getDayAccentColor(),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: loading
-                          ? null
-                          : () async {
-                              final name = nameCtrl.text.trim().isEmpty
-                                  ? 'Importerad kalender'
-                                  : nameCtrl.text.trim();
-                              setS(() { loading = true; errorMsg = null; });
-                              try {
-                                final result = await FilePicker.platform.pickFiles(
-                                  type: FileType.custom,
-                                  allowedExtensions: ['ics'],
-                                  withData: true,
-                                );
-                                if (result == null || result.files.isEmpty) {
-                                  setS(() => loading = false);
-                                  return;
-                                }
-                                final bytes = result.files.first.bytes;
-                                if (bytes == null) {
-                                  setS(() { loading = false; errorMsg = 'Kunde inte läsa filen.'; });
-                                  return;
-                                }
-                                final content = utf8.decode(bytes);
-                                final count = await _parseAndSaveIcs(content, name, '');
-                                if (ctx.mounted) Navigator.pop(ctx);
-                                _showImportResult(count, name);
-                                await _loadData();
-                              } catch (e, stack) {
-                                developer.log('Fel vid uppladdning av lokal ICS fil', error: e, stackTrace: stack);
-                                setS(() { loading = false; errorMsg = 'Fel: $e'; });
-                              }
-                            },
-                    ),
-                  ),
-                  if (loading) ...[
-                    const SizedBox(height: 16),
-                    const Center(child: CircularProgressIndicator()),
-                  ],
-                  if (errorMsg != null) ...[
-                    const SizedBox(height: 12),
-                    Text(errorMsg!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: loading ? null : () => Navigator.pop(ctx),
-              child: const Text('Avbryt'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showImportResult(int count, String name) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(count > 0
-          ? '$count händelser importerade från "$name"! 📅'
-          : 'Inga kommande händelser hittades i "$name".'),
-      backgroundColor: count > 0 ? const Color(0xFF6BAE75) : Colors.orange,
-      duration: const Duration(seconds: 3),
-    ));
-  }
-
-  Future<void> _deleteCalendarImport(String docId) async {
-    await FirebaseFirestore.instance
-        .collection('calendar_imports')
-        .doc(docId)
-        .delete();
-    if (mounted) setState(() => _calendarImports.removeWhere((m) => m['id'] == docId));
-  }
-
-  Future<int> _parseAndSaveIcs(String icsContent, String name, String url) async {
-    // Unfold continuation lines
-    final raw = icsContent.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
-    final lines = <String>[];
-    for (final line in raw) {
-      if ((line.startsWith(' ') || line.startsWith('\t')) && lines.isNotEmpty) {
-        lines[lines.length - 1] += line.substring(1);
-      } else {
-        lines.add(line);
-      }
-    }
-
-    final events = <Map<String, String>>[];
-    Map<String, String>? current;
-    for (final line in lines) {
-      final t = line.trim();
-      if (t == 'BEGIN:VEVENT') {
-        current = {};
-      } else if (t == 'END:VEVENT' && current != null) {
-        events.add(current);
-        current = null;
-      } else if (current != null) {
-        final idx = line.indexOf(':');
-        if (idx > 0) {
-          final keyRaw = line.substring(0, idx);
-          final val = line.substring(idx + 1).trim();
-          final key = keyRaw.split(';')[0].toUpperCase();
-          current[key] = val;
-        }
-      }
-    }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final familyId = _currentUser?.familyId ?? '';
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-
-    final batch = FirebaseFirestore.instance.batch();
-    int count = 0;
-
-    for (final ev in events) {
-      final title = _decodeIcsText(ev['SUMMARY'] ?? '');
-      if (title.isEmpty) continue;
-      final dtStart = _parseDtstart(ev['DTSTART']);
-      if (dtStart == null) continue;
-      if (dtStart.isBefore(today)) continue;
-      if (count >= 200) break;
-
-      final ref = FirebaseFirestore.instance.collection('planner_events').doc();
-      batch.set(ref, {
-        'title': title,
-        'piktogram': '📅',
-        'type': 'activity',
-        'date': '${dtStart.year}-${dtStart.month}-${dtStart.day}',
-        'time': dtStart.hour == 0 && dtStart.minute == 0
-            ? ''
-            : '${dtStart.hour.toString().padLeft(2, '0')}:${dtStart.minute.toString().padLeft(2, '0')}',
-        'persons': <String>[],
-        'checklist': <dynamic>[],
-        'source': 'calendar',
-        'calendarName': name,
-        'createdBy': uid,
-        'isPending': false,
-        'familyId': familyId,
-      });
-      count++;
-    }
-
-    if (count > 0) await batch.commit();
-
-    await FirebaseFirestore.instance.collection('calendar_imports').add({
-      'name': name,
-      'url': url,
-      'familyId': familyId,
-      'lastSync': FieldValue.serverTimestamp(),
-      'eventCount': count,
-      'source': url.isEmpty ? 'file' : 'url',
-    });
-
-    return count;
-  }
-
-  String _decodeIcsText(String text) => text
-      .replaceAll('\\n', '\n')
-      .replaceAll('\\,', ',')
-      .replaceAll('\\;', ';')
-      .replaceAll('\\\\', '\\');
-
-  DateTime? _parseDtstart(String? value) {
-    if (value == null || value.isEmpty) return null;
+  Future<void> _testAiPlanner() async {
+    setState(() => _aiPlannerLoading = true);
     try {
-      final clean = value.replaceAll('Z', '').trim();
-      if (clean.length < 8) return null;
-      final y = int.parse(clean.substring(0, 4));
-      final m = int.parse(clean.substring(4, 6));
-      final d = int.parse(clean.substring(6, 8));
-      int h = 0, min = 0;
-      if (clean.length >= 15 && clean[8] == 'T') {
-        h = int.parse(clean.substring(9, 11));
-        min = int.parse(clean.substring(11, 13));
-      }
-      return DateTime(y, m, d, h, min);
-    } catch (e, stack) {
-      developer.log('Fel vid tolkning av ICS-datum', error: e, stackTrace: stack);
-      return null;
+      await runAiPlannerFlow(context);
+    } on FirebaseFunctionsException catch (e) {
+      if (!mounted) return;
+      final msg = e.message ?? 'Kunde inte hämta AI-förslag.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Kunde inte hämta AI-förslag: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _aiPlannerLoading = false);
     }
   }
 
@@ -694,10 +570,30 @@ class _SettingsPageState extends State<SettingsPage>
           subtitle: const Text('15 min innan',
               style: TextStyle(fontSize: 12)),
           value: _notifActivity,
-          activeColor: dayColor,
-          onChanged: (v) {
+          activeThumbColor: dayColor,
+          onChanged: (v) async {
+            if (!v) {
+              // Avbokar BARA aktivitetspåminnelser — sysslor/övergångar rörs ej.
+              await NotificationService.cancelByPayloads({'activity'});
+            }
             setState(() => _notifActivity = v);
-            _savePreference('notifActivity', v);
+            await _savePreference('notifActivity', v);
+          },
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Övergångsvarning',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          subtitle: const Text('"Om 10 min: byta aktivitet" — extra förvarning',
+              style: TextStyle(fontSize: 12)),
+          value: _notifTransition,
+          activeThumbColor: dayColor,
+          onChanged: (v) async {
+            if (!v) {
+              await NotificationService.cancelByPayloads({'transition'});
+            }
+            setState(() => _notifTransition = v);
+            await _savePreference('notifTransition', v);
           },
         ),
         SwitchListTile(
@@ -705,32 +601,47 @@ class _SettingsPageState extends State<SettingsPage>
           title: const Text('Syssla tilldelad',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
           value: _notifChore,
-          activeColor: dayColor,
-          onChanged: (v) {
+          activeThumbColor: dayColor,
+          onChanged: (v) async {
+            if (!v) {
+              await NotificationService.cancelByPayloads({'chore'});
+            }
             setState(() => _notifChore = v);
             _savePreference('notifChore', v);
           },
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('Belöning godkänd',
+          title: const Text('Familjehändelser',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          value: _notifReward,
-          activeColor: dayColor,
-          onChanged: (v) {
-            setState(() => _notifReward = v);
-            _savePreference('notifReward', v);
+          subtitle: const Text(
+              'Push när någon skriver på tavlan, reagerar eller tilldelar',
+              style: TextStyle(fontSize: 12)),
+          value: _notifFamily,
+          activeThumbColor: dayColor,
+          onChanged: (v) async {
+            setState(() => _notifFamily = v);
+            await _savePreference('notifFamily', v);
+            // Servern läser flaggan på users-dokumentet innan utskick.
+            await PushService.setFamilyPushEnabled(v);
           },
         ),
-        ListTile(
+        const Divider(height: 20),
+        SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.phone_android_rounded, color: dayColor),
-          title: const Text('Skärmtidsregler',
+          title: const Text('Lågstimuli-läge',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          trailing: Icon(Icons.arrow_forward_ios_rounded,
-              size: 14, color: Colors.grey.shade400),
-          onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const ScreenRulesPage())),
+          subtitle: const Text(
+              'Lugnare utseende: platta färger, inga skuggor eller gradienter',
+              style: TextStyle(fontSize: 12)),
+          value: AppTheme.lowStimuli,
+          activeThumbColor: dayColor,
+          onChanged: (v) {
+            setState(() => AppTheme.lowStimuli = v);
+            _savePreference('lowStimuli', v);
+            // Rita om alla flikar direkt — inte bara denna sida.
+            context.read<FamilyProvider>().refreshUi();
+          },
         ),
       ]),
     );
@@ -745,7 +656,7 @@ class _SettingsPageState extends State<SettingsPage>
           'assets/images/logo.png',
           width: 72,
           fit: BoxFit.contain,
-          errorBuilder: (_, __, e) =>
+          errorBuilder: (_, _, e) =>
               const Icon(Icons.favorite_rounded, size: 48, color: Colors.grey),
         ),
         const SizedBox(height: 10),
