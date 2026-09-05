@@ -131,6 +131,17 @@ service cloud.firestore {
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
+    // Matval på sjukhus (meal_choices) — ett dokument per person och dag
+    match /meal_choices/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && (request.resource.data.personUid == request.auth.uid || iAmParent());
+      allow update: if isAuth() && resource.data.familyId == myFamilyId()
+          && (resource.data.personUid == request.auth.uid || iAmParent());
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (resource.data.personUid == request.auth.uid || iAmParent());
+    }
+
     match /calendar_imports/{docId} {
       allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
