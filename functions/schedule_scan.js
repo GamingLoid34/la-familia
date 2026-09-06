@@ -113,7 +113,7 @@ function parseScheduleJson(raw) {
 exports.parseScheduleImage = onCall({
   region: "us-central1",
   secrets: ["LAFAMILIA_ANTHROPIC_KEY"],
-  timeoutSeconds: 90,
+  timeoutSeconds: 120,
   memory: "512MiB",
 }, async (request) => {
   if (!request.auth) {
@@ -161,53 +161,118 @@ exports.parseScheduleImage = onCall({
   const todayKey = stockholmDateKey();
   await consumeAiQuota(db, familyId, todayKey);
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60000);
+  const requestBody = JSON.stringify({
+    model: ANTHROPIC_MODEL,
+    max_tokens: 3000,
+    system: PARSE_SCHEDULE_IMAGE_SYSTEM,
+    messages: [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mediaType,
+            data: imageBase64,
+          },
+        },
+        {
+          type: "text",
+          text: "Veckostart om datum saknas: " + (weekStartHint || ""),
+        },
+      ],
+    }],
+  });
+
+  const headers = {
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+  };
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let response;
-  try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 3000,
-        temperature: 0,
-        system: PARSE_SCHEDULE_IMAGE_SYSTEM,
-        messages: [{
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mediaType,
-                data: imageBase64,
-              },
-            },
-            {
-              type: "text",
-              text: "Veckostart om datum saknas: " + (weekStartHint || ""),
-            },
-          ],
-        }],
-      }),
-    });
-  } catch (err) {
-    if (err.name === "AbortError") {
-      throw new HttpsError("unavailable", "AI-tjänsten svarade inte i tid.");
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55000);
+
+    try {
+      response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: controller.signal,
+        headers,
+        body: requestBody,
+      });
+    } catch (err) {
+      console.warn(`parseScheduleImage: Nätverksfel vid försök ${attempt}:`, err.message || err);
+      if (attempt === 1) {
+        await sleep(1500);
+        continue;
+      }
+      if (err.name === "AbortError") {
+        throw new HttpsError("unavailable", "AI-tjänsten svarade inte i tid.");
+      }
+      throw new HttpsError("unavailable", "Kunde inte nå AI-tjänsten (nätverksfel).");
+    } finally {
+      clearTimeout(timer);
     }
-    throw new HttpsError("unavailable", "Kunde inte nå AI-tjänsten.");
-  } finally {
-    clearTimeout(timer);
+
+    if (response.ok) {
+      break;
+    }
+
+    const errBodyText = await response.text();
+    console.error(
+        `parseScheduleImage: Anthropic HTTP ${response.status} (försök ${attempt}): ` +
+        `${errBodyText.slice(0, 500)}`,
+    );
+
+    const isRetryable = response.status === 429 ||
+      response.status === 529 ||
+      (response.status >= 500 && response.status <= 599);
+
+    if (attempt === 1 && isRetryable) {
+      await sleep(1500);
+      continue;
+    }
+
+    const status = response.status;
+    if (status === 400) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Ogiltig begäran till AI-tjänsten (HTTP 400).",
+      );
+    } else if (status === 401 || status === 403) {
+      throw new HttpsError(
+          "permission-denied",
+          `Åtkomst nekad till AI-tjänsten (HTTP ${status}).`,
+      );
+    } else if (status === 429) {
+      throw new HttpsError(
+          "resource-exhausted",
+          "AI-tjänsten är överbelastad (HTTP 429). Försök igen om en stund.",
+      );
+    } else if (status === 529) {
+      throw new HttpsError(
+          "unavailable",
+          "AI-tjänsten är överbelastad (HTTP 529). Försök igen om en stund.",
+      );
+    } else if (status >= 500 && status <= 599) {
+      throw new HttpsError(
+          "unavailable",
+          `AI-tjänsten stötte på ett internt fel (HTTP ${status}). Försök igen.`,
+      );
+    } else {
+      throw new HttpsError(
+          "unavailable",
+          `AI-tjänsten svarade med fel (HTTP ${status}).`,
+      );
+    }
   }
 
-  if (!response.ok) {
+  if (!response || !response.ok) {
     throw new HttpsError("unavailable", "AI-tjänsten är tillfälligt otillgänglig.");
   }
 
