@@ -25,7 +25,8 @@ const PARSE_SCHEDULE_IMAGE_SYSTEM =
   "3) Annars endTime = null. Gissa ALDRIG en sluttid som varken står i\n" +
   "text eller går att läsa ur rutnätet.\n" +
   "Hitta aldrig på händelser — hoppa över oläsliga rader. Titlar exakt\n" +
-  "som de står (behåll namn som 'Fysioterapi Maria').";
+  "som de står (behåll namn som 'Fysioterapi Maria').\n" +
+  "Svara som EN kompakt JSON-rad utan radbrytningar eller extra blanksteg.\n";
 
 /** @return {string} YYYY-MM-DD i Europe/Stockholm */
 function stockholmDateKey(d = new Date()) {
@@ -50,7 +51,11 @@ async function consumeAiQuota(db, familyId, todayKey) {
     tx.set(ref, {date: todayKey, count: count + 1}, {merge: true});
   });
 }
-
+/**
+ * Tolkar och validerar JSON-svar från AI.
+ * @param {string} raw
+ * @return {Array<Object>}
+ */
 function parseScheduleJson(raw) {
   let text = String(raw || "").trim();
   if (text.startsWith("```")) {
@@ -163,7 +168,7 @@ exports.parseScheduleImage = onCall({
 
   const requestBody = JSON.stringify({
     model: ANTHROPIC_MODEL,
-    max_tokens: 3000,
+    max_tokens: 8000,
     system: PARSE_SCHEDULE_IMAGE_SYSTEM,
     messages: [{
       role: "user",
@@ -196,7 +201,7 @@ exports.parseScheduleImage = onCall({
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55000);
+    const timer = setTimeout(() => controller.abort(), 90000);
 
     try {
       response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -285,6 +290,8 @@ exports.parseScheduleImage = onCall({
 
   const stopReason = body.stop_reason || null;
   if (stopReason === "max_tokens") {
+    console.error("parseScheduleImage: max_tokens nått",
+        JSON.stringify(body.usage || {}));
     throw new HttpsError(
         "unavailable",
         "AI-svaret blev för långt — försök med ett mer avgränsat foto.",
