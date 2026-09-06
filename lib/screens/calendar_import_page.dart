@@ -14,6 +14,7 @@ import '../services/calendar_feed_service.dart';
 import '../services/family_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/person_match.dart';
+import 'schedule_scan_page.dart';
 
 /// Kalenderimport (ICS) — hanteras under Planering, inte Inställningar.
 class CalendarImportPage extends StatefulWidget {
@@ -139,16 +140,84 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
   Widget _buildBody(Color dayColor) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
-      child: _ImportCard(
-        dayColor: dayColor,
-        calendarImports: _calendarImports,
-        onAddTap: _showAddCalendarDialog,
-        onPurgeTap: _currentUser?.familyId == null
-            ? null
-            : _confirmPurgeAllCalendarImports,
-        onDeleteImport: _confirmDeleteCalendarImport,
-        onToggleAutoSync: _toggleAutoSync,
-        onSyncNow: _syncNow,
+      child: Column(
+        children: [
+          _buildScanBanner(dayColor),
+          const SizedBox(height: 16),
+          _ImportCard(
+            dayColor: dayColor,
+            calendarImports: _calendarImports,
+            onAddTap: _showAddCalendarDialog,
+            onPurgeTap: _currentUser?.familyId == null
+                ? null
+                : _confirmPurgeAllCalendarImports,
+            onDeleteImport: _confirmDeleteCalendarImport,
+            onToggleAutoSync: _toggleAutoSync,
+            onSyncNow: _syncNow,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanBanner(Color dayColor) {
+    return Container(
+      decoration: AppTheme.cardDecoration(radius: 20),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () async {
+            await Navigator.push<void>(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => const ScheduleScanPage(),
+              ),
+            );
+            await _loadData();
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: dayColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Icon(Icons.camera_alt_rounded,
+                      color: dayColor, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Fota ett pappersschema 📷',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Låt AI tolka veckoschemat och importera händelser direkt till kalendern.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1014,6 +1083,7 @@ class _ImportCard extends StatelessWidget {
   }
 
   bool _hasFeedUrl(Map<String, dynamic> imp) {
+    if (imp['importKind'] == 'photo') return false;
     final feed = (imp['feedUrl'] as String?)?.trim() ?? '';
     final url = (imp['url'] as String?)?.trim() ?? '';
     return feed.isNotEmpty || url.isNotEmpty;
@@ -1062,8 +1132,13 @@ class _ImportCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.check_circle_rounded,
-                            color: dayColor, size: 16),
+                        Icon(
+                          imp['importKind'] == 'photo'
+                              ? Icons.camera_alt_rounded
+                              : Icons.check_circle_rounded,
+                          color: dayColor,
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -1073,12 +1148,14 @@ class _ImportCard extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          (imp['planningImportKind'] as String? ??
-                                      imp['targetType'] as String? ??
-                                      'schedule') ==
-                                  'activity'
-                              ? 'Aktivitet'
-                              : 'Schema',
+                          imp['importKind'] == 'photo'
+                              ? 'Foto'
+                              : ((imp['planningImportKind'] as String? ??
+                                          imp['targetType'] as String? ??
+                                          'schedule') ==
+                                      'activity'
+                                  ? 'Aktivitet'
+                                  : 'Schema'),
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -1088,7 +1165,7 @@ class _ImportCard extends StatelessWidget {
                         IconButton(
                           icon: Icon(Icons.delete_outline_rounded,
                               size: 22, color: Colors.grey.shade600),
-                          tooltip: 'Ta bort prenumeration och händelser',
+                          tooltip: 'Ta bort import och händelser',
                           onPressed: () {
                             final id = imp['id'];
                             if (id is String) onDeleteImport(id);
@@ -1101,7 +1178,7 @@ class _ImportCard extends StatelessWidget {
                       child: Text(
                         '${_formatLastSync(imp['lastSync'])} · '
                         '${imp['eventCount'] ?? 0} händelser'
-                        '${imp['autoSync'] == true ? '' : (imp['source'] == 'file' ? ' · engångsfil' : '')}',
+                        '${imp['importKind'] == 'photo' ? ' · skannat foto' : (imp['autoSync'] == true ? '' : (imp['source'] == 'file' ? ' · engångsfil' : ''))}',
                         style: TextStyle(
                             fontSize: 12, color: Colors.grey.shade600),
                       ),

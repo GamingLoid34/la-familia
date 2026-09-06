@@ -35,6 +35,51 @@ class QuickAddDraft {
   });
 }
 
+/// Normaliserar namn: gemener + viker bort icke-svenska diakriter (å, ä, ö bevaras).
+String foldName(String s) {
+  var result = s.toLowerCase();
+  const from = 'éèêëáàâãíìîïóòôõúùûüçñ';
+  const to   = 'eeeeaaaaiiiioooouuuucn';
+  final buffer = StringBuffer();
+  for (var i = 0; i < result.length; i++) {
+    final char = result[i];
+    final idx = from.indexOf(char);
+    if (idx != -1) {
+      buffer.write(to[idx]);
+    } else {
+      buffer.write(char);
+    }
+  }
+  return buffer.toString();
+}
+
+/// Beräknar Levenshtein-avstånd mellan två strängar.
+int levenshtein(String a, String b) {
+  if (a == b) return 0;
+  if (a.isEmpty) return b.length;
+  if (b.isEmpty) return a.length;
+
+  List<int> v0 = List<int>.generate(b.length + 1, (i) => i);
+  List<int> v1 = List<int>.filled(b.length + 1, 0);
+
+  for (int i = 0; i < a.length; i++) {
+    v1[0] = i + 1;
+    for (int j = 0; j < b.length; j++) {
+      final cost = (a[i] == b[j]) ? 0 : 1;
+      final insertion = v1[j] + 1;
+      final deletion = v0[j + 1] + 1;
+      final substitution = v0[j] + cost;
+      var min = insertion < deletion ? insertion : deletion;
+      if (substitution < min) min = substitution;
+      v1[j + 1] = min;
+    }
+    for (int j = 0; j <= b.length; j++) {
+      v0[j] = v1[j];
+    }
+  }
+  return v0[b.length];
+}
+
 const Map<String, int> _months = {
   'januari': 1, 'jan': 1,
   'februari': 2, 'feb': 2,
@@ -235,17 +280,78 @@ QuickAddDraft? parseQuickAdd(
     }
   }
 
-  // 6. Medlemsnamn (förnamn, hela ord).
+  // 6a. Medlemsnamn: exakt matchning på _foldName-form (t.ex. "Celine" matchar "Céline").
   final persons = <UserModel>[];
+  final matchedUids = <String>{};
+  final wordRegex = RegExp(
+      r'\b[a-zA-ZåäöÅÄÖéèêëáàâãíìîïóòôõúùûüçñÉÈÊËÁÀÂÃÍÌÎÏÓÒÔÕÚÙÛÜÇÑ]+\b');
+
   for (final m in members) {
+    if (matchedUids.contains(m.uid)) continue;
     final first = m.name.split(' ').first;
     if (first.isEmpty) continue;
-    final pattern = RegExp(
-        r'\b' + RegExp.escape(first) + r'\b',
-        caseSensitive: false);
-    if (pattern.hasMatch(work)) {
-      persons.add(m);
-      work = work.replaceFirst(pattern, ' ');
+    final foldedFirst = foldName(first);
+
+    final matches = wordRegex.allMatches(work);
+    for (final match in matches) {
+      final rawWord = match.group(0)!;
+      if (foldName(rawWord) == foldedFirst) {
+        persons.add(m);
+        matchedUids.add(m.uid);
+        work = work.replaceFirst(
+            RegExp(r'\b' + RegExp.escape(rawWord) + r'\b'), ' ');
+        break;
+      }
+    }
+  }
+
+  // 6b. Fuzzy match för kvarvarande ord i work (längd >= 3).
+  final remainingWords = wordRegex
+      .allMatches(work)
+      .map((m) => m.group(0)!)
+      .where((w) => w.length >= 3)
+      .toList();
+
+  for (final w in remainingWords) {
+    if (!RegExp(r'\b' + RegExp.escape(w) + r'\b').hasMatch(work)) continue;
+
+    final foldedW = foldName(w);
+    final unmatchedMembers =
+        members.where((m) => !matchedUids.contains(m.uid)).toList();
+
+    int? lowestDist;
+    final candidates = <UserModel>[];
+
+    for (final m in unmatchedMembers) {
+      final first = m.name.split(' ').first;
+      if (first.isEmpty) continue;
+      final foldedFirst = foldName(first);
+
+      final threshold = foldedFirst.length >= 5
+          ? 2
+          : (foldedFirst.length >= 3 ? 1 : 0);
+
+      if (threshold == 0) continue;
+
+      final d = levenshtein(foldedW, foldedFirst);
+      if (d <= threshold) {
+        if (lowestDist == null || d < lowestDist) {
+          lowestDist = d;
+          candidates.clear();
+          candidates.add(m);
+        } else if (d == lowestDist) {
+          candidates.add(m);
+        }
+      }
+    }
+
+    // Matcha ENDAST om exakt en medlem ligger inom tröskeln OCH är strikt närmast
+    if (candidates.length == 1) {
+      final matchedMember = candidates.first;
+      persons.add(matchedMember);
+      matchedUids.add(matchedMember.uid);
+      work = work.replaceFirst(
+          RegExp(r'\b' + RegExp.escape(w) + r'\b'), ' ');
     }
   }
 

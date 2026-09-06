@@ -16,9 +16,18 @@ String _relativeTime(DateTime createdAt) {
   return 'för ${diff.inDays}d sedan';
 }
 
-/// Horisontell dagstavla med familjens korta notiser (Familjen-fliken).
-class FamilyNotesStrip extends StatelessWidget {
+/// Komprimerad dagstavla: ihopfälld pill, expandera inline. Startar alltid ihop.
+class FamilyNotesStrip extends StatefulWidget {
   const FamilyNotesStrip({super.key});
+
+  @override
+  State<FamilyNotesStrip> createState() => _FamilyNotesStripState();
+}
+
+class _FamilyNotesStripState extends State<FamilyNotesStrip> {
+  bool _expanded = false;
+  /// Note-id:n som var synliga vid senaste expandering (för oläst-badge).
+  Set<String> _seenIds = {};
 
   Future<void> _openAdd(BuildContext context, FamilyProvider provider) async {
     final user = provider.currentUser;
@@ -57,53 +66,123 @@ class FamilyNotesStrip extends StatelessWidget {
         .delete();
   }
 
+  void _toggle(List<FamilyNote> notes) {
+    setState(() {
+      _expanded = !_expanded;
+      if (_expanded) {
+        _seenIds = notes.map((n) => n.id).toSet();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<FamilyProvider>(
       builder: (context, provider, _) {
         final notes = provider.todayNotes;
         final myUid = FirebaseAuth.instance.currentUser?.uid;
+        final unread = notes.where((n) => !_seenIds.contains(n.id)).length;
+        final dayColor = AppTheme.getDayAccentColor();
 
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('DAGSTAVLA', style: AppTheme.sectionLabelStyle),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 88,
-                child: notes.isEmpty
-                    ? _EmptyNotesRow(onAdd: () => _openAdd(context, provider))
-                    : ListView(
-                        scrollDirection: Axis.horizontal,
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => _toggle(notes),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: dayColor.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          _AddNoteChip(
-                              onTap: () => _openAdd(context, provider)),
-                          const SizedBox(width: 10),
-                          ...notes.map((n) {
-                            final color = AppTheme.colorFromHex(
-                              n.fromColor.isNotEmpty
-                                  ? n.fromColor
-                                  : AppTheme.memberColorPalette.first,
-                            );
-                            final isMine =
-                                myUid != null && n.fromUid == myUid;
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 10),
-                              child: _NoteCard(
-                                note: n,
-                                accent: color,
-                                timeLabel: _relativeTime(n.createdAt),
-                                onTap: isMine
-                                    ? () => _confirmDelete(context, n)
-                                    : null,
+                          const Text('💬', style: TextStyle(fontSize: 14)),
+                          const SizedBox(width: 6),
+                          Text(
+                            notes.isEmpty
+                                ? '+'
+                                : '${notes.length} ${notes.length == 1 ? 'lapp' : 'lappar'} idag',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.getTextColor(),
+                            ),
+                          ),
+                          if (!_expanded && notes.isNotEmpty && unread > 0) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: dayColor,
+                                shape: BoxShape.circle,
                               ),
-                            );
-                          }),
+                            ),
+                          ],
+                          const SizedBox(width: 4),
+                          Icon(
+                            _expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 18,
+                            color: Colors.grey.shade600,
+                          ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
               ),
+              if (_expanded) ...[
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 88,
+                  child: notes.isEmpty
+                      ? _EmptyNotesRow(
+                          onAdd: () => _openAdd(context, provider))
+                      : ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            _AddNoteChip(
+                                onTap: () => _openAdd(context, provider)),
+                            const SizedBox(width: 10),
+                            ...notes.map((n) {
+                              final color = AppTheme.colorFromHex(
+                                n.fromColor.isNotEmpty
+                                    ? n.fromColor
+                                    : AppTheme.memberColorPalette.first,
+                              );
+                              final isMine =
+                                  myUid != null && n.fromUid == myUid;
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 10),
+                                child: _NoteCard(
+                                  note: n,
+                                  accent: color,
+                                  timeLabel: _relativeTime(n.createdAt),
+                                  onTap: isMine
+                                      ? () => _confirmDelete(context, n)
+                                      : null,
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                ),
+              ],
             ],
           ),
         );
@@ -197,49 +276,48 @@ class _NoteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 200,
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: AppTheme.cardDecoration(radius: 16).copyWith(
-          border: Border(
-            left: BorderSide(color: accent, width: 4),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: 160,
+          padding: const EdgeInsets.all(12),
+          decoration: AppTheme.cardDecoration(radius: 16).copyWith(
+            border: Border(left: BorderSide(color: accent, width: 4)),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    note.fromName,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: accent,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                note.fromName.split(' ').first,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Expanded(
+                child: Text(
+                  note.text,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.25,
                   ),
                 ),
-                Text(
-                  timeLabel,
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Expanded(
-              child: Text(
-                note.text,
-                style: const TextStyle(fontSize: 13, height: 1.25),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-          ],
+              Text(
+                timeLabel,
+                style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
         ),
       ),
     );

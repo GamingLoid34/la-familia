@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,31 +8,22 @@ import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../services/notification_service.dart';
+import '../utils/chore_utils.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
 import '../utils/permissions.dart';
 import '../utils/person_match.dart';
 import '../widgets/shimmer_list_placeholder.dart';
+import '../widgets/stadskapet_guide_sheet.dart';
+import '../widgets/stadzoner_seeder_sheet.dart';
+import '../widgets/trasa_chip.dart';
+import '../data/stadzoner.dart';
 import 'agenda_page.dart';
 import 'chore_stats_page.dart';
 import 'chores_page.dart';
+import 'staddag_page.dart';
+import 'stadlage_page.dart';
 
-/// Syssla utan `dueDate` visas i dag-sektionen varje dag; med datum bara den dagen.
-bool _choreVisibleOnDay(Map<String, dynamic> d, DateTime day) {
-  final raw = d['dueDate'];
-  if (raw == null) return true;
-  if (raw is String && raw.isEmpty) return true;
-  if (raw is String) {
-    final parsed = parseDate(raw);
-    if (parsed == null) return true;
-    return parsed.year == day.year &&
-        parsed.month == day.month &&
-        parsed.day == day.day;
-  }
-  return true;
-}
-
-/// Fas 6 Sysslor-flik — dagens + öppna sysslor, mallar, läsningstimer.
 class SysslorPage extends StatefulWidget {
   const SysslorPage({super.key});
 
@@ -50,10 +39,7 @@ class _SysslorPageState extends State<SysslorPage>
   String? _filterPerson;
   String? _filterPersonUid;
   bool _doneExpanded = false;
-
-  bool _readingActive = false;
-  int _readingSeconds = 0;
-  Timer? _readingTimer;
+  bool _recurringExpanded = false;
 
   late ConfettiController _confettiController;
 
@@ -66,43 +52,11 @@ class _SysslorPageState extends State<SysslorPage>
 
   @override
   void dispose() {
-    _readingTimer?.cancel();
     _confettiController.dispose();
     super.dispose();
   }
 
   void _onChoreCompleted() => _confettiController.play();
-
-  void _toggleReading() {
-    if (_readingActive) {
-      final minutes = _readingSeconds ~/ 60;
-      if (minutes > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Du läste $minutes minuter! 📚'),
-          backgroundColor: const Color(0xFF6BAE75),
-        ));
-      }
-      setState(() {
-        _readingActive = false;
-        _readingSeconds = 0;
-      });
-      _readingTimer?.cancel();
-    } else {
-      setState(() {
-        _readingActive = true;
-        _readingSeconds = 0;
-      });
-      _readingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) setState(() => _readingSeconds++);
-      });
-    }
-  }
-
-  String get _readingTimeStr {
-    final m = _readingSeconds ~/ 60;
-    final s = _readingSeconds % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
 
   bool _matchesPerson(
     Map<String, dynamic> d,
@@ -122,8 +76,12 @@ class _SysslorPageState extends State<SysslorPage>
     return true;
   }
 
-  ({List<QueryDocumentSnapshot> today, List<QueryDocumentSnapshot> open,
-      List<QueryDocumentSnapshot> done}) _splitChores(
+  ({
+    List<QueryDocumentSnapshot> today,
+    List<QueryDocumentSnapshot> open,
+    List<QueryDocumentSnapshot> recurringLater,
+    List<QueryDocumentSnapshot> done,
+  }) _splitChores(
     List<QueryDocumentSnapshot> all,
     UserModel? user,
     bool isFocus,
@@ -131,15 +89,41 @@ class _SysslorPageState extends State<SysslorPage>
     final today = DateTime.now();
     final todayList = <QueryDocumentSnapshot>[];
     final openList = <QueryDocumentSnapshot>[];
+    final recurringLaterList = <QueryDocumentSnapshot>[];
     final doneList = <QueryDocumentSnapshot>[];
 
     for (final doc in all) {
       final d = doc.data() as Map<String, dynamic>;
-      if (!_matchesPerson(d, user, isFocus)) continue;
+      final forToday = choreOccursOnDay(d, today);
+      if (forToday) {
+        if (_filterPerson != null) {
+          if (!choreAssignedToOnDay(d, today,
+              uid: _filterPersonUid ?? '', name: _filterPerson!)) {
+            continue;
+          }
+        } else if (isFocus && user != null) {
+          if (!choreAssignedToOnDay(d, today,
+              uid: user.uid, name: user.name)) {
+            continue;
+          }
+        }
+      } else if (!_matchesPerson(d, user, isFocus)) {
+        continue;
+      }
 
-      if (d['isDone'] == true) {
+      if (choreIsRecurring(d)) {
+        if (!choreOccursOnDay(d, today)) {
+          recurringLaterList.add(doc);
+          continue;
+        }
+        if (choreDoneOnDay(d, today)) {
+          doneList.add(doc);
+        } else {
+          todayList.add(doc);
+        }
+      } else if (d['isDone'] == true) {
         doneList.add(doc);
-      } else if (_choreVisibleOnDay(d, today)) {
+      } else if (choreOccursOnDay(d, today)) {
         todayList.add(doc);
       } else {
         openList.add(doc);
@@ -160,8 +144,14 @@ class _SysslorPageState extends State<SysslorPage>
 
     todayList.sort(byTitle);
     openList.sort(byTitle);
+    recurringLaterList.sort(byTitle);
     doneList.sort(byTitle);
-    return (today: todayList, open: openList, done: doneList);
+    return (
+      today: todayList,
+      open: openList,
+      recurringLater: recurringLaterList,
+      done: doneList,
+    );
   }
 
   Stream<QuerySnapshot>? _templatesStream(String? familyId) {
@@ -448,7 +438,280 @@ class _SysslorPageState extends State<SysslorPage>
     );
   }
 
-  Widget _buildHeader(Color dayColor) {
+  void _openStadskapetGuide(BuildContext context, String familyId) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StadskapetGuideSheet(familyId: familyId),
+    );
+  }
+
+  void _openStadzonerSeeder(BuildContext context, String familyId) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StadzonerSeederSheet(familyId: familyId),
+    );
+  }
+
+  List<QueryDocumentSnapshot> _getTodayStadzoner(
+    List<QueryDocumentSnapshot> all,
+    UserModel? user,
+    bool isFocus,
+  ) {
+    final today = DateTime.now();
+    final zoner = <QueryDocumentSnapshot>[];
+
+    for (final doc in all) {
+      final d = doc.data() as Map<String, dynamic>;
+      final stadKey = d['stadKey'] as String?;
+      if (stadKey == null || stadKey.isEmpty) continue;
+      if (!choreOccursOnDay(d, today)) continue;
+
+      if (_filterPerson != null) {
+        if (!choreAssignedToOnDay(d, today,
+                uid: _filterPersonUid ?? '', name: _filterPerson!) &&
+            (d['who'] as String? ?? '').isNotEmpty) {
+          continue;
+        }
+      } else if (isFocus && user != null) {
+        if (!choreAssignedToOnDay(d, today, uid: user.uid, name: user.name) &&
+            (d['who'] as String? ?? '').isNotEmpty) {
+          continue;
+        }
+      }
+
+      zoner.add(doc);
+    }
+
+    zoner.sort((a, b) {
+      final ka = (a.data() as Map<String, dynamic>)['stadKey'] as String? ?? '';
+      final kb = (b.data() as Map<String, dynamic>)['stadKey'] as String? ?? '';
+      final ia = stadZoner.indexWhere((z) => z.key == ka);
+      final ib = stadZoner.indexWhere((z) => z.key == kb);
+      return (ia == -1 ? 99 : ia).compareTo(ib == -1 ? 99 : ib);
+    });
+
+    return zoner;
+  }
+
+  Widget _buildStadzonerHub({
+    required List<QueryDocumentSnapshot> zoner,
+    required Color dayColor,
+    required String familyId,
+    required bool isLowStimulus,
+  }) {
+    final today = DateTime.now();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('STÄDZONER', style: AppTheme.sectionLabelStyle),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.help_outline_rounded, size: 18),
+                    color: Colors.grey.shade500,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    tooltip: 'Städskåpet & Färgguide',
+                    onPressed: () => _openStadskapetGuide(context, familyId),
+                  ),
+                ],
+              ),
+              Text(
+                'Färgen på kortet = trasan du tar',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 146,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: zoner.length,
+            itemBuilder: (context, index) {
+              final doc = zoner[index];
+              final d = doc.data() as Map<String, dynamic>;
+              final title = (d['chore'] as String?) ??
+                  (d['title'] as String?) ??
+                  'Zon';
+              final pik = (d['piktogram'] as String?) ?? '🧹';
+              final stadKey = d['stadKey'] as String?;
+              final stadFarg = d['stadFarg'] as String?;
+              final knownZon = stadZonByKey(stadKey);
+              final farg = stadFarg ?? knownZon?.farg;
+              final fargHex = knownZon?.fargHex ??
+                  (farg == 'gul'
+                      ? StadFarger.gulHex
+                      : farg == 'vit'
+                          ? StadFarger.vitHex
+                          : farg == 'bla'
+                              ? StadFarger.blaHex
+                              : farg == 'rod'
+                                  ? StadFarger.rodHex
+                                  : null);
+              final trasaLabel = knownZon?.trasaLabel;
+              final verktyg = (d['verktyg'] as List? ??
+                      knownZon?.verktyg ??
+                      const [])
+                  .cast<String>();
+
+              Color? zoneColor;
+              if (fargHex != null && fargHex.isNotEmpty) {
+                try {
+                  zoneColor = Color(int.parse(
+                      'FF${fargHex.replaceFirst('#', '')}',
+                      radix: 16));
+                } catch (_) {}
+              }
+
+              final isDone = choreDoneOnDay(d, today);
+              final substeps = (d['substeps'] as List? ?? [])
+                  .cast<Map<String, dynamic>>();
+              final totalSteps = substeps.length;
+              final doneSteps =
+                  substeps.where((s) => s['isDone'] == true).length;
+
+              final cardColor = isLowStimulus
+                  ? Colors.white
+                  : (zoneColor != null
+                      ? Color.alphaBlend(
+                          zoneColor.withValues(alpha: isDone ? 0.04 : 0.12),
+                          Colors.white)
+                      : Colors.white);
+
+              final borderColor = isLowStimulus
+                  ? Colors.grey.shade300
+                  : (zoneColor != null
+                      ? zoneColor.withValues(alpha: isDone ? 0.2 : 0.45)
+                      : Colors.grey.shade300);
+
+              return Container(
+                width: 170,
+                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StadlagePage(
+                            choreId: doc.id,
+                            accent: zoneColor ?? dayColor,
+                          ),
+                        ),
+                      );
+                    },
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: isDone ? 0.55 : 1.0,
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: cardColor,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                              color: borderColor,
+                              width: isLowStimulus ? 1 : 1.5),
+                          boxShadow: isLowStimulus
+                              ? null
+                              : [
+                                  BoxShadow(
+                                    color: (zoneColor ?? Colors.black)
+                                        .withValues(alpha: 0.06),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: TrasaChip(
+                                    farg: farg,
+                                    fargHex: fargHex,
+                                    trasaLabel: trasaLabel,
+                                    verktyg: verktyg,
+                                    circleSize: 14,
+                                  ),
+                                ),
+                                if (isDone)
+                                  const Icon(
+                                    Icons.check_circle_rounded,
+                                    color: Color(0xFF6BAE75),
+                                    size: 18,
+                                  ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                Text(pik,
+                                    style: const TextStyle(fontSize: 26)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      decoration: isDone
+                                          ? TextDecoration.lineThrough
+                                          : null,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              '$doneSteps av $totalSteps steg',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeader(Color dayColor, bool isParent, String familyId) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     return Container(
       decoration: AppTheme.headerDecoration(),
@@ -476,6 +739,40 @@ class _SysslorPageState extends State<SysslorPage>
             },
             icon: Icon(Icons.bar_chart_rounded, color: textColor),
           ),
+          if (isParent)
+            PopupMenuButton<String>(
+              padding: EdgeInsets.zero,
+              icon: Icon(Icons.more_vert_rounded, color: textColor),
+              onSelected: (v) {
+                if (v == 'seed_stadzoner') {
+                  _openStadzonerSeeder(context, familyId);
+                } else if (v == 'stadskapet_guide') {
+                  _openStadskapetGuide(context, familyId);
+                }
+              },
+              itemBuilder: (ctx) => const [
+                PopupMenuItem(
+                  value: 'seed_stadzoner',
+                  child: Row(
+                    children: [
+                      Text('🧹', style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 10),
+                      Text('Skapa städzoner'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'stadskapet_guide',
+                  child: Row(
+                    children: [
+                      Text('🧴', style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 10),
+                      Text('Städskåpet & Färgguide'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -537,17 +834,64 @@ class _SysslorPageState extends State<SysslorPage>
     Color dayColor,
     List<UserModel> members,
     String familyId,
-    UserModel? user,
-  ) {
+    UserModel? user, {
+    String? subtitle,
+  }) {
     return RepaintBoundary(
       child: AgendaChoreRow(
         doc: doc,
+        day: DateTime.now(),
         dayColor: dayColor,
         familyMembers: members,
         familyId: familyId,
         currentUser: user,
         allowDrag: canEditDoc(user, doc.data() as Map<String, dynamic>),
         onComplete: _onChoreCompleted,
+        subtitle: subtitle,
+      ),
+    );
+  }
+
+  Widget _buildStaddagCard({
+    required int zoneCount,
+    required String nextDateStr,
+    required Color dayColor,
+  }) {
+    final zoneText = zoneCount == 1 ? '1 zon' : '$zoneCount zoner';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      decoration: AppTheme.cardDecoration(radius: 16),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const StaddagPage()),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '🧹 Städdag · $zoneText · nästa: $nextDateStr',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: Colors.grey.shade400,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -565,18 +909,30 @@ class _SysslorPageState extends State<SysslorPage>
 
   List<Widget> _buildFocusSlivers({
     required List<QueryDocumentSnapshot> today,
+    required List<QueryDocumentSnapshot> allChores,
     required Color dayColor,
     required List<UserModel> members,
     required String familyId,
     required UserModel? user,
+    required bool isParent,
   }) {
     final name = user?.name.split(' ').first ?? '';
     final total = today.length;
     final done =
-        today.where((d) => (d.data() as Map)['isDone'] == true).length;
+        today.where((d) => choreDoneOnDay(d.data() as Map<String, dynamic>, DateTime.now())).length;
+    final todayZoner = _getTodayStadzoner(allChores, user, true);
 
     return [
-      SliverToBoxAdapter(child: _buildHeader(dayColor)),
+      SliverToBoxAdapter(child: _buildHeader(dayColor, isParent, familyId)),
+      if (todayZoner.isNotEmpty)
+        SliverToBoxAdapter(
+          child: _buildStadzonerHub(
+            zoner: todayZoner,
+            dayColor: dayColor,
+            familyId: familyId,
+            isLowStimulus: AppTheme.lowStimuli,
+          ),
+        ),
       SliverToBoxAdapter(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
@@ -603,8 +959,8 @@ class _SysslorPageState extends State<SysslorPage>
             childCount: today.length,
           ),
         ),
-      const SliverToBoxAdapter(
-        child: SizedBox(height: WindowSize.navScrollPadding),
+      SliverToBoxAdapter(
+        child: SizedBox(height: navSafeBottom(context).bottom),
       ),
     ];
   }
@@ -612,16 +968,29 @@ class _SysslorPageState extends State<SysslorPage>
   List<Widget> _buildParentSlivers({
     required List<QueryDocumentSnapshot> today,
     required List<QueryDocumentSnapshot> open,
+    required List<QueryDocumentSnapshot> recurringLater,
     required List<QueryDocumentSnapshot> done,
+    required List<QueryDocumentSnapshot> allChores,
     required Color dayColor,
     required List<UserModel> members,
     required String familyId,
     required UserModel? user,
     required bool isParent,
   }) {
+    final todayZoner = _getTodayStadzoner(allChores, user, false);
+
     final slivers = <Widget>[
-      SliverToBoxAdapter(child: _buildHeader(dayColor)),
+      SliverToBoxAdapter(child: _buildHeader(dayColor, isParent, familyId)),
       SliverToBoxAdapter(child: _buildPersonFilter(members, dayColor)),
+      if (todayZoner.isNotEmpty)
+        SliverToBoxAdapter(
+          child: _buildStadzonerHub(
+            zoner: todayZoner,
+            dayColor: dayColor,
+            familyId: familyId,
+            isLowStimulus: AppTheme.lowStimuli,
+          ),
+        ),
       SliverToBoxAdapter(
         child: _buildChoreTemplatesStrip(
           familyId.isEmpty ? null : familyId,
@@ -667,6 +1036,120 @@ class _SysslorPageState extends State<SysslorPage>
           ),
         ),
       );
+    }
+
+    if (recurringLater.isNotEmpty) {
+      final stadDocs = recurringLater.where((doc) {
+        final d = doc.data() as Map<String, dynamic>;
+        final k = d['stadKey'] as String?;
+        return k != null && k.isNotEmpty;
+      }).toList();
+      final otherRecurring = recurringLater.where((doc) {
+        final d = doc.data() as Map<String, dynamic>;
+        final k = d['stadKey'] as String?;
+        return k == null || k.isEmpty;
+      }).toList();
+
+      slivers.add(
+        SliverToBoxAdapter(
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(() => _recurringExpanded = !_recurringExpanded),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+                child: Row(
+                  children: [
+                    Text('ÅTERKOMMANDE', style: AppTheme.sectionLabelStyle),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${recurringLater.length}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _recurringExpanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: Colors.grey.shade500,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      if (_recurringExpanded) {
+        if (stadDocs.isNotEmpty) {
+          DateTime? nextStadDate;
+          final today = DateTime.now();
+          for (final doc in stadDocs) {
+            final d = doc.data() as Map<String, dynamic>;
+            final next = nextChoreOccurrence(d, today);
+            if (next != null) {
+              if (nextStadDate == null || next.isBefore(nextStadDate)) {
+                nextStadDate = next;
+              }
+            }
+          }
+          nextStadDate ??= nextSaturdayAfter(today);
+          const days = [
+            '',
+            'måndag',
+            'tisdag',
+            'onsdag',
+            'torsdag',
+            'fredag',
+            'lördag',
+            'söndag',
+          ];
+          final dayName = days[nextStadDate.weekday];
+          final nextDateStr = '$dayName ${nextStadDate.day}/${nextStadDate.month}';
+
+          slivers.add(
+            SliverToBoxAdapter(
+              child: _buildStaddagCard(
+                zoneCount: stadDocs.length,
+                nextDateStr: nextDateStr,
+                dayColor: dayColor,
+              ),
+            ),
+          );
+        }
+
+        if (otherRecurring.isNotEmpty) {
+          final today = DateTime.now();
+          slivers.add(
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) {
+                  final doc = otherRecurring[i];
+                  final d = doc.data() as Map<String, dynamic>;
+                  final next = nextChoreOccurrence(d, today);
+                  final subtitle = next != null
+                      ? formatNextOccurrence(next)
+                      : 'nästa: > 14 dagar';
+                  return _choreRow(
+                    doc,
+                    dayColor,
+                    members,
+                    familyId,
+                    user,
+                    subtitle: subtitle,
+                  );
+                },
+                childCount: otherRecurring.length,
+              ),
+            ),
+          );
+        }
+      }
     }
 
     if (done.isNotEmpty) {
@@ -718,71 +1201,24 @@ class _SysslorPageState extends State<SysslorPage>
     }
 
     slivers.add(
-      const SliverToBoxAdapter(
-        child: SizedBox(height: WindowSize.navScrollPadding),
+      SliverToBoxAdapter(
+        child: SizedBox(height: navSafeBottom(context).bottom),
       ),
     );
     return slivers;
   }
 
-  Widget _buildFabColumn(Color dayColor, FamilyProvider fp, bool isFocus) {
+  Widget _buildFab(Color dayColor, FamilyProvider fp) {
     final bottom = MediaQuery.of(context).padding.bottom + 16;
     return Positioned(
       right: 16,
       bottom: bottom,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!isFocus) ...[
-            if (_readingActive)
-              FloatingActionButton.extended(
-                heroTag: 'sysslor_reading_stop',
-                onPressed: _toggleReading,
-                backgroundColor: const Color(0xFF6BAE75),
-                foregroundColor: Colors.white,
-                icon: const Icon(Icons.stop),
-                label: Text('📖 $_readingTimeStr'),
-              )
-            else
-              FloatingActionButton.extended(
-                heroTag: 'sysslor_reading_start',
-                onPressed: _toggleReading,
-                backgroundColor: Colors.white,
-                foregroundColor: AppTheme.getTextColor(),
-                icon: const Text('📖', style: TextStyle(fontSize: 18)),
-                label: const Text(
-                  'Jag läser nu',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            const SizedBox(height: 12),
-            FloatingActionButton(
-              heroTag: 'sysslor_add',
-              onPressed: () => _showAddSheet(fp, dayColor),
-              backgroundColor: dayColor,
-              foregroundColor: Colors.white,
-              child: const Icon(Icons.add_rounded),
-            ),
-          ] else
-            FloatingActionButton.extended(
-              heroTag: 'sysslor_reading_focus',
-              onPressed: _toggleReading,
-              backgroundColor: _readingActive
-                  ? const Color(0xFF6BAE75)
-                  : Colors.white,
-              foregroundColor:
-                  _readingActive ? Colors.white : AppTheme.getTextColor(),
-              icon: Text(
-                _readingActive ? '⏱️' : '📖',
-                style: const TextStyle(fontSize: 20),
-              ),
-              label: Text(
-                _readingActive ? 'Stop $_readingTimeStr' : 'Jag läser nu',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-        ],
+      child: FloatingActionButton(
+        heroTag: 'sysslor_add',
+        onPressed: () => _showAddSheet(fp, dayColor),
+        backgroundColor: dayColor,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.add_rounded),
       ),
     );
   }
@@ -819,15 +1255,19 @@ class _SysslorPageState extends State<SysslorPage>
               slivers: isFocus
                   ? _buildFocusSlivers(
                       today: split.today,
+                      allChores: fp.chores,
                       dayColor: dayColor,
                       members: members,
                       familyId: familyId,
                       user: user,
+                      isParent: user?.isParent ?? false,
                     )
                   : _buildParentSlivers(
                       today: split.today,
                       open: split.open,
+                      recurringLater: split.recurringLater,
                       done: split.done,
+                      allChores: fp.chores,
                       dayColor: dayColor,
                       members: members,
                       familyId: familyId,
@@ -835,7 +1275,7 @@ class _SysslorPageState extends State<SysslorPage>
                       isParent: user?.isParent ?? false,
                     ),
             ),
-          if (!fp.isLoading) _buildFabColumn(dayColor, fp, isFocus),
+          if (!fp.isLoading && !isFocus) _buildFab(dayColor, fp),
           ConfettiWidget(
             confettiController: _confettiController,
             blastDirectionality: BlastDirectionality.explosive,

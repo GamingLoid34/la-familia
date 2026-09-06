@@ -375,20 +375,21 @@ Uppdatera `workShiftIsActiveNow`, `member_presence.dart` och `conflict_detector.
 
 ## ⏰ FAS 5: Pålitlighet — appen ljuger aldrig om tid
 
+OfflineBanner, minutticker och family_status är redan klara eller borttagna.
+
 ### Steg
-**5.1 Midnattsbuggen i `FamilyProvider`:** `_subscribeToFamilyData` låser `dateKey(now)` vid prenumeration — efter midnatt visar Hem gårdagen. Fix: spara `_subscribedDateKey`; en `Timer` till nästa midnatt (samma mönster som `_MyAppState._scheduleMidnightRebuild`) som re-prenumererar dagens/morgondagens events, meals och notes med nytt datum. Glöm inte att förnya timern efter varje körning och avbryta i dispose.
+**5.1 Midnatt i `FamilyProvider`:** `_subscribeToFamilyData` låste tidigare `dateKey(now)` vid prenumeration. Fix: spara `_subscribedDateKey`; `Timer` till nästa midnatt som re-prenumererar dagens/morgondagens events, meals och notes; förnyas efter varje körning; avbryts i dispose. Dessutom `AppLifecycleState.resumed` → om dateKey ändrats, re-prenumerera direkt (telefon i fickan över natten).
 
-**5.2 Samma bugg i `agenda_page.dart`:** `_selectedDay/_focusedDay` sätts i initState och sidan hålls vid liv av AutomaticKeepAliveClientMixin. Vid midnatt (eller när appen resumas till ny dag — lyssna på `AppLifecycleState.resumed` och jämför dateKey): flytta valet till nya idag om användaren stod på gamla idag.
+**5.2 `KalenderPage`:** om vald dag == gamla "idag" vid midnatt/resume → flytta valet till nya idag (alla fyra lägen).
 
-**5.3 `rescheduleAll()` i NotificationService:** vid appstart (MainPage.initState, efter provider laddat — fire-and-forget): avboka alla väntande, gå igenom providerns events (daterade 14 dagar fram + återkommande expanderade) och sysslor med dueTime, schemalägg om enligt togglarna. Löser att återkommande tystnar 14 dagar efter senaste redigering. Byt samtidigt `idForDoc` från `String.hashCode` till en egen stabil hash (t.ex. FNV-1a över codeUnits) — hashCode är inte garanterat stabilt mellan Dart-versioner.
+**5.3 `rescheduleAllForFamily`:** vid appstart (`MainPage.initState`, efter providerns första data, fire-and-forget): avboka alla väntande lokala notiser, schemalägg om enligt togglarna — daterade events 14 dagar, återkommande event-instanser, sysslor med dueTime inkl. återkommande sysslors instanser. `idForDoc` = FNV-1a över codeUnits (inte `String.hashCode`).
 
-**5.4 Småfixar:** minut-ticker i `family_status_page.dart` (den fryser "Om 12 min"); ersätt dess oskyddade `_parseDateTime` med `date_utils.parseDateTime`; `TimerService` blir singleton så fokustimern överlever flikbyte + spela ljud/vibration vid noll.
+**5.4 `TimerService`:** singleton (överlever flikbyte) + ljud/vibration vid noll; bakgrund via schemalagd/omedelbar lokal notis med ljud.
 
 ### Verifieringsgate Fas 5
-- [ ] Ställ klockan 23:58, låt appen ligga uppe → 00:01 visar Hem nya dagen utan omstart
-- [ ] Återkommande tisdagsträning: rensa appens notiser i Android-inställningar → starta appen → notiser återschemalagda (verifiera i notisinställningarna)
-- [ ] Familjestatus tickar ner minut för minut
-- [ ] Flygplansläge → banner syns; timer som lämnas och öppnas igen tickar vidare och plingar vid noll
+- [ ] Ställ systemklockan till 23:59 → 00:01: Hem och Kalender visar nya dagen utan omstart
+- [ ] Rensa appens notiser i systeminställningarna → starta om appen → påminnelser återschemalagda
+- [ ] Timer som lämnas och öppnas igen tickar vidare och plingar vid noll
 
 ---
 

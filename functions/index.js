@@ -1,3 +1,4 @@
+/* eslint-disable linebreak-style, max-len, require-jsdoc, indent, object-curly-spacing, valid-jsdoc */
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
@@ -7,6 +8,26 @@ admin.initializeApp();
 const calendarFeeds = require("./calendar_feeds");
 exports.subscribeCalendarFeed = calendarFeeds.subscribeCalendarFeed;
 exports.syncCalendarFeeds = calendarFeeds.syncCalendarFeeds;
+
+const scheduleScan = require("./schedule_scan");
+exports.parseScheduleImage = scheduleScan.parseScheduleImage;
+exports.saveScheduleImport = scheduleScan.saveScheduleImport;
+
+const routineBuilder = require("./routine_builder");
+exports.generateRoutine = routineBuilder.generateRoutine;
+
+const visitBooking = require("./visit_booking");
+exports.visitApi = visitBooking.visitApi;
+exports.createOrGetVisitLink = visitBooking.createOrGetVisitLink;
+exports.regenerateVisitLink = visitBooking.regenerateVisitLink;
+exports.setVisitDayStatus = visitBooking.setVisitDayStatus;
+exports.listVisitBookings = visitBooking.listVisitBookings;
+exports.cancelVisitBookingAdmin = visitBooking.cancelVisitBookingAdmin;
+exports.onVisitBookingCreated = visitBooking.onVisitBookingCreated;
+exports.onPlannerEventDeleted = visitBooking.onPlannerEventDeleted;
+
+const webReminders = require("./web_reminders");
+exports.sendDueWebReminders = webReminders.sendDueWebReminders;
 
 // ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
 // Skickar push till familjemedlemmar. Respekterar:
@@ -55,6 +76,14 @@ async function sendFamilyPush({ familyId, excludeUids = [], onlyUids = null, tit
         tokens,
         notification: { title, body },
         android: { notification: { channelId: "family_channel" } },
+        webpush: {
+            notification: {
+                icon: "/icons/Icon-192.png",
+                badge: "/icons/Icon-192.png",
+            },
+            fcmOptions: { link: "https://la-familia-5d9f5.web.app/" },
+            headers: { Urgency: "high" },
+        },
     });
 
     const removals = [];
@@ -66,6 +95,7 @@ async function sendFamilyPush({ familyId, excludeUids = [], onlyUids = null, tit
                 const t = tokens[i];
                 removals.push(tokenOwner[t].update({
                     fcmTokens: admin.firestore.FieldValue.arrayRemove([t]),
+                    fcmTokensWeb: admin.firestore.FieldValue.arrayRemove([t]),
                 }));
             }
         }
@@ -73,6 +103,66 @@ async function sendFamilyPush({ familyId, excludeUids = [], onlyUids = null, tit
     await Promise.all(removals);
     console.log(`sendFamilyPush: "${title}" till ${tokens.length} enheter.`);
 }
+exports.sendFamilyPush = sendFamilyPush;
+
+// ─── TEST-PUSH (Diagnostik) ──────────────────────────────────────────────────
+// Auth krävs, ingen parent-gate (alla användare kan felsöka).
+// Skickar EN push endast till anroparens egna fcmTokens,
+// UTAN energy/upptagen/exclude-filter (diagnostik: verifierar att enheten tar emot push).
+exports.sendTestPush = onCall(async (request) => {
+    if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Du måste vara inloggad för att skicka en testnotis.");
+    }
+    const uid = request.auth.uid;
+    const db = admin.firestore();
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+        throw new HttpsError("not-found", "Användardokument hittades inte.");
+    }
+
+    const userData = userDoc.data() || {};
+    const tokens = userData.fcmTokens || [];
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+        return { success: false, count: 0, message: "Inga push-tokens registrerade för ditt konto." };
+    }
+
+    const title = "Testnotis 🔔";
+    const body = "Pushvägen fungerar!";
+
+    const res = await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: { title, body },
+        android: { notification: { channelId: "family_channel" } },
+        webpush: {
+            notification: {
+                icon: "/icons/Icon-192.png",
+                badge: "/icons/Icon-192.png",
+            },
+            fcmOptions: { link: "https://la-familia-5d9f5.web.app/" },
+            headers: { Urgency: "high" },
+        },
+    });
+
+    const removals = [];
+    res.responses.forEach((r, i) => {
+        if (!r.success) {
+            const code = r.error?.code || "";
+            if (code.includes("registration-token-not-registered") ||
+                code.includes("invalid-argument")) {
+                const t = tokens[i];
+                removals.push(userDoc.ref.update({
+                    fcmTokens: admin.firestore.FieldValue.arrayRemove([t]),
+                    fcmTokensWeb: admin.firestore.FieldValue.arrayRemove([t]),
+                }));
+            }
+        }
+    });
+    await Promise.all(removals);
+
+    const successCount = res.responses.filter((r) => r.success).length;
+    console.log(`sendTestPush: skickade till ${tokens.length} enheter för uid ${uid} (${successCount} lyckades).`);
+    return { success: true, count: tokens.length, successCount };
+});
 
 // Ny lapp på familjetavlan → alla utom avsändaren.
 exports.onFamilyNoteCreated = onDocumentCreated("family_notes/{id}", async (event) => {
@@ -217,8 +307,19 @@ exports.completeChore = onCall(async (request) => {
         const isParent = caller.role === "parent" || caller.role === "admin";
         const isCreator = chore.createdByUid === uid;
         const whoUid = typeof chore.whoUid === "string" ? chore.whoUid : "";
-        const unassigned = !whoUid;
-        const isAssignee = whoUid === uid;
+        const unassigned = !whoUid &&
+            !(Array.isArray(chore.rotationUids) && chore.rotationUids.length > 0);
+
+        const safeDay = (typeof dayKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dayKey))
+            ? dayKey
+            : new Date().toISOString().slice(0, 10);
+
+        const isRecurring = chore.isRecurring === true &&
+            chore.recurrence && typeof chore.recurrence === "object";
+        const dayAssignee = isRecurring
+            ? assigneeForDayJs(chore, safeDay)
+            : (whoUid || "");
+        const isAssignee = dayAssignee === uid || whoUid === uid;
 
         if (!isParent && !isCreator && !isAssignee && !unassigned) {
             throw new HttpsError(
@@ -227,7 +328,7 @@ exports.completeChore = onCall(async (request) => {
             );
         }
 
-        const logWhoUid = whoUid || uid;
+        const logWhoUid = dayAssignee || whoUid || uid;
         let logWhoName = chore.who || "";
         if (!logWhoName || logWhoUid === uid) {
             logWhoName = caller.name || logWhoName || "";
@@ -236,10 +337,6 @@ exports.completeChore = onCall(async (request) => {
             logWhoName = assigneeSnap.data()?.name || "";
         }
 
-        const isRecurring = chore.isRecurring === true;
-        const safeDay = (typeof dayKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dayKey))
-            ? dayKey
-            : new Date().toISOString().slice(0, 10);
         const logId = isRecurring ? `${choreId}_${safeDay}` : choreId;
         const logRef = db.collection("chore_log").doc(logId);
 
@@ -257,15 +354,96 @@ exports.completeChore = onCall(async (request) => {
                 date: safeDay,
                 completedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-            tx.update(choreRef, { isDone: true });
+            if (isRecurring) {
+                tx.update(choreRef, {
+                    doneDates: admin.firestore.FieldValue.arrayUnion(safeDay),
+                });
+            } else {
+                tx.update(choreRef, { isDone: true });
+            }
         } else {
             tx.delete(logRef);
-            tx.update(choreRef, { isDone: false });
+            if (isRecurring) {
+                tx.update(choreRef, {
+                    doneDates: admin.firestore.FieldValue.arrayRemove(safeDay),
+                });
+            } else {
+                tx.update(choreRef, { isDone: false });
+            }
         }
     });
 
     return { ok: true };
 });
+
+/** @param {string} s @return {Date|null} */
+function parseYmdUtc(s) {
+    if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+}
+
+/** @param {Date} a @param {Date} b */
+function daysBetweenUtc(a, b) {
+    return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/** @param {Record<string, any>} chore @param {string} dayKey */
+function recurringOccursOnDayJs(chore, dayKey) {
+    const rec = chore.recurrence;
+    if (!rec || typeof rec !== "object") return false;
+    const start = parseYmdUtc(rec.startDate || chore.dueDate || chore.date);
+    const day = parseYmdUtc(dayKey);
+    if (!start || !day) return false;
+    if (day < start) return false;
+    if (typeof rec.endDate === "string" && rec.endDate) {
+        const end = parseYmdUtc(rec.endDate);
+        if (end && day > end) return false;
+    }
+    const exceptions = Array.isArray(rec.exceptions) ? rec.exceptions : [];
+    if (exceptions.includes(dayKey)) return false;
+    const type = rec.type || "";
+    if (type === "daily") return true;
+    if (type === "weekly") {
+        return day.getUTCDay() === start.getUTCDay();
+    }
+    if (type === "biweekly") {
+        return day.getUTCDay() === start.getUTCDay() &&
+            daysBetweenUtc(start, day) % 14 === 0;
+    }
+    if (type === "monthly") {
+        return day.getUTCDate() === start.getUTCDate();
+    }
+    return false;
+}
+
+/** @param {Record<string, any>} chore @param {string} dayKey @return {string} */
+function assigneeForDayJs(chore, dayKey) {
+    const rotation = Array.isArray(chore.rotationUids)
+        ? chore.rotationUids.filter((u) => typeof u === "string" && u)
+        : [];
+    const whoUid = typeof chore.whoUid === "string" ? chore.whoUid : "";
+    if (rotation.length === 0) return whoUid;
+
+    const rec = chore.recurrence || {};
+    const start = parseYmdUtc(rec.startDate || chore.dueDate || chore.date);
+    const day = parseYmdUtc(dayKey);
+    if (!start || !day || !recurringOccursOnDayJs(chore, dayKey)) {
+        return rotation[0] || whoUid;
+    }
+    let count = 0;
+    const cur = new Date(start.getTime());
+    while (cur <= day) {
+        const y = cur.getUTCFullYear();
+        const m = String(cur.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(cur.getUTCDate()).padStart(2, "0");
+        const key = `${y}-${m}-${dd}`;
+        if (recurringOccursOnDayJs(chore, key)) count++;
+        cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    const idx = Math.max(0, count - 1) % rotation.length;
+    return rotation[idx] || whoUid;
+}
 
 // ─── SKAPA ANVÄNDARE (Callable Function) ─────────────────────────────────────
 exports.createUser = onCall(async (request) => {
@@ -578,18 +756,48 @@ async function buildFamilyPlannerSummary(familyId, startKey, endKey) {
             };
         }).filter((e) => e.title);
 
+    const nameByUid = Object.fromEntries(members.map((m) => [m.uid, m.name]));
+    const todayKey = startKey; // summary window start; chores use assignee for due/today
     const chores = choresSnap.docs
-        .filter((doc) => doc.data().isDone !== true)
         .map((doc) => {
             const d = doc.data();
+            const title = d.chore || d.title || "";
+            if (!title) return null;
+            const recurring = d.isRecurring === true && d.recurrence;
+            if (recurring) {
+                // Visa öppna förekomster i fönstret med dagens/aktuell assignee.
+                const due = typeof d.dueDate === "string" ? d.dueDate : "";
+                const dayForAssignee = /^\d{4}-\d{2}-\d{2}$/.test(due)
+                    ? due
+                    : todayKey;
+                const doneDates = Array.isArray(d.doneDates) ? d.doneDates : [];
+                if (doneDates.includes(dayForAssignee)) return null;
+                if (!recurringOccursOnDayJs(d, dayForAssignee) && due) {
+                    // Fallback: still list open recurring without forcing day match
+                }
+                const uid = assigneeForDayJs(d, dayForAssignee);
+                return {
+                    choreId: doc.id,
+                    title,
+                    who: nameByUid[uid] || d.who || "",
+                    whoUid: uid || d.whoUid || "",
+                    dueDate: due || dayForAssignee,
+                    weight: Number.isFinite(d.points) ? Number(d.points) : 0,
+                    recurring: true,
+                };
+            }
+            if (d.isDone === true) return null;
             return {
                 choreId: doc.id,
-                title: d.chore || d.title || "",
+                title,
                 who: d.who || "",
+                whoUid: d.whoUid || "",
                 dueDate: d.dueDate || "",
                 weight: Number.isFinite(d.points) ? Number(d.points) : 0,
+                recurring: false,
             };
-        }).filter((c) => c.title);
+        })
+        .filter(Boolean);
 
     return {
         window: { from: startKey, to: endKey },

@@ -44,6 +44,9 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
   int _points = 10;
   DateTime? _dueDate;
   TimeOfDay? _dueTime;
+  /// null = engång; annars daily/weekly/biweekly/monthly.
+  String? _recType;
+  final Set<String> _rotationUids = {};
   final List<String> _substeps = [];
   final _subCtrl = TextEditingController();
   bool _saving = false;
@@ -98,6 +101,17 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
           );
         }
       }
+      if (d['isRecurring'] == true) {
+        final rec = d['recurrence'] as Map<String, dynamic>?;
+        _recType = rec?['type'] as String? ?? 'weekly';
+        final start = rec?['startDate'] as String? ?? d['dueDate'] as String?;
+        if (start is String && start.isNotEmpty && _dueDate == null) {
+          _dueDate = parseDate(start);
+        }
+        for (final u in (d['rotationUids'] as List? ?? []).whereType<String>()) {
+          if (u.isNotEmpty) _rotationUids.add(u);
+        }
+      }
       _step = 1;
     } else {
       if (widget.startOnForm) _step = 1;
@@ -118,47 +132,90 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
       final weekOf = '${now.year}-W$weekNum';
       
       String whoColor = '';
-      if (_assignTo != null) {
+      String whoUid = uidForName(widget.familyMembers, _assignTo ?? '');
+      String whoName = _assignTo ?? '';
+      if (_rotationUids.isNotEmpty) {
+        whoUid = _rotationUids.first;
+        for (final m in widget.familyMembers) {
+          if (m.uid == whoUid) {
+            whoName = m.name;
+            whoColor = m.color;
+            break;
+          }
+        }
+      } else if (_assignTo != null) {
         final member = widget.familyMembers.where((m) => m.name == _assignTo).isNotEmpty
             ? widget.familyMembers.firstWhere((m) => m.name == _assignTo)
             : null;
         if (member != null) whoColor = member.color;
       }
 
+      final startDay = _dueDate ?? DateTime(now.year, now.month, now.day);
+      final timeStr = _dueTime == null
+          ? null
+          : '${_dueTime!.hour.toString().padLeft(2, '0')}:'
+              '${_dueTime!.minute.toString().padLeft(2, '0')}';
+
+      Map<String, dynamic> recurrenceFields() {
+        if (_recType == null) {
+          return {
+            'isRecurring': false,
+            'doneDates': FieldValue.delete(),
+            'rotationUids': FieldValue.delete(),
+            'recurrence': FieldValue.delete(),
+          };
+        }
+        return {
+          'isRecurring': true,
+          'isDone': false,
+          'doneDates': <String>[],
+          'dueDate': _dueDateKey(startDay),
+          'rotationUids': _rotationUids.toList(),
+          'recurrence': {
+            'type': _recType,
+            'startDate': _dueDateKey(startDay),
+            'endDate': null,
+            'exceptions': <String>[],
+          },
+          'dueTime': ?timeStr,
+        };
+      }
+
       if (widget.choreToEdit != null) {
         final upd = <String, dynamic>{
           'chore': _title.text.trim(),
           'piktogram': _pik,
-          'who': _assignTo ?? '',
-          'whoUid': uidForName(widget.familyMembers, _assignTo ?? ''),
+          'who': whoName,
+          'whoUid': whoUid,
           'whoColor': whoColor,
           'points': _points,
           'substeps':
               _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
+          ...recurrenceFields(),
         };
-        if (_dueDate != null) {
-          upd['dueDate'] = _dueDateKey(_dueDate!);
-          if (_dueTime != null) {
-            upd['dueTime'] =
-                '${_dueTime!.hour.toString().padLeft(2, '0')}:${_dueTime!.minute.toString().padLeft(2, '0')}';
+        if (_recType == null) {
+          if (_dueDate != null) {
+            upd['dueDate'] = _dueDateKey(_dueDate!);
+            if (timeStr != null) {
+              upd['dueTime'] = timeStr;
+            } else {
+              upd['dueTime'] = FieldValue.delete();
+            }
           } else {
+            upd['dueDate'] = FieldValue.delete();
             upd['dueTime'] = FieldValue.delete();
           }
-        } else {
-          upd['dueDate'] = FieldValue.delete();
-          upd['dueTime'] = FieldValue.delete();
         }
         final docId = widget.choreToEdit!.id;
-        await NotificationService.cancel(docId);
+        final old = widget.choreToEdit!.data() as Map<String, dynamic>;
+        await NotificationService.cancelChoreReminders(docId, old);
         await widget.choreToEdit!.reference.update(upd);
-        final due = NotificationService.choreDueDateTime(upd);
-        if (due != null) {
-          await NotificationService.scheduleChoreReminder(
-            docId: docId,
-            title: _title.text.trim(),
-            dueAt: due,
-          );
-        }
+        final merged = {...old, ...upd}
+          ..removeWhere((_, v) => v is FieldValue);
+        await NotificationService.scheduleChoreReminders(
+          docId: docId,
+          data: merged,
+        );
       } else {
         final fid = _effectiveFamilyId();
         if (fid.isEmpty) {
@@ -178,23 +235,36 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
         final data = <String, dynamic>{
           'chore': _title.text.trim(),
           'piktogram': _pik,
-          'who': _assignTo ?? '',
-          'whoUid': uidForName(widget.familyMembers, _assignTo ?? ''),
+          'who': whoName,
+          'whoUid': whoUid,
           'whoColor': whoColor,
           'isDone': false,
           'points': _points,
-          'isRecurring': false,
           'familyId': fid,
           'weekOf': weekOf,
           'substeps': _substeps.map((s) => {'title': s, 'isDone': false}).toList(),
           if (FirebaseAuth.instance.currentUser != null)
             'createdByUid': FirebaseAuth.instance.currentUser!.uid,
         };
-        if (_dueDate != null) {
-          data['dueDate'] = _dueDateKey(_dueDate!);
-          if (_dueTime != null) {
-            data['dueTime'] =
-                '${_dueTime!.hour.toString().padLeft(2, '0')}:${_dueTime!.minute.toString().padLeft(2, '0')}';
+        if (_recType != null) {
+          data.addAll({
+            'isRecurring': true,
+            'doneDates': <String>[],
+            'dueDate': _dueDateKey(startDay),
+            'rotationUids': _rotationUids.toList(),
+            'recurrence': {
+              'type': _recType,
+              'startDate': _dueDateKey(startDay),
+              'endDate': null,
+              'exceptions': <String>[],
+            },
+            'dueTime': ?timeStr,
+          });
+        } else {
+          data['isRecurring'] = false;
+          if (_dueDate != null) {
+            data['dueDate'] = _dueDateKey(_dueDate!);
+            if (timeStr != null) data['dueTime'] = timeStr;
           }
         }
         String savedDocId;
@@ -210,21 +280,17 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
             'title': _title.text.trim(),
             'piktogram': _pik,
             'points': _points.clamp(1, 999),
-            if (_assignTo != null && _assignTo!.isNotEmpty) 'defaultWho': _assignTo,
+            if (whoName.isNotEmpty) 'defaultWho': whoName,
           });
           await batch.commit();
         } else {
           final ref = await FirebaseFirestore.instance.collection('chores').add(data);
           savedDocId = ref.id;
         }
-        final due = NotificationService.choreDueDateTime(data);
-        if (due != null) {
-          await NotificationService.scheduleChoreReminder(
-            docId: savedDocId,
-            title: _title.text.trim(),
-            dueAt: due,
-          );
-        }
+        await NotificationService.scheduleChoreReminders(
+          docId: savedDocId,
+          data: data,
+        );
       }
 
       if (mounted) {
@@ -374,6 +440,56 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
           }),
           child: const Text('Ta bort specifik dag'),
         ),
+      const SizedBox(height: 12),
+      Text('Upprepning', style: AppTheme.sectionLabelStyle),
+      const SizedBox(height: 6),
+      Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (final e in [
+            (null, 'Engång'),
+            ('daily', 'Varje dag'),
+            ('weekly', 'Varje vecka'),
+            ('biweekly', 'Varannan vecka'),
+            ('monthly', 'Varje månad'),
+          ])
+            ChoiceChip(
+              label: Text(e.$2, style: const TextStyle(fontSize: 12)),
+              selected: _recType == e.$1,
+              selectedColor: dayColor.withValues(alpha: 0.2),
+              onSelected: (_) => setState(() {
+                _recType = e.$1;
+                if (_recType == null) _rotationUids.clear();
+                if (_recType != null && _dueDate == null) {
+                  _dueDate = DateTime.now();
+                }
+              }),
+            ),
+        ],
+      ),
+      if (_recType != null) ...[
+        const SizedBox(height: 10),
+        Text('Roterar mellan (valfritt)', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          children: widget.familyMembers.map((m) {
+            final sel = _rotationUids.contains(m.uid);
+            return FilterChip(
+              label: Text(m.name.split(' ').first),
+              selected: sel,
+              onSelected: (v) => setState(() {
+                if (v) {
+                  _rotationUids.add(m.uid);
+                } else {
+                  _rotationUids.remove(m.uid);
+                }
+              }),
+            );
+          }).toList(),
+        ),
+      ],
       const SizedBox(height: 12),
       Text('Tilldela', style: AppTheme.sectionLabelStyle),
       const SizedBox(height: 8),

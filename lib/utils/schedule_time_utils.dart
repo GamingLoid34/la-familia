@@ -53,14 +53,23 @@ bool plannerTimedEventIsActiveNow(Map<String, dynamic> d, DateTime now) {
 ({DateTime start, DateTime end})? shiftInterval(Map<String, dynamic> shift) {
   final day = parseYmdDate(shift['date']);
   if (day == null) return null;
-  final st = parseHmOnDate(shift['startTime'] as String?, day);
+  final startField = (shift['startTime'] ?? shift['start']) as String?;
+  final endField = (shift['endTime'] ?? shift['end']) as String?;
+  final st = parseHmOnDate(startField, day);
   if (st == null) return null;
-  var en = parseHmOnDate(shift['endTime'] as String?, day);
+  var en = parseHmOnDate(endField, day);
   if (en == null) return null;
   if (!en.isAfter(st)) {
     en = en.add(const Duration(days: 1));
   }
   return (start: st, end: en);
+}
+
+/// True om arbetspasset spänner över midnatt (startar ett dygn och slutar nästa).
+bool isNightShift(Map<String, dynamic> shift) {
+  final interval = shiftInterval(shift);
+  if (interval == null) return false;
+  return interval.end.day != interval.start.day;
 }
 
 /// True om passet overlappar [day]s kalenderdygn (inkl. nattpass fre→lör).
@@ -76,6 +85,101 @@ bool workShiftIsActiveNow(Map<String, dynamic> d, DateTime now) {
   final interval = shiftInterval(d);
   if (interval == null) return false;
   return !now.isBefore(interval.start) && now.isBefore(interval.end);
+}
+
+/// Min start–max slut för schema-lektioner (samma logik som veckogrid).
+({String? minStart, String? maxEnd}) scheduleTimeSpan(
+  Iterable<Map<String, dynamic>> docs,
+) {
+  String? minStart;
+  String? maxEnd;
+  for (final d in docs) {
+    final t = (d['time'] as String? ?? '').trim();
+    if (t.isEmpty) continue;
+    final endRaw = (d['endTime'] as String? ?? '').trim();
+    final end = endRaw.isNotEmpty ? endRaw : t;
+    if (minStart == null || t.compareTo(minStart) < 0) minStart = t;
+    if (maxEnd == null || end.compareTo(maxEnd) > 0) maxEnd = end;
+  }
+  return (minStart: minStart, maxEnd: maxEnd);
+}
+
+/// Härleder schemaetikett ('Skola', 'Rehab', 'Jobb', 'Schema') från ett dokument eller en map.
+String schemaLabelFor(dynamic docOrMap) {
+  Map<String, dynamic> d;
+  if (docOrMap is DocumentSnapshot) {
+    d = (docOrMap.data() as Map<String, dynamic>?) ?? const {};
+  } else if (docOrMap is Map<String, dynamic>) {
+    d = docOrMap;
+  } else if (docOrMap is Map) {
+    d = Map<String, dynamic>.from(docOrMap);
+  } else {
+    return 'Schema';
+  }
+
+  final explicitLabel = (d['schemaLabel'] as String?)?.trim();
+  if (explicitLabel != null && explicitLabel.isNotEmpty) {
+    return explicitLabel;
+  }
+
+  final pik = (d['piktogram'] as String?)?.trim();
+  if (pik == '🏥') return 'Rehab';
+  if (pik == '💼') return 'Jobb';
+  if (pik == '🏫') return 'Skola';
+  if (pik == '📋') return 'Schema';
+
+  final calName = ((d['calendarName'] ?? d['title'] ?? '') as String).toLowerCase();
+  if (calName.contains('rehab') || calName.contains('klinik')) return 'Rehab';
+
+  return 'Skola';
+}
+
+/// Härleder schemapiktogram ('🏫', '🏥', '💼', '📋') från ett dokument eller en map.
+String schemaPiktogramFor(dynamic docOrMap) {
+  Map<String, dynamic> d;
+  if (docOrMap is DocumentSnapshot) {
+    d = (docOrMap.data() as Map<String, dynamic>?) ?? const {};
+  } else if (docOrMap is Map<String, dynamic>) {
+    d = docOrMap;
+  } else if (docOrMap is Map) {
+    d = Map<String, dynamic>.from(docOrMap);
+  } else {
+    return '🏫';
+  }
+
+  final explicitPik = (d['piktogram'] as String?)?.trim();
+  if (explicitPik != null && explicitPik.isNotEmpty) {
+    return explicitPik;
+  }
+
+  final label = (d['schemaLabel'] as String?)?.trim().toLowerCase();
+  if (label == 'rehab') return '🏥';
+  if (label == 'jobb') return '💼';
+  if (label == 'skola') return '🏫';
+  if (label == 'schema' || label == 'annat') return '📋';
+
+  final calName = ((d['calendarName'] ?? d['title'] ?? '') as String).toLowerCase();
+  if (calName.contains('rehab') || calName.contains('klinik')) return '🏥';
+
+  return '🏫';
+}
+
+/// Etikett t.ex. `🏥 Rehab 08:45–14:00` eller `🏫 Skola · Céline 08:45–14:00`.
+String scheduleBlockLabel(
+  Iterable<Map<String, dynamic>> docs, {
+  String? title,
+  String? piktogram,
+}) {
+  final docsList = docs.toList();
+  final first = docsList.isNotEmpty ? docsList.first : const <String, dynamic>{};
+  final pik = piktogram ?? (docsList.isNotEmpty ? schemaPiktogramFor(first) : '🏫');
+  final resolvedTitle = title ?? (docsList.isNotEmpty ? schemaLabelFor(first) : 'Skola');
+
+  final span = scheduleTimeSpan(docs);
+  if (span.minStart != null && span.maxEnd != null) {
+    return '$pik $resolvedTitle ${span.minStart}–${span.maxEnd}';
+  }
+  return '$pik $resolvedTitle';
 }
 
 bool busySessionIsActiveNow(Map<String, dynamic> d, DateTime now) {

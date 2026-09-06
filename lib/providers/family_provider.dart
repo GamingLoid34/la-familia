@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,7 +9,23 @@ import '../services/widget_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/recurrence.dart';
 
-class FamilyProvider extends ChangeNotifier {
+class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
+  bool _syncError = false;
+  DateTime? _lastSyncAt;
+
+  bool get syncError => _syncError;
+  DateTime? get lastSyncAt => _lastSyncAt;
+
+  void _handleStreamSuccess() {
+    _syncError = false;
+    _lastSyncAt = DateTime.now();
+  }
+
+  void _handleStreamError(String streamName, Object e, StackTrace stack) {
+    developer.log('FamilyProvider: fel i $streamName', error: e, stackTrace: stack);
+    _syncError = true;
+    notifyListeners();
+  }
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   List<QueryDocumentSnapshot> _chores = [];
@@ -42,6 +59,12 @@ class FamilyProvider extends ChangeNotifier {
   StreamSubscription? _routinesSub;
   StreamSubscription? _mealsSub;
   StreamSubscription? _familyDocSub;
+
+  /// Familj som datumprenumerationerna gäller.
+  String? _activeFamilyId;
+  /// dateKey som dagens/morgondagens queries är låsta till.
+  String? _subscribedDateKey;
+  Timer? _midnightTimer;
 
   UserModel? get currentUser => _currentUser;
   List<UserModel> get familyMembers => _familyMembers;
@@ -87,6 +110,9 @@ class FamilyProvider extends ChangeNotifier {
   }
 
   List<FamilyNote> get todayNotes => _todayNotes;
+
+  /// Återkommande händelser i familjen.
+  List<QueryDocumentSnapshot> get recurringEvents => _recurringEvents;
 
   /// Familjens morgon-/kvällsrutiner (ROADMAP Etapp 7).
   List<QueryDocumentSnapshot> get routines => _routines;
@@ -143,6 +169,7 @@ class FamilyProvider extends ChangeNotifier {
   }
 
   FamilyProvider() {
+    WidgetsBinding.instance.addObserver(this);
     FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user == null) {
         _clearAll();
@@ -152,7 +179,58 @@ class FamilyProvider extends ChangeNotifier {
     });
   }
 
+  int get activeSubscriptionsCount {
+    var count = 0;
+    if (_userSub != null) count++;
+    if (_familyDocSub != null) count++;
+    if (_familySub != null) count++;
+    if (_choresSub != null) count++;
+    if (_recurringSub != null) count++;
+    if (_routinesSub != null) count++;
+    if (_eventsSub != null) count++;
+    if (_tomorrowSub != null) count++;
+    if (_mealsSub != null) count++;
+    if (_notesSub != null) count++;
+    return count;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ensureDateSubscriptionsFresh();
+    }
+  }
+
+  /// Om dateKey ändrats sedan senaste prenumeration → re-prenumerera
+  /// dagens/morgondagens events, meals och notes.
+  /// Kan tvingas vid t.ex. uppvaknande från sömn med [force].
+  void ensureDateSubscriptionsFresh({bool force = false}) {
+    final today = dateKey(DateTime.now());
+    if (!force && _subscribedDateKey == today) return;
+    _resubscribeDateBound();
+  }
+
+  void _scheduleMidnightResubscribe() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(nextMidnight.difference(now), () {
+      _resubscribeDateBound();
+      _scheduleMidnightResubscribe();
+    });
+  }
+
+  void _resubscribeDateBound() {
+    final fid = _activeFamilyId;
+    if (fid == null || fid.isEmpty) return;
+    _subscribeDateBound(fid);
+    _rebuildEventCaches();
+    notifyListeners();
+  }
+
   void _clearAll() {
+    _syncError = false;
+    _lastSyncAt = null;
     _currentUser = null;
     _familyMembers = [];
     _chores = [];
@@ -176,6 +254,9 @@ class FamilyProvider extends ChangeNotifier {
     _mealsSub?.cancel();
     _todayMeals = [];
     _familyDocSub?.cancel();
+    _midnightTimer?.cancel();
+    _activeFamilyId = null;
+    _subscribedDateKey = null;
     _homeLat = null;
     _homeLon = null;
     _homeName = null;
@@ -191,6 +272,7 @@ class FamilyProvider extends ChangeNotifier {
   void _initUser(String uid) {
     _userSub?.cancel();
     _userSub = FirebaseFirestore.instance.collection('users').doc(uid).snapshots().listen((snap) {
+      _handleStreamSuccess();
       if (snap.exists) {
         _currentUser = UserModel.fromMap(snap.id, snap.data()!);
         _subscribeToFamilyData(_currentUser!.familyId);
@@ -199,7 +281,7 @@ class FamilyProvider extends ChangeNotifier {
       }
       _isLoading = false;
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('users', e, stack));
   }
 
   void _subscribeToFamilyData(String? familyId) {
@@ -215,6 +297,9 @@ class FamilyProvider extends ChangeNotifier {
       _routines = [];
       _mealsSub?.cancel();
       _todayMeals = [];
+      _midnightTimer?.cancel();
+      _activeFamilyId = null;
+      _subscribedDateKey = null;
       _familyMembers = [];
       _chores = [];
       _todayDateEvents = [];
@@ -235,6 +320,8 @@ class FamilyProvider extends ChangeNotifier {
       return;
     }
 
+    _activeFamilyId = familyId;
+
     // Familjedokument (hemposition m.m.)
     _familyDocSub?.cancel();
     _familyDocSub = FirebaseFirestore.instance
@@ -242,6 +329,7 @@ class FamilyProvider extends ChangeNotifier {
         .doc(familyId)
         .snapshots()
         .listen((snap) {
+      _handleStreamSuccess();
       if (snap.exists) {
         final d = snap.data()!;
         _homeLat = (d['homeLat'] as num?)?.toDouble();
@@ -274,13 +362,14 @@ class FamilyProvider extends ChangeNotifier {
         };
       }
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('families', e, stack));
 
     // Lyssna på familjemedlemmar
     _familySub?.cancel();
     _familySub = FirebaseFirestore.instance.collection('users')
         .where('familyId', isEqualTo: familyId)
         .snapshots().listen((snap) {
+      _handleStreamSuccess();
       _familyMembers = snap.docs.map((doc) => UserModel.fromMap(doc.id, doc.data())).toList();
       // Sortera: föräldrar först, sedan alfabetiskt
       _familyMembers.sort((a, b) {
@@ -289,39 +378,17 @@ class FamilyProvider extends ChangeNotifier {
         return a.name.compareTo(b.name);
       });
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('familyMembers', e, stack));
 
     // Lyssna på familjens sysslor
     _choresSub?.cancel();
     _choresSub = FirebaseFirestore.instance.collection('chores')
         .where('familyId', isEqualTo: familyId)
         .snapshots().listen((snap) {
+      _handleStreamSuccess();
       _chores = snap.docs;
       notifyListeners();
-    });
-
-    // Lyssna på dagens händelser (datum migrerade till paddat format 2026-06-11).
-    _eventsSub?.cancel();
-    final now = DateTime.now();
-    _eventsSub = FirebaseFirestore.instance.collection('planner_events')
-        .where('familyId', isEqualTo: familyId)
-        .where('date', isEqualTo: dateKey(now))
-        .snapshots().listen((snap) {
-      _todayDateEvents = snap.docs;
-      _rebuildEventCaches();
-      notifyListeners();
-    });
-
-    // Morgondagens daterade händelser — för "I morgon"-vyn.
-    _tomorrowSub?.cancel();
-    _tomorrowSub = FirebaseFirestore.instance.collection('planner_events')
-        .where('familyId', isEqualTo: familyId)
-        .where('date', isEqualTo: dateKey(now.add(const Duration(days: 1))))
-        .snapshots().listen((snap) {
-      _tomorrowDateEvents = snap.docs;
-      _rebuildEventCaches();
-      notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('chores', e, stack));
 
     // Återkommande händelser — expanderas i todayEvents-gettern.
     _recurringSub?.cancel();
@@ -329,10 +396,11 @@ class FamilyProvider extends ChangeNotifier {
         .where('familyId', isEqualTo: familyId)
         .where('isRecurring', isEqualTo: true)
         .snapshots().listen((snap) {
+      _handleStreamSuccess();
       _recurringEvents = snap.docs;
       _rebuildEventCaches();
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('recurringEvents', e, stack));
 
     // Rutiner (morgon/kväll) för hela familjen.
     _routinesSub?.cancel();
@@ -341,11 +409,42 @@ class FamilyProvider extends ChangeNotifier {
         .where('familyId', isEqualTo: familyId)
         .snapshots()
         .listen((snap) {
+      _handleStreamSuccess();
       _routines = snap.docs;
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('routines', e, stack));
 
-    // Dagens middag (Etapp 12).
+    _subscribeDateBound(familyId);
+    _scheduleMidnightResubscribe();
+  }
+
+  /// Dagens/morgondagens events, meals och notes — måste bytas vid midnatt.
+  void _subscribeDateBound(String familyId) {
+    final now = DateTime.now();
+    _subscribedDateKey = dateKey(now);
+
+    _eventsSub?.cancel();
+    _eventsSub = FirebaseFirestore.instance.collection('planner_events')
+        .where('familyId', isEqualTo: familyId)
+        .where('date', isEqualTo: dateKey(now))
+        .snapshots().listen((snap) {
+      _handleStreamSuccess();
+      _todayDateEvents = snap.docs;
+      _rebuildEventCaches();
+      notifyListeners();
+    }, onError: (e, stack) => _handleStreamError('todayDateEvents', e, stack));
+
+    _tomorrowSub?.cancel();
+    _tomorrowSub = FirebaseFirestore.instance.collection('planner_events')
+        .where('familyId', isEqualTo: familyId)
+        .where('date', isEqualTo: dateKey(now.add(const Duration(days: 1))))
+        .snapshots().listen((snap) {
+      _handleStreamSuccess();
+      _tomorrowDateEvents = snap.docs;
+      _rebuildEventCaches();
+      notifyListeners();
+    }, onError: (e, stack) => _handleStreamError('tomorrowDateEvents', e, stack));
+
     _mealsSub?.cancel();
     _mealsSub = FirebaseFirestore.instance
         .collection('meals')
@@ -353,27 +452,29 @@ class FamilyProvider extends ChangeNotifier {
         .where('date', isEqualTo: dateKey(now))
         .snapshots()
         .listen((snap) {
+      _handleStreamSuccess();
       _todayMeals = snap.docs;
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('todayMeals', e, stack));
 
-    // Dagens familjenotiser (alltid zero-paddade — ny collection).
     _notesSub?.cancel();
-    final today = dateKey(now);
     _notesSub = FirebaseFirestore.instance
         .collection('family_notes')
         .where('familyId', isEqualTo: familyId)
-        .where('date', isEqualTo: today)
+        .where('date', isEqualTo: dateKey(now))
         .snapshots()
         .listen((snap) {
+      _handleStreamSuccess();
       _todayNotes = snap.docs.map((d) => FamilyNote.fromDoc(d)).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       notifyListeners();
-    });
+    }, onError: (e, stack) => _handleStreamError('familyNotes', e, stack));
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _midnightTimer?.cancel();
     _userSub?.cancel();
     _familySub?.cancel();
     _choresSub?.cancel();
@@ -383,6 +484,7 @@ class FamilyProvider extends ChangeNotifier {
     _notesSub?.cancel();
     _routinesSub?.cancel();
     _mealsSub?.cancel();
+    _familyDocSub?.cancel();
     _widgetDebounce?.cancel();
     _notifyTimer?.cancel();
     super.dispose();

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,43 +11,36 @@ import 'package:table_calendar/table_calendar.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
+import '../utils/chore_utils.dart';
 import '../utils/conflict_detector.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
 import '../utils/member_presence.dart';
 import '../utils/minute_ticker.dart';
+import '../services/user_service.dart';
 import '../utils/permissions.dart';
 import '../utils/person_match.dart';
 import '../utils/recurrence.dart';
 import '../widgets/add_event_sheet.dart';
 import '../widgets/busy_check_in_sheet.dart';
 import '../widgets/family_notes_strip.dart';
-import '../widgets/kalender_day_view.dart';
-import '../widgets/member_avatar.dart';
+import '../utils/schedule_display.dart';
+import '../utils/schedule_time_utils.dart';
+import '../widgets/activity_detail_sheet.dart';
+import '../widgets/kalender_month_view.dart';
 import '../widgets/member_day_sheet.dart';
 import '../widgets/quick_add_bar.dart';
 import '../widgets/week_grid.dart';
+import '../widgets/week_list.dart';
+import '../widgets/weather_widgets.dart';
+import '../utils/event_actions.dart';
 import 'agenda_page.dart';
-import 'calendar_import_page.dart';
-import 'meal_planner_page.dart';
-import 'work_schedule_page.dart';
+import 'staddag_page.dart';
 
-enum KalenderLage { dag, vecka, manad, agenda }
+enum KalenderLage { dag, vecka, manad }
 
 const _lagePrefKey = 'kalender_lage';
-
-/// Syssla utan `dueDate` visas alla dagar; med datum bara den dagen.
-bool _choreVisibleOnDay(Map<String, dynamic> d, DateTime day) {
-  final raw = d['dueDate'];
-  if (raw == null) return true;
-  if (raw is String && raw.isEmpty) return true;
-  if (raw is String) {
-    final parsed = parseDate(raw);
-    if (parsed == null) return true;
-    return isSameDay(parsed, day);
-  }
-  return true;
-}
+const _fullscreenPrefKey = 'kalender_fullscreen';
 
 class KalenderPage extends StatefulWidget {
   const KalenderPage({super.key});
@@ -56,24 +50,77 @@ class KalenderPage extends StatefulWidget {
 }
 
 class _KalenderPageState extends State<KalenderPage>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   @override
   bool get wantKeepAlive => true;
 
   KalenderLage _lage = KalenderLage.dag;
   bool _lageLoaded = false;
+  bool _fullscreen = false;
   DateTime _selectedDay = DateTime.now();
   DateTime _focusedDay = DateTime.now();
   late DateTime _weekStart;
   String? _filterPerson;
   String? _filterPersonUid;
+  /// dateKey för "idag" när valet senast synkades — för midnatts-/resume-roll.
+  String _anchoredTodayKey = dateKey(DateTime.now());
+  Timer? _midnightTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _weekStart = _mondayOf(DateTime.now());
     MinuteTicker.ensureRunning();
+    MinuteTicker.now.addListener(_onMinuteTick);
+    _scheduleMidnightRoll();
     _loadLage();
+  }
+
+  @override
+  void dispose() {
+    MinuteTicker.now.removeListener(_onMinuteTick);
+    _midnightTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      context.read<FamilyProvider>().ensureDateSubscriptionsFresh();
+      _maybeRollSelectedToToday();
+    }
+  }
+
+  void _onMinuteTick() => _maybeRollSelectedToToday();
+
+  void _scheduleMidnightRoll() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final next = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(next.difference(now), () {
+      _maybeRollSelectedToToday();
+      _scheduleMidnightRoll();
+    });
+  }
+
+  /// Om vald dag var gamla "idag" → flytta till nya idag (alla lägen).
+  void _maybeRollSelectedToToday() {
+    final now = DateTime.now();
+    final nowKey = dateKey(now);
+    if (nowKey == _anchoredTodayKey) return;
+    final oldToday = parseDate(_anchoredTodayKey);
+    final wasOnOldToday =
+        oldToday != null && isSameDay(_selectedDay, oldToday);
+    _anchoredTodayKey = nowKey;
+    if (!wasOnOldToday || !mounted) return;
+    final today = DateTime(now.year, now.month, now.day);
+    setState(() {
+      _selectedDay = today;
+      _focusedDay = today;
+      _weekStart = _mondayOf(today);
+    });
   }
 
   static DateTime _mondayOf(DateTime d) =>
@@ -83,8 +130,17 @@ class _KalenderPageState extends State<KalenderPage>
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_lagePrefKey);
+      final fs = prefs.getBool(_fullscreenPrefKey) ?? false;
       if (!mounted) return;
       if (saved != null) {
+        if (saved == 'agenda') {
+          setState(() {
+            _lage = KalenderLage.dag;
+            _fullscreen = fs;
+            _lageLoaded = true;
+          });
+          return;
+        }
         KalenderLage? parsed;
         for (final e in KalenderLage.values) {
           if (e.name == saved) {
@@ -95,6 +151,7 @@ class _KalenderPageState extends State<KalenderPage>
         if (parsed != null) {
           setState(() {
             _lage = parsed!;
+            _fullscreen = fs;
             _lageLoaded = true;
           });
           return;
@@ -105,12 +162,50 @@ class _KalenderPageState extends State<KalenderPage>
         _lage = (provider.currentUser?.isParent ?? false)
             ? KalenderLage.vecka
             : KalenderLage.dag;
+        _fullscreen = fs;
         _lageLoaded = true;
       });
     } catch (e, stack) {
       developer.log('kalender_lage load', error: e, stackTrace: stack);
       if (mounted) setState(() => _lageLoaded = true);
     }
+  }
+
+  Future<void> _toggleFullscreen() async {
+    final next = !_fullscreen;
+    setState(() => _fullscreen = next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_fullscreenPrefKey, next);
+    } catch (e, stack) {
+      developer.log('kalender_fullscreen save', error: e, stackTrace: stack);
+    }
+  }
+
+  Map<String, Color> _presenceMap(
+    List<UserModel> members,
+    List<QueryDocumentSnapshot> todayEvents,
+    List<QueryDocumentSnapshot> shifts,
+    List<QueryDocumentSnapshot> busyDocs,
+  ) {
+    final out = <String, Color>{};
+    for (final m in members) {
+      final memberEvents = todayEvents.where((doc) {
+        return eventIncludesPerson(
+          doc.data() as Map<String, dynamic>,
+          uid: m.uid,
+          name: m.name,
+        );
+      }).toList();
+      final p = computeMemberPresence(
+        m,
+        memberTodayEvents: memberEvents,
+        familyShiftDocs: shifts,
+        familyBusyDocs: busyDocs,
+      );
+      out[m.uid] = p.ringColor;
+    }
+    return out;
   }
 
   Future<void> _saveLage(KalenderLage lage) async {
@@ -120,6 +215,16 @@ class _KalenderPageState extends State<KalenderPage>
     } catch (e, stack) {
       developer.log('kalender_lage save', error: e, stackTrace: stack);
     }
+  }
+
+  void _setLage(KalenderLage next) {
+    setState(() {
+      _lage = next;
+      if (next == KalenderLage.manad) {
+        _focusedDay = DateTime(_selectedDay.year, _selectedDay.month);
+      }
+    });
+    _saveLage(next);
   }
 
   Stream<QuerySnapshot>? _datedEventsStream(
@@ -184,8 +289,8 @@ class _KalenderPageState extends State<KalenderPage>
         final d = DateTime(
             _selectedDay.year, _selectedDay.month, _selectedDay.day);
         return (
-          from: d.subtract(const Duration(days: 1)),
-          to: d.add(const Duration(days: 1)),
+          from: d.subtract(const Duration(days: 7)),
+          to: d.add(const Duration(days: 7)),
           conflictStart: d,
           conflictDays: 1,
         );
@@ -197,14 +302,23 @@ class _KalenderPageState extends State<KalenderPage>
           conflictDays: 7,
         );
       case KalenderLage.manad:
-      case KalenderLage.agenda:
         final monthStart =
             DateTime(_focusedDay.year, _focusedDay.month, 1);
         final monthEnd =
             DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
+        var from = monthStart.subtract(const Duration(days: 7));
+        var to = monthEnd.add(const Duration(days: 7));
+        final sel = DateTime(
+            _selectedDay.year, _selectedDay.month, _selectedDay.day);
+        if (sel.isBefore(from)) {
+          from = sel.subtract(const Duration(days: 1));
+        }
+        if (sel.isAfter(to)) {
+          to = sel.add(const Duration(days: 1));
+        }
         return (
-          from: monthStart.subtract(const Duration(days: 7)),
-          to: monthEnd.add(const Duration(days: 7)),
+          from: from,
+          to: to,
           conflictStart: _weekStart,
           conflictDays: 0,
         );
@@ -213,17 +327,20 @@ class _KalenderPageState extends State<KalenderPage>
 
   List<QueryDocumentSnapshot> _eventsForDay(
     List<QueryDocumentSnapshot> all,
-    DateTime day,
-  ) {
+    DateTime day, {
+    bool includeSchedule = false,
+  }) {
     final filtered = all.where((doc) {
       try {
         final d = doc.data() as Map<String, dynamic>;
         if ((d['source'] as String?) == 'calendar') {
           final kind = d['planningImportKind'] as String? ?? 'schedule';
-          if (kind != 'activity') return false;
+          if (kind == 'schedule' && !includeSchedule) return false;
+          if (kind != 'activity' && kind != 'schedule') return false;
         }
         if (!eventOccursOnDay(d, day)) return false;
         if (_filterPerson != null) {
+          if (eventHasNoPersons(d)) return true;
           return eventIncludesPerson(d,
               uid: _filterPersonUid ?? '', name: _filterPerson!);
         }
@@ -250,34 +367,25 @@ class _KalenderPageState extends State<KalenderPage>
   ) {
     return docs.where((doc) {
       final d = doc.data() as Map<String, dynamic>;
-      if (!_choreVisibleOnDay(d, day)) return false;
+      if (!choreOccursOnDay(d, day)) return false;
       if (_filterPerson != null) {
-        return assignedToPerson(d,
+        return choreAssignedToOnDay(d, day,
             uid: _filterPersonUid ?? '', name: _filterPerson!);
       }
       return true;
     }).toList()
       ..sort((a, b) {
-        final da = (a.data() as Map)['isDone'] == true ? 1 : 0;
-        final db = (b.data() as Map)['isDone'] == true ? 1 : 0;
+        final da = choreDoneOnDay(a.data() as Map<String, dynamic>, day) ? 1 : 0;
+        final db = choreDoneOnDay(b.data() as Map<String, dynamic>, day) ? 1 : 0;
         return da.compareTo(db);
       });
   }
 
   void _openMemberToday(
     FamilyProvider provider,
-    UserModel member,
-    List<QueryDocumentSnapshot> todayEvents,
-  ) {
-    final chores = provider.chores.where((doc) {
-      return assignedToPerson(doc.data() as Map<String, dynamic>,
-          uid: member.uid, name: member.name);
-    }).toList();
-    final memberEvents = todayEvents.where((doc) {
-      return eventIncludesPerson(doc.data() as Map<String, dynamic>,
-          uid: member.uid, name: member.name);
-    }).toList();
-    final today = DateTime.now();
+    UserModel member, [
+    List<QueryDocumentSnapshot>? todayEvents,
+  ]) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -285,9 +393,7 @@ class _KalenderPageState extends State<KalenderPage>
       builder: (_) => MemberDaySheet(
         member: member,
         currentUser: provider.currentUser,
-        memberEvents: memberEvents,
-        memberChores: chores,
-        day: DateTime(today.year, today.month, today.day),
+        initialDay: DateTime.now(),
       ),
     );
   }
@@ -295,13 +401,9 @@ class _KalenderPageState extends State<KalenderPage>
   void _openCell(
     FamilyProvider provider,
     UserModel member,
-    DateTime day,
-    List<QueryDocumentSnapshot> dayEvents,
-  ) {
-    final chores = provider.chores.where((doc) {
-      return assignedToPerson(doc.data() as Map<String, dynamic>,
-          uid: member.uid, name: member.name);
-    }).toList();
+    DateTime day, [
+    List<QueryDocumentSnapshot>? dayEvents,
+  ]) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -309,9 +411,7 @@ class _KalenderPageState extends State<KalenderPage>
       builder: (_) => MemberDaySheet(
         member: member,
         currentUser: provider.currentUser,
-        memberEvents: dayEvents,
-        memberChores: chores,
-        day: day,
+        initialDay: day,
       ),
     );
   }
@@ -400,6 +500,11 @@ class _KalenderPageState extends State<KalenderPage>
 
   void _showFamilyDaySheet(
       DateTime day, List<QueryDocumentSnapshot> dayEvents) {
+    final provider = context.read<FamilyProvider>();
+    final members = provider.familyMembers;
+    final fid = provider.currentUser?.familyId ?? '';
+    final currentUser = provider.currentUser;
+
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.white,
@@ -425,11 +530,53 @@ class _KalenderPageState extends State<KalenderPage>
                     final d = doc.data() as Map<String, dynamic>;
                     final title = d['title'] as String? ?? '';
                     final t = d['time'] as String? ?? '';
+                    final canEdit = canEditDoc(currentUser, d);
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: Text(d['piktogram'] as String? ?? '📅'),
                       title: Text(title),
                       subtitle: t.isNotEmpty ? Text(t) : null,
+                      trailing: canEdit
+                          ? PopupMenuButton<String>(
+                              icon: Icon(Icons.more_vert_rounded,
+                                  color: Colors.grey.shade400, size: 20),
+                              onSelected: (v) {
+                                Navigator.pop(ctx);
+                                handleEventMenuAction(
+                                  context,
+                                  action: v,
+                                  doc: doc,
+                                  listDay: day,
+                                  familyMembers: members,
+                                  familyId: fid,
+                                );
+                              },
+                              itemBuilder: (_) => [
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.edit_outlined, size: 18),
+                                      SizedBox(width: 8),
+                                      Text('Redigera'),
+                                    ],
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete_outline_rounded,
+                                          size: 18, color: Colors.red),
+                                      SizedBox(width: 8),
+                                      Text('Ta bort',
+                                          style: TextStyle(color: Colors.red)),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            )
+                          : null,
                     );
                   }),
               ],
@@ -450,14 +597,14 @@ class _KalenderPageState extends State<KalenderPage>
         _selectedDay.month,
         _selectedDay.day + delta,
       );
+      _focusedDay = _selectedDay;
     });
   }
 
   KalenderLage get _effectiveLage {
     final isFocus =
         context.read<FamilyProvider>().currentUser?.isFocusMode ?? false;
-    if (isFocus &&
-        (_lage == KalenderLage.vecka || _lage == KalenderLage.manad)) {
+    if (isFocus && _lage == KalenderLage.manad) {
       return KalenderLage.dag;
     }
     return _lage;
@@ -523,11 +670,26 @@ class _KalenderPageState extends State<KalenderPage>
                               )
                             : const <ScheduleConflict>[];
 
+                        final presenceByUid = _presenceMap(
+                          members,
+                          provider.todayEvents,
+                          shifts,
+                          busyDocs,
+                        );
+
                         return Column(
                           children: [
-                            if (!isFocus) ...[
-                              _buildHeader(context, user?.isParent ?? false),
+                            if (_fullscreen)
+                              _buildFullscreenBar(
+                                  dayColor, isFocus, effectiveLage)
+                            else if (!isFocus) ...[
+                              _buildCompactHeader(
+                                context,
+                                user?.isParent ?? false,
+                                provider,
+                              ),
                               QuickAddBar(
+                                dense: true,
                                 familyMembers: members,
                                 familyId: fid ?? '',
                                 onFallbackToForm: (raw) {
@@ -545,18 +707,17 @@ class _KalenderPageState extends State<KalenderPage>
                                 },
                               ),
                               const FamilyNotesStrip(),
-                              _buildMemberPresenceRow(
-                                provider,
-                                members,
-                                provider.todayEvents,
-                                shifts,
-                                busyDocs,
-                              ),
-                            ] else
+                              if (conflicts.isNotEmpty &&
+                                  !(effectiveLage == KalenderLage.vecka &&
+                                      !WindowSize.of(context).isExpanded))
+                                _buildConflictStrip(provider, conflicts),
+                              _buildModeSelector(dayColor, isFocus),
+                              _buildPersonFilter(members, dayColor),
+                            ] else ...[
                               _buildMinimalHeader(context),
-                            _buildModeSelector(dayColor, isFocus),
-                            if (conflicts.isNotEmpty)
-                              _buildConflictStrip(provider, conflicts),
+                              _buildModeSelector(dayColor, isFocus),
+                              _buildPersonFilter(members, dayColor),
+                            ],
                             Expanded(
                               child: _buildModeContent(
                                 provider,
@@ -566,6 +727,7 @@ class _KalenderPageState extends State<KalenderPage>
                                 dayColor,
                                 isFocus,
                                 effectiveLage,
+                                presenceByUid,
                               ),
                             ),
                           ],
@@ -579,27 +741,6 @@ class _KalenderPageState extends State<KalenderPage>
           },
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'kalender_busy',
-        backgroundColor: dayColor,
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.do_not_disturb_on_rounded),
-        label: const Text('Jag är upptagen'),
-        onPressed: () {
-          final me = provider.currentUser;
-          if (me == null || fid == null || fid.isEmpty) return;
-          showModalBottomSheet<void>(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.transparent,
-            builder: (_) => BusyCheckInSheet(
-              familyId: fid,
-              userName: me.name,
-              userUid: me.uid,
-            ),
-          );
-        },
-      ),
     );
   }
 
@@ -611,160 +752,415 @@ class _KalenderPageState extends State<KalenderPage>
     Color dayColor,
     bool isFocus,
     KalenderLage lage,
+    Map<String, Color> presenceByUid,
   ) {
+    final effectiveMembers = _filterPerson == null
+        ? members
+        : members.where((m) =>
+            (_filterPersonUid != null && m.uid == _filterPersonUid) ||
+            m.name == _filterPerson).toList();
+
+    final effectiveEvents = _filterPerson == null
+        ? events
+        : events.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            if (eventHasNoPersons(d)) return true;
+            return eventIncludesPerson(d,
+                uid: _filterPersonUid ?? '', name: _filterPerson!);
+          }).toList();
+
+    final effectiveShifts = _filterPerson == null
+        ? shifts
+        : shifts.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            return assignedToPerson(d,
+                uid: _filterPersonUid ?? '', name: _filterPerson!);
+          }).toList();
+
+    final effectiveChores = _filterPerson == null
+        ? provider.chores
+        : provider.chores.where((doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            return choreAssignedToOnDay(d, _selectedDay,
+                uid: _filterPersonUid ?? '', name: _filterPerson!);
+          }).toList();
+
     switch (lage) {
       case KalenderLage.dag:
-        return KalenderDayView(
-          members: members,
-          selectedDay: _selectedDay,
-          events: events,
-          shifts: shifts,
-          chores: provider.chores,
-          currentUser: provider.currentUser,
-          familyId: provider.currentUser?.familyId ?? '',
-          onDayChanged: (d) => setState(() => _selectedDay = d),
-          onOpenMember: (m) =>
-              _openMemberToday(provider, m, provider.todayEvents),
+        return _buildAgendaDayScroll(
+          provider,
+          members,
+          events,
+          dayColor,
         );
       case KalenderLage.vecka:
-        return CustomScrollView(
-          physics: const BouncingScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _buildWeekNav()),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+        if (WindowSize.of(context).isExpanded) {
+          return CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              if (!_fullscreen) SliverToBoxAdapter(child: _buildWeekNav()),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+                  child: members.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.all(40),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : WeekGrid(
+                          members: effectiveMembers,
+                          events: effectiveEvents,
+                          shifts: effectiveShifts,
+                          weekStart: _weekStart,
+                          presenceRingByUid: presenceByUid,
+                          onCellTap: (m, day, dayEvents) =>
+                              _openCell(provider, m, day, dayEvents),
+                          onFamilyRowTap: _showFamilyDaySheet,
+                          onMemberAvatarTap: (m) =>
+                              _openMemberToday(provider, m, provider.todayEvents),
+                        ),
+                ),
+              ),
+              SliverToBoxAdapter(
+                child: SizedBox(height: navSafeBottom(context).bottom),
+              ),
+            ],
+          );
+        } else {
+          return Column(
+            children: [
+              if (!_fullscreen) _buildWeekNav(),
+              Expanded(
                 child: members.isEmpty
-                    ? const Padding(
-                        padding: EdgeInsets.all(40),
-                        child: Center(child: CircularProgressIndicator()),
-                      )
-                    : WeekGrid(
+                    ? const Center(child: CircularProgressIndicator())
+                    : WeekList(
                         members: members,
-                        events: events,
-                        shifts: shifts,
+                        events: effectiveEvents,
+                        shifts: effectiveShifts,
                         weekStart: _weekStart,
+                        presenceRingByUid: presenceByUid,
                         onCellTap: (m, day, dayEvents) =>
                             _openCell(provider, m, day, dayEvents),
                         onFamilyRowTap: _showFamilyDaySheet,
+                        onMemberAvatarTap: (m) =>
+                            _openMemberToday(provider, m, provider.todayEvents),
+                        onConflictTap: (c) => _showConflict(provider, c),
                       ),
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 100)),
-          ],
-        );
+            ],
+          );
+        }
       case KalenderLage.manad:
-        return _buildMonthAgendaScroll(
-          provider,
-          members,
-          events,
-          dayColor,
-          showCalendar: true,
-        );
-      case KalenderLage.agenda:
-        return _buildMonthAgendaScroll(
-          provider,
-          members,
-          events,
-          dayColor,
-          showCalendar: false,
+        return KalenderMonthView(
+          focusedMonth: _focusedDay,
+          selectedDay: _selectedDay,
+          events: effectiveEvents,
+          chores: effectiveChores,
+          members: effectiveMembers,
+          currentUser: provider.currentUser,
+          familyId: provider.currentUser?.familyId ?? '',
+          onFocusedMonthChanged: (m) => setState(() => _focusedDay = m),
+          onSelectedDayChanged: (d) => setState(() {
+            _selectedDay = d;
+            _focusedDay = DateTime(d.year, d.month);
+          }),
         );
     }
   }
 
-  Widget _buildMonthAgendaScroll(
+  /// Agenda: tidslinje (aktiviteter + tidssatta sysslor + skolklump) +
+  /// undersektion "Sysslor utan tid".
+  Widget _buildAgendaDayScroll(
     FamilyProvider provider,
     List<UserModel> members,
     List<QueryDocumentSnapshot> events,
-    Color dayColor, {
-    required bool showCalendar,
-  }) {
-    final activities = _eventsForDay(events, _selectedDay);
-    final chores = _filterChoresForDay(provider.chores, _selectedDay);
+    Color dayColor,
+  ) {
+    final day = _selectedDay;
+    final dayEvents = _eventsForDay(events, day, includeSchedule: true);
+    final chores = _filterChoresForDay(provider.chores, day);
+
+    final scheduleByPerson = <String, List<QueryDocumentSnapshot>>{};
+    final activities = <QueryDocumentSnapshot>[];
+    for (final doc in dayEvents) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (d['planningImportKind'] == 'schedule') {
+        final key = _agendaPersonKey(d);
+        scheduleByPerson.putIfAbsent(key, () => []).add(doc);
+      } else {
+        activities.add(doc);
+      }
+    }
+
+    final stadChores = <QueryDocumentSnapshot>[];
+    final timedChores = <QueryDocumentSnapshot>[];
+    final untimedChores = <QueryDocumentSnapshot>[];
+    for (final doc in chores) {
+      final d = doc.data() as Map<String, dynamic>;
+      final stadKey = d['stadKey'] as String?;
+      if (stadKey != null && stadKey.isNotEmpty) {
+        stadChores.add(doc);
+        continue;
+      }
+      final dueTime = (d['dueTime'] as String? ?? '').trim();
+      if (dueTime.isNotEmpty) {
+        timedChores.add(doc);
+      } else {
+        untimedChores.add(doc);
+      }
+    }
+
+    final timeline = <({String sort, Widget widget})>[];
+
+    for (final entry in scheduleByPerson.entries) {
+      final docs = List<QueryDocumentSnapshot>.from(entry.value);
+      final firstDoc = docs.isNotEmpty
+          ? (docs.first.data() as Map<String, dynamic>)
+          : const <String, dynamic>{};
+      final schemaLabel = schemaLabelFor(firstDoc);
+      final schemaPik = schemaPiktogramFor(firstDoc);
+      final who = _agendaPersonLabel(entry.key, members);
+      final title = who.isEmpty ? schemaLabel : '$schemaLabel · $who';
+      // Agenda: alltid klumpa (clumpSchool: true).
+      for (final disp in buildScheduleDisplay(
+        docs,
+        clumpSchool: true,
+        title: title,
+        piktogram: schemaPik,
+      )) {
+        if (disp is ScheduleClusterEntry) {
+          timeline.add((
+            sort: disp.sortKey,
+            widget: _AgendaSchoolCluster(
+              label: disp.label,
+              docs: disp.docs,
+              dayColor: dayColor,
+            ),
+          ));
+        }
+      }
+    }
+
+    for (final doc in activities) {
+      final d = doc.data() as Map<String, dynamic>;
+      final t = (d['time'] as String? ?? '').trim();
+      timeline.add((
+        sort: t.isEmpty ? '99:99' : t,
+        widget: AgendaActivityRow(
+          doc: doc,
+          dayColor: dayColor,
+          listDay: day,
+          familyMembers: members,
+          familyId: provider.currentUser?.familyId ?? '',
+          currentUser: provider.currentUser,
+        ),
+      ));
+    }
+
+    for (final doc in timedChores) {
+      final d = doc.data() as Map<String, dynamic>;
+      final t = (d['dueTime'] as String? ?? '').trim();
+      timeline.add((
+        sort: t,
+        widget: AgendaChoreRow(
+          doc: doc,
+          day: day,
+          dayColor: dayColor,
+          familyMembers: members,
+          familyId: provider.currentUser?.familyId ?? '',
+          currentUser: provider.currentUser,
+          allowDrag: canEditDoc(provider.currentUser, d),
+          onComplete: () {},
+        ),
+      ));
+    }
+
+    timeline.sort((a, b) => a.sort.compareTo(b.sort));
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        if (!showCalendar) SliverToBoxAdapter(child: _buildAgendaDayNav()),
-        if (showCalendar) ...[
-          SliverToBoxAdapter(child: _buildCalendar(events, dayColor)),
-          SliverToBoxAdapter(child: _buildPersonFilter(members, dayColor)),
-        ],
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(
-              DateFormat('EEEE d MMMM', 'sv').format(_selectedDay),
-              style: AppTheme.sectionTitleStyle,
-            ),
-          ),
-        ),
-        if (activities.isEmpty)
+        SliverToBoxAdapter(child: _buildAgendaDayNav()),
+        if (timeline.isEmpty)
           const SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.all(24),
               child: Center(
                 child: Text(
-                  'Inga aktiviteter den här dagen.',
+                  'Inga tidssatta poster den här dagen.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
             ),
           )
         else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (_, i) => AgendaActivityRow(
-                doc: activities[i],
-                dayColor: dayColor,
-                listDay: _selectedDay,
-                familyMembers: members,
-                familyId: provider.currentUser?.familyId ?? '',
-                currentUser: provider.currentUser,
-              ),
-              childCount: activities.length,
-            ),
-          ),
+          ...timeline.map((e) => SliverToBoxAdapter(child: e.widget)),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
-            child: Text('SYSSLOR', style: AppTheme.sectionLabelStyle),
+            child: Text('SYSSLOR UTAN TID', style: AppTheme.sectionLabelStyle),
           ),
         ),
-        if (chores.isEmpty)
+        if (stadChores.isEmpty && untimedChores.isEmpty)
           const SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.all(24),
+              padding: EdgeInsets.fromLTRB(24, 8, 24, 24),
               child: Center(
                 child: Text(
-                  'Inga sysslor just nu.',
+                  'Inga sysslor utan tid.',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
             ),
           )
-        else
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (_, i) => AgendaChoreRow(
-                doc: chores[i],
+        else ...[
+          if (stadChores.isNotEmpty)
+            SliverToBoxAdapter(
+              child: _buildStaddagAgendaCard(
+                context: context,
+                stadDocs: stadChores,
+                day: day,
                 dayColor: dayColor,
-                familyMembers: members,
-                familyId: provider.currentUser?.familyId ?? '',
-                currentUser: provider.currentUser,
-                allowDrag: canEditDoc(
-                  provider.currentUser,
-                  chores[i].data() as Map<String, dynamic>,
-                ),
-                onComplete: () {},
               ),
-              childCount: chores.length,
             ),
-          ),
-        const SliverToBoxAdapter(
-            child: SizedBox(height: WindowSize.navScrollPadding)),
+          if (untimedChores.isNotEmpty)
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (_, i) => AgendaChoreRow(
+                  doc: untimedChores[i],
+                  day: day,
+                  dayColor: dayColor,
+                  familyMembers: members,
+                  familyId: provider.currentUser?.familyId ?? '',
+                  currentUser: provider.currentUser,
+                  allowDrag: canEditDoc(
+                    provider.currentUser,
+                    untimedChores[i].data() as Map<String, dynamic>,
+                  ),
+                  onComplete: () {},
+                ),
+                childCount: untimedChores.length,
+              ),
+            ),
+        ],
+        SliverToBoxAdapter(
+            child: SizedBox(height: navSafeBottom(context).bottom)),
       ],
     );
+  }
+
+  Widget _buildStaddagAgendaCard({
+    required BuildContext context,
+    required List<QueryDocumentSnapshot> stadDocs,
+    required DateTime day,
+    required Color dayColor,
+  }) {
+    final doneCount = stadDocs.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      return choreDoneOnDay(d, day);
+    }).length;
+    final totalCount = stadDocs.length;
+    final isAllDone = totalCount > 0 && doneCount == totalCount;
+
+    String recText = 'varje lördag';
+    if (stadDocs.isNotEmpty) {
+      final firstD = stadDocs.first.data() as Map<String, dynamic>;
+      if (choreIsRecurring(firstD)) {
+        recText = recurrenceLabel(firstD);
+      }
+    }
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 250),
+      opacity: isAllDone ? 0.65 : 1.0,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        decoration: AppTheme.cardDecoration(radius: 16),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StaddagPage()),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Text('🧹', style: TextStyle(fontSize: 24)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Städdag · $doneCount av $totalCount klara',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            decoration:
+                                isAllDone ? TextDecoration.lineThrough : null,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '🔁 $recText',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (isAllDone)
+                    const Icon(
+                      Icons.check_circle_rounded,
+                      color: Color(0xFF6BAE75),
+                      size: 22,
+                    )
+                  else
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: Colors.grey.shade400,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _agendaPersonKey(Map<String, dynamic> d) {
+    final uids = (d['personUids'] as List?)?.cast<String>() ?? const [];
+    if (uids.isNotEmpty) return 'u:${uids.first}';
+    final persons = (d['persons'] as List? ?? []).cast<String>();
+    if (persons.isNotEmpty) return 'n:${persons.first}';
+    return 'shared';
+  }
+
+  String _agendaPersonLabel(String key, List<UserModel> members) {
+    if (key == 'shared') return '';
+    if (key.startsWith('u:')) {
+      final uid = key.substring(2);
+      for (final m in members) {
+        if (m.uid == uid) return m.name.split(' ').first;
+      }
+    }
+    if (key.startsWith('n:')) return key.substring(2).split(' ').first;
+    return '';
   }
 
   Widget _buildAgendaDayNav() {
@@ -806,159 +1202,6 @@ class _KalenderPageState extends State<KalenderPage>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildCalendar(List<QueryDocumentSnapshot> all, Color dayColor) {
-    final calStyle = CalendarStyle(
-      cellMargin: EdgeInsets.zero,
-      selectedDecoration:
-          BoxDecoration(color: dayColor, shape: BoxShape.circle),
-      todayDecoration: BoxDecoration(
-          color: dayColor.withValues(alpha: 0.3), shape: BoxShape.circle),
-      markerDecoration:
-          BoxDecoration(color: dayColor, shape: BoxShape.circle),
-      markersMaxCount: 1,
-      markerSize: 5,
-      markerMargin: const EdgeInsets.only(top: 2),
-      outsideDaysVisible: false,
-    );
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      decoration: AppTheme.cardDecoration(),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: TableCalendar(
-          firstDay: DateTime.utc(2020),
-          lastDay: DateTime.utc(2030, 12, 31),
-          focusedDay: _focusedDay,
-          startingDayOfWeek: StartingDayOfWeek.monday,
-          availableGestures: AvailableGestures.horizontalSwipe,
-          selectedDayPredicate: (d) => isSameDay(d, _selectedDay),
-          eventLoader: (day) {
-            try {
-              return _eventsForDay(all, day).map((e) => e.id).toList();
-            } catch (_) {
-              return [];
-            }
-          },
-          onDaySelected: (s, f) =>
-              setState(() { _selectedDay = s; _focusedDay = f; }),
-          onPageChanged: (f) => setState(() => _focusedDay = f),
-          locale: 'sv',
-          calendarStyle: calStyle,
-          calendarBuilders: CalendarBuilders(
-            selectedBuilder: (context, day, focusedDay) =>
-                _monthDayCellWithChoreDrop(
-              context,
-              day,
-              dayColor,
-              calStyle,
-              decoration: calStyle.selectedDecoration,
-              textStyle: calStyle.selectedTextStyle,
-            ),
-            todayBuilder: (context, day, focusedDay) =>
-                _monthDayCellWithChoreDrop(
-              context,
-              day,
-              dayColor,
-              calStyle,
-              decoration: calStyle.todayDecoration,
-              textStyle: calStyle.todayTextStyle,
-            ),
-            defaultBuilder: (context, day, focusedDay) {
-              final weekend = day.weekday == DateTime.saturday ||
-                  day.weekday == DateTime.sunday;
-              return _monthDayCellWithChoreDrop(
-                context,
-                day,
-                dayColor,
-                calStyle,
-                decoration: weekend
-                    ? calStyle.weekendDecoration
-                    : calStyle.defaultDecoration,
-                textStyle: weekend
-                    ? calStyle.weekendTextStyle
-                    : calStyle.defaultTextStyle,
-              );
-            },
-          ),
-          headerStyle: const HeaderStyle(
-            formatButtonVisible: false,
-            titleCentered: true,
-            titleTextStyle:
-                TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _monthDayCellWithChoreDrop(
-    BuildContext context,
-    DateTime day,
-    Color dayColor,
-    CalendarStyle calStyle, {
-    required Decoration? decoration,
-    required TextStyle? textStyle,
-  }) {
-    final text = '${day.day}';
-    final deco = decoration ?? const BoxDecoration();
-    final txt = textStyle ?? const TextStyle();
-
-    Widget cell(Duration duration, {bool dropHighlight = false}) {
-      return AnimatedContainer(
-        duration: duration,
-        margin: calStyle.cellMargin,
-        padding: calStyle.cellPadding,
-        alignment: calStyle.cellAlignment,
-        decoration: deco,
-        foregroundDecoration: dropHighlight
-            ? BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: dayColor, width: 2.5),
-              )
-            : null,
-        child: Text(text, style: txt),
-      );
-    }
-
-    return DragTarget<DocumentReference>(
-      onWillAcceptWithDetails: (_) => true,
-      onAcceptWithDetails: (details) async {
-        try {
-          await details.data.update({'dueDate': dateKey(day)});
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Syssla flyttad till ${DateFormat.E('sv').format(day)}',
-              ),
-              backgroundColor: const Color(0xFF6BAE75),
-            ),
-          );
-        } catch (e) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Bara föräldrar eller den som skapat sysslan kan flytta den',
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      },
-      builder: (context, candidate, rejected) {
-        final hi = candidate.isNotEmpty;
-        return cell(
-          hi
-              ? const Duration(milliseconds: 150)
-              : const Duration(milliseconds: 250),
-          dropHighlight: hi,
-        );
-      },
     );
   }
 
@@ -1006,67 +1249,233 @@ class _KalenderPageState extends State<KalenderPage>
     );
   }
 
-  Widget _buildHeader(BuildContext context, bool isParent) {
+  void _openBusySheet(FamilyProvider provider) {
+    final me = provider.currentUser;
+    final fid = me?.familyId;
+    if (me == null || fid == null || fid.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => BusyCheckInSheet(
+        familyId: fid,
+        userName: me.name,
+        userUid: me.uid,
+      ),
+    );
+  }
+
+  Widget _buildCompactHeader(
+    BuildContext context,
+    bool isParent,
+    FamilyProvider provider,
+  ) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     return Container(
       decoration: AppTheme.headerDecoration(),
-      padding: AppTheme.paddingBelowStatusBar(context, bottom: 12),
+      padding: AppTheme.paddingBelowStatusBar(
+        context,
+        horizontal: 12,
+        extraBelowStatus: 6,
+        bottom: 8,
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               'Kalender',
               style: TextStyle(
-                fontSize: 28,
+                fontSize: 22,
                 fontWeight: FontWeight.bold,
                 color: textColor,
               ),
             ),
           ),
-          if (isParent)
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert_rounded, color: textColor),
-              onSelected: (v) {
-                switch (v) {
-                  case 'import':
-                    Navigator.push<void>(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const CalendarImportPage(),
-                      ),
-                    );
-                    break;
-                  case 'mat':
-                    Navigator.push<void>(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const MealPlannerPage(),
-                      ),
-                    );
-                    break;
-                  case 'schema':
-                    Navigator.push<void>(
-                      context,
-                      MaterialPageRoute<void>(
-                        builder: (_) => const WorkSchedulePage(),
-                      ),
-                    );
-                    break;
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'import',
-                  child: Text('Kalenderimport'),
+          if (provider.hasHomeLocation) ...[
+            WeatherHeaderBadge(
+              lat: provider.homeLat!,
+              lon: provider.homeLon!,
+              placeName: provider.homeName,
+              textColor: textColor,
+            ),
+            const SizedBox(width: 4),
+          ],
+          TextButton.icon(
+            onPressed: () => _openBusySheet(provider),
+            icon: Icon(
+              Icons.do_not_disturb_on_rounded,
+              color: textColor,
+              size: 18,
+            ),
+            label: Text(
+              'Upptagen',
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              visualDensity: VisualDensity.compact,
+              foregroundColor: textColor,
+            ),
+          ),
+          IconButton(
+            tooltip: _fullscreen ? 'Avsluta helskärm' : 'Helskärm',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            icon: Icon(
+              _fullscreen
+                  ? Icons.fullscreen_exit_rounded
+                  : Icons.fullscreen_rounded,
+              color: textColor,
+            ),
+            onPressed: _toggleFullscreen,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFullscreenBar(
+    Color dayColor,
+    bool isFocus,
+    KalenderLage effectiveLage,
+  ) {
+    final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
+    final provider = context.read<FamilyProvider>();
+    return Container(
+      decoration: AppTheme.headerDecoration(),
+      padding: AppTheme.paddingBelowStatusBar(
+        context,
+        horizontal: 4,
+        extraBelowStatus: 4,
+        bottom: 4,
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.chevron_left_rounded, color: textColor),
+            onPressed: () => _shiftPeriod(-1, effectiveLage),
+          ),
+          Expanded(
+            child: Text(
+              _periodLabel(effectiveLage),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: textColor,
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.chevron_right_rounded, color: textColor),
+            onPressed: () => _shiftPeriod(1, effectiveLage),
+          ),
+          Flexible(
+            child: _buildCompactModeChips(dayColor, isFocus),
+          ),
+          IconButton(
+            tooltip: 'Jag är upptagen',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.do_not_disturb_on_rounded, color: textColor),
+            onPressed: () => _openBusySheet(provider),
+          ),
+          IconButton(
+            tooltip: 'Avsluta helskärm',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.fullscreen_exit_rounded, color: textColor),
+            onPressed: _toggleFullscreen,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _periodLabel(KalenderLage lage) {
+    switch (lage) {
+      case KalenderLage.dag:
+        return DateFormat('EEE d MMM', 'sv').format(_selectedDay);
+      case KalenderLage.vecka:
+        final end = _weekStart.add(const Duration(days: 6));
+        return '${DateFormat('d MMM', 'sv').format(_weekStart)}-${DateFormat('d MMM', 'sv').format(end)}';
+      case KalenderLage.manad:
+        return DateFormat('MMMM y', 'sv').format(_focusedDay);
+    }
+  }
+
+  void _shiftPeriod(int delta, KalenderLage lage) {
+    setState(() {
+      switch (lage) {
+        case KalenderLage.dag:
+          _selectedDay = DateTime(
+            _selectedDay.year,
+            _selectedDay.month,
+            _selectedDay.day + delta,
+          );
+          _focusedDay = _selectedDay;
+          break;
+        case KalenderLage.vecka:
+          _weekStart = DateTime(
+            _weekStart.year,
+            _weekStart.month,
+            _weekStart.day + 7 * delta,
+          );
+          break;
+        case KalenderLage.manad:
+          _focusedDay = DateTime(
+            _focusedDay.year,
+            _focusedDay.month + delta,
+            1,
+          );
+          break;
+      }
+    });
+  }
+
+  Widget _buildCompactModeChips(Color dayColor, bool isFocus) {
+    final modes = isFocus
+        ? const [KalenderLage.dag, KalenderLage.vecka]
+        : KalenderLage.values;
+    final labels = {
+      KalenderLage.dag: 'D',
+      KalenderLage.vecka: 'V',
+      KalenderLage.manad: 'M',
+    };
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final m in modes)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: ChoiceChip(
+                label: Text(labels[m]!, style: const TextStyle(fontSize: 12)),
+                selected: _effectiveLage == m ||
+                    (_lage == m && !(isFocus && m == KalenderLage.manad)),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                selectedColor: dayColor,
+                labelStyle: TextStyle(
+                  color: (_effectiveLage == m) ? Colors.white : null,
+                  fontWeight: FontWeight.w800,
                 ),
-                PopupMenuItem(value: 'mat', child: Text('Mat')),
-                PopupMenuItem(value: 'schema', child: Text('Schema')),
-              ],
+                onSelected: (_) => _setLage(m),
+              ),
             ),
         ],
       ),
     );
   }
+
 
   Widget _buildMinimalHeader(BuildContext context) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
@@ -1086,121 +1495,98 @@ class _KalenderPageState extends State<KalenderPage>
 
   Widget _buildModeSelector(Color dayColor, bool isFocus) {
     final segments = isFocus
-        ? [
+        ? const [
             ButtonSegment(
               value: KalenderLage.dag,
-              label: const Text('Dag'),
+              label: Text('Dag'),
             ),
             ButtonSegment(
-              value: KalenderLage.agenda,
-              label: const Text('Agenda'),
+              value: KalenderLage.vecka,
+              label: Text('Vecka'),
             ),
           ]
         : const [
             ButtonSegment(value: KalenderLage.dag, label: Text('Dag')),
             ButtonSegment(value: KalenderLage.vecka, label: Text('Vecka')),
             ButtonSegment(value: KalenderLage.manad, label: Text('Månad')),
-            ButtonSegment(value: KalenderLage.agenda, label: Text('Agenda')),
           ];
 
     final selected = isFocus
-        ? (_lage == KalenderLage.agenda
-            ? {KalenderLage.agenda}
+        ? (_lage == KalenderLage.vecka
+            ? {KalenderLage.vecka}
             : {KalenderLage.dag})
         : {_lage};
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: SegmentedButton<KalenderLage>(
-        showSelectedIcon: false,
-        segments: segments,
-        selected: selected,
-        onSelectionChanged: (s) {
-          final next = s.first;
-          setState(() => _lage = next);
-          _saveLage(next);
-        },
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: WidgetStateProperty.all(
-            const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SegmentedButton<KalenderLage>(
+            showSelectedIcon: false,
+            segments: segments,
+            selected: selected,
+            onSelectionChanged: (s) {
+              _setLage(s.first);
+            },
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: WidgetStateProperty.all(
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              ),
+              backgroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return dayColor;
+                return Colors.white;
+              }),
+              foregroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) return Colors.white;
+                return AppTheme.getTextColor();
+              }),
+            ),
           ),
-          backgroundColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.selected)) return dayColor;
-            return Colors.white;
-          }),
-          foregroundColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.selected)) return Colors.white;
-            return AppTheme.getTextColor();
-          }),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMemberPresenceRow(
-    FamilyProvider provider,
-    List<UserModel> members,
-    List<QueryDocumentSnapshot> todayEvents,
-    List<QueryDocumentSnapshot> shiftDocs,
-    List<QueryDocumentSnapshot> busyDocs,
-  ) {
-    if (members.isEmpty) return const SizedBox.shrink();
-
-    return SizedBox(
-      height: 72,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-        itemCount: members.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 12),
-        itemBuilder: (_, i) {
-          final m = members[i];
-          final memberEvents = todayEvents.where((doc) {
-            return eventIncludesPerson(doc.data() as Map<String, dynamic>,
-                uid: m.uid, name: m.name);
-          }).toList();
-          final presence = computeMemberPresence(
-            m,
-            memberTodayEvents: memberEvents,
-            familyShiftDocs: shiftDocs,
-            familyBusyDocs: busyDocs,
-          );
-
-          return GestureDetector(
-            onTap: () => _openMemberToday(provider, m, todayEvents),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+          if (isFocus) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Stack(
-                  children: [
-                    FamilyMemberAvatar(member: m, size: 44, borderWidth: 0),
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: presence.ringColor,
-                            width: 3,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
                 Text(
-                  m.name.split(' ').first,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                  '🔎 Förenklad vy',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: dayColor,
+                  ),
+                  onPressed: () async {
+                    final user = context.read<FamilyProvider>().currentUser;
+                    if (user == null) return;
+                    final normalMode = user.isParent
+                        ? 'parent'
+                        : (user.role == 'youth' ? 'youth' : 'child');
+                    await UserService.updateViewMode(user.uid, normalMode);
+                  },
+                  child: const Text(
+                    'Visa allt',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      decoration: TextDecoration.underline,
+                    ),
                   ),
                 ),
               ],
             ),
-          );
-        },
+          ],
+        ],
       ),
     );
   }
@@ -1346,3 +1732,89 @@ class _FilterPill extends StatelessWidget {
         ),
       );
 }
+
+class _AgendaSchoolCluster extends StatefulWidget {
+  final String label;
+  final List<QueryDocumentSnapshot> docs;
+  final Color dayColor;
+
+  const _AgendaSchoolCluster({
+    required this.label,
+    required this.docs,
+    required this.dayColor,
+  });
+
+  @override
+  State<_AgendaSchoolCluster> createState() => _AgendaSchoolClusterState();
+}
+
+class _AgendaSchoolClusterState extends State<_AgendaSchoolCluster> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: const Color(0xFFE8F0FE),
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        widget.label,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: widget.dayColor,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_expanded)
+            for (final doc in widget.docs)
+              ListTile(
+                dense: true,
+                contentPadding: const EdgeInsets.only(left: 20, right: 8),
+                title: Builder(builder: (context) {
+                  final d = doc.data() as Map<String, dynamic>;
+                  final t = (d['time'] as String? ?? '').trim();
+                  final end = (d['endTime'] as String? ?? '').trim();
+                  final title = d['title'] as String? ?? '';
+                  final time =
+                      t.isEmpty ? '' : (end.isEmpty ? t : '$t–$end');
+                  return Text(time.isEmpty ? title : '$time  $title');
+                }),
+                onTap: () {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => ActivityDetailSheet(docSnapshot: doc),
+                  );
+                },
+              ),
+        ],
+      ),
+    );
+  }
+}
+

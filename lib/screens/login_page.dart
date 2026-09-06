@@ -55,7 +55,7 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const MainPage()),
+          MaterialPageRoute(builder: (context) => rootAfterAuth()),
         );
       }
     } on FirebaseAuthException catch (e) {
@@ -395,7 +395,7 @@ class _LoginPageState extends State<LoginPage> {
                           navigator.pop();
                           rootNavigator.pushReplacement(
                             MaterialPageRoute(
-                              builder: (context) => const MainPage(),
+                              builder: (context) => rootAfterAuth(),
                             ),
                           );
                         }

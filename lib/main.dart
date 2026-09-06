@@ -18,6 +18,7 @@ import 'screens/dashboard_page.dart';
 import 'screens/kalender_page.dart';
 import 'screens/sysslor_page.dart';
 import 'screens/settings_page.dart';
+import 'screens/display/display_shell.dart';
 import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
 import 'screens/splash_screen.dart';
@@ -26,6 +27,7 @@ import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
 import 'services/push_service.dart';
 import 'services/migration_service.dart';
+import 'timer_service.dart';
 import 'utils/minute_ticker.dart';
 import 'utils/layout.dart';
 import 'widgets/offline_banner.dart';
@@ -33,6 +35,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
   MinuteTicker.ensureRunning();
   
   // Initiera svenska datuminställningar
@@ -169,6 +174,9 @@ class _MyAppState extends State<MyApp> {
           brightness: Brightness.light,
         ),
         textTheme: AppTheme.appTextTheme(ThemeData.light().textTheme),
+        snackBarTheme: const SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+        ),
       ),
       home: const SplashScreen(),
     );
@@ -197,6 +205,15 @@ class AuthWrapper extends StatelessWidget {
   }
 }
 
+/// Sant när appen körs på web med ?display=1 i adressen (Storskärmsläge).
+bool get isDisplayMode =>
+    kIsWeb && Uri.base.queryParameters['display'] == '1';
+
+/// Rotvyn efter lyckad inloggning + familjekoppling.
+/// ENDA stället i appen som får avgöra MainPage vs DisplayShell.
+Widget rootAfterAuth() =>
+    isDisplayMode ? const DisplayShell() : const MainPage();
+
 class FamilyCheckWrapper extends StatelessWidget {
   const FamilyCheckWrapper({super.key});
 
@@ -221,7 +238,7 @@ class FamilyCheckWrapper extends StatelessWidget {
           final data = snapshot.data!.data() as Map<String, dynamic>;
           if (data['familyId'] != null &&
               data['familyId'].toString().isNotEmpty) {
-            return const MainPage();
+            return rootAfterAuth();
           }
         }
 
@@ -268,6 +285,41 @@ class _MainPageState extends State<MainPage> {
       // FCM: registrera enhetens token + visa förgrunds-pushar (Etapp 11).
       PushService.init();
     }
+
+    if (kIsWeb) {
+      // Webben: registrerar token om tillstånd redan beviljats + håller den färsk.
+      // Själva tillståndsfrågan sker via knapp i Inställningar (iOS-krav).
+      PushService.init();
+    }
+
+    // Fas 5: återschemalägg lokala notiser när providern har data.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_rescheduleNotificationsWhenReady());
+    });
+  }
+
+  Future<void> _rescheduleNotificationsWhenReady() async {
+    if (kIsWeb || !mounted) return;
+    final provider = context.read<FamilyProvider>();
+    for (var i = 0; i < 60; i++) {
+      if (!mounted) return;
+      final fid = provider.currentUser?.familyId;
+      if (!provider.isLoading && fid != null && fid.isNotEmpty) {
+        unawaited(() async {
+          await NotificationService.rescheduleAllForFamily(fid);
+          // cancelAll() ovan tog även timerns slutnotis — lägg tillbaka den
+          // om en fokustimer fortfarande räknar ner.
+          final t = TimerService.instance;
+          if (t.isRunning.value && t.remainingSeconds.value > 0) {
+            await NotificationService.scheduleTimerDone(
+              at: DateTime.now().add(Duration(seconds: t.remainingSeconds.value)),
+            );
+          }
+        }());
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
   }
 
   @override
@@ -299,7 +351,7 @@ class _MainPageState extends State<MainPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
-      extendBody: true,
+      extendBody: false,
       body: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: contentWidth),

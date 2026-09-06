@@ -54,6 +54,18 @@ bool eventHasNoPersons(Map<String, dynamic> d) {
   return uids.isEmpty && persons.isEmpty;
 }
 
+/// Är samtliga medlemmar kopplade till eventet? (FAS 4)
+/// Returnerar false om members är tom eller om eventet saknar personkoppling helt.
+bool eventIncludesAllMembers(
+  Map<String, dynamic> d,
+  List<UserModel> members,
+) {
+  if (members.isEmpty || eventHasNoPersons(d)) return false;
+  return members.every(
+    (m) => eventIncludesPerson(d, uid: m.uid, name: m.name),
+  );
+}
+
 /// Är sysslan/arbetspasset tilldelat personen? (`whoUid` vinner över `who`.)
 bool assignedToPerson(
   Map<String, dynamic> d, {

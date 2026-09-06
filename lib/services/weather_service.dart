@@ -21,17 +21,40 @@ class DailyForecast {
   String get emoji => WeatherService.symbolEmoji(symbol);
 }
 
-/// Aktuellt väder + kommande dagar.
+/// Timprognos från SMHI.
+class HourlyForecast {
+  final DateTime time; // lokal tid
+  final double? temp; // °C
+  final int? symbol; // Wsymb2 1–27
+  final double? precipMm; // mm under timmen
+  final double? windMs; // m/s
+  final double? gustMs; // m/s byvind
+
+  const HourlyForecast({
+    required this.time,
+    this.temp,
+    this.symbol,
+    this.precipMm,
+    this.windMs,
+    this.gustMs,
+  });
+
+  String get emoji => WeatherService.symbolEmoji(symbol);
+}
+
+/// Aktuellt väder + kommande dagar och timmar.
 class WeatherSnapshot {
   final double? currentTemp;
   final int? currentSymbol;
   final List<DailyForecast> daily;
+  final List<HourlyForecast> hourly;
   final DateTime fetchedAt;
 
   const WeatherSnapshot({
     this.currentTemp,
     this.currentSymbol,
     required this.daily,
+    required this.hourly,
     required this.fetchedAt,
   });
 
@@ -65,7 +88,7 @@ class WeatherService {
   WeatherService._();
   static final WeatherService instance = WeatherService._();
 
-  static const _cacheKey = 'weather_cache_v2';
+  static const _cacheKey = 'weather_cache_v3';
   static const _cacheDuration = Duration(hours: 1);
 
   WeatherSnapshot? _memory;
@@ -205,12 +228,14 @@ class WeatherService {
     if (series.isEmpty) return null;
 
     final localNow = DateTime.now();
+    final cutoff48h = localNow.add(const Duration(hours: 48));
 
     double? currentTemp;
     int? currentSymbol;
     var bestDelta = const Duration(days: 999);
 
     final byDay = <String, _DayBucket>{};
+    final hourlyList = <HourlyForecast>[];
 
     for (final entry in series) {
       final m = entry as Map<String, dynamic>;
@@ -221,9 +246,16 @@ class WeatherService {
       final rawData = m['data'] as Map<String, dynamic>?;
       double? t;
       int? sym;
+      double? windMs;
+      double? gustMs;
+      double? precipMm;
+
       if (rawData != null) {
-        t = _readTemp(rawData['air_temperature']);
+        t = _readNum(rawData['air_temperature']);
         sym = _readSymbol(rawData['symbol_code']);
+        windMs = _readNum(rawData['wind_speed']);
+        gustMs = _readNum(rawData['wind_speed_of_gust']);
+        precipMm = _readNum(rawData['precipitation_amount_mean']);
       } else {
         // Fallback: äldre PMP3g-format om det skulle returneras.
         final params = m['parameters'] as List<dynamic>? ?? const [];
@@ -232,10 +264,17 @@ class WeatherService {
           final name = pm['name'] as String?;
           final values = pm['values'] as List<dynamic>?;
           if (values == null || values.isEmpty) continue;
+          final firstVal = values.first;
           if (name == 't') {
-            t = _readTemp(values.first);
+            t = _readNum(firstVal);
           } else if (name == 'Wsymb2') {
-            sym = _readSymbol(values.first);
+            sym = _readSymbol(firstVal);
+          } else if (name == 'ws') {
+            windMs = _readNum(firstVal);
+          } else if (name == 'gust') {
+            gustMs = _readNum(firstVal);
+          } else if (name == 'pmean') {
+            precipMm = _readNum(firstVal);
           }
         }
       }
@@ -254,7 +293,20 @@ class WeatherService {
       final bucket = byDay.putIfAbsent(dayKey, () => _DayBucket(valid));
       if (t != null) bucket.addTemp(t);
       if (sym != null) bucket.addSymbol(sym, valid);
+
+      if (valid.isBefore(cutoff48h)) {
+        hourlyList.add(HourlyForecast(
+          time: valid,
+          temp: t,
+          symbol: sym,
+          precipMm: precipMm,
+          windMs: windMs,
+          gustMs: gustMs,
+        ));
+      }
     }
+
+    hourlyList.sort((a, b) => a.time.compareTo(b.time));
 
     if (currentTemp == null && byDay.isNotEmpty) {
       final todayKey =
@@ -287,15 +339,16 @@ class WeatherService {
       currentTemp: currentTemp,
       currentSymbol: currentSymbol,
       daily: daily,
+      hourly: hourlyList,
       fetchedAt: DateTime.now(),
     );
   }
 
-  double? _readTemp(dynamic value) {
+  double? _readNum(dynamic value) {
     if (value == null) return null;
-    final t = (value as num).toDouble();
-    if (t >= 9990) return null;
-    return t;
+    final n = (value as num).toDouble();
+    if (n >= 9990) return null;
+    return n;
   }
 
   int? _readSymbol(dynamic value) {
@@ -324,10 +377,31 @@ class WeatherService {
           symbol: dm['symbol'] as int?,
         );
       }).toList();
+      final hourlyRaw = m['hourly'] as List<dynamic>? ?? const [];
+      final hourly = <HourlyForecast>[];
+      for (final h in hourlyRaw) {
+        if (h is Map<String, dynamic>) {
+          final timeStr = h['time'] as String?;
+          if (timeStr != null) {
+            final time = DateTime.tryParse(timeStr)?.toLocal();
+            if (time != null) {
+              hourly.add(HourlyForecast(
+                time: time,
+                temp: (h['temp'] as num?)?.toDouble(),
+                symbol: h['symbol'] as int?,
+                precipMm: (h['precipMm'] as num?)?.toDouble(),
+                windMs: (h['windMs'] as num?)?.toDouble(),
+                gustMs: (h['gustMs'] as num?)?.toDouble(),
+              ));
+            }
+          }
+        }
+      }
       return WeatherSnapshot(
         currentTemp: (m['currentTemp'] as num?)?.toDouble(),
         currentSymbol: m['currentSymbol'] as int?,
         daily: daily,
+        hourly: hourly,
         fetchedAt: fetched,
       );
     } catch (_) {
@@ -349,6 +423,16 @@ class WeatherService {
                   'minTemp': d.minTemp,
                   'maxTemp': d.maxTemp,
                   'symbol': d.symbol,
+                })
+            .toList(),
+        'hourly': snap.hourly
+            .map((h) => {
+                  'time': h.time.toIso8601String(),
+                  'temp': h.temp,
+                  'symbol': h.symbol,
+                  'precipMm': h.precipMm,
+                  'windMs': h.windMs,
+                  'gustMs': h.gustMs,
                 })
             .toList(),
       };

@@ -3,17 +3,20 @@ import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
 import '../services/weather_service.dart';
+import 'weather_detail_sheet.dart';
 
 /// Aktuell temp + symbol för Hem-headern.
 class WeatherHeaderBadge extends StatefulWidget {
   final double lat;
   final double lon;
+  final String? placeName;
   final Color textColor;
 
   const WeatherHeaderBadge({
     super.key,
     required this.lat,
     required this.lon,
+    this.placeName,
     required this.textColor,
   });
 
@@ -57,26 +60,38 @@ class _WeatherHeaderBadgeState extends State<WeatherHeaderBadge> {
     final emoji = snap.currentSymbol != null
         ? snap.currentEmoji
         : (snap.daily.firstOrNull?.emoji ?? '🌡️');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: widget.textColor.withValues(alpha: 0.15),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(emoji, style: const TextStyle(fontSize: 16)),
-          const SizedBox(width: 4),
-          Text(
-            '$temp°',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: widget.textColor,
-            ),
+        onTap: () => showWeatherDetailSheet(
+          context,
+          lat: widget.lat,
+          lon: widget.lon,
+          placeName: widget.placeName,
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: widget.textColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(16),
           ),
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 16)),
+              const SizedBox(width: 4),
+              Text(
+                '$temp°',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: widget.textColor,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -1,0 +1,7 @@
+# Exempel — kopiera till key.properties (gitignorad) och fyll i.
+# storeFile är relativ till android/app/
+
+storePassword=BYT_UT
+keyPassword=BYT_UT
+keyAlias=upload
+storeFile=../upload-keystore.jks

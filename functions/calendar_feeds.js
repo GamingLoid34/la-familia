@@ -1,4 +1,4 @@
-﻿/* eslint-disable valid-jsdoc, max-len */
+/* eslint-disable valid-jsdoc, max-len */
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const admin = require("firebase-admin");
@@ -428,6 +428,9 @@ exports.subscribeCalendarFeed = onCall({
       if (existing.familyId !== familyId) {
         throw new HttpsError("permission-denied", "Fel familj.");
       }
+      if (existing.importKind === "photo") {
+        throw new HttpsError("invalid-argument", "Foto-importer kan inte synkas om som feed.");
+      }
 
       const feedUrl = (typeof url === "string" && url.trim()) ?
         url.trim() : (existing.feedUrl || existing.url || "");
@@ -516,7 +519,8 @@ exports.syncCalendarFeeds = onSchedule({
   let fail = 0;
   for (const doc of snap.docs) {
     const d = doc.data() || {};
-    if (!(d.feedUrl || d.url)) continue;
+    // Foto-importer får ALDRIG synkas som feeds, och importer utan url ignoreras.
+    if (d.importKind === "photo" || !(d.feedUrl || d.url)) continue;
     try {
       await syncFeedDocument(doc);
       ok++;
@@ -531,3 +535,5 @@ exports.syncCalendarFeeds = onSchedule({
   console.log(`syncCalendarFeeds: klar ok=${ok} fail=${fail} total=${snap.size}`);
   return null;
 });
+
+exports.commitInChunks = commitInChunks;

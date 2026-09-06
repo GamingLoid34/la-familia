@@ -3,12 +3,14 @@ import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../app_theme.dart';
 import '../data/vardagsplan_mall.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
+import '../services/notification_service.dart';
 import '../utils/date_utils.dart';
 
 /// Vardagsplanen (föräldravy): genererar ett komplett förslag på rutiner,
@@ -16,8 +18,8 @@ import '../utils/date_utils.dart';
 /// det i appens vanliga collections så att det syns på Hem, i Agendan,
 /// Familjeveckan, matplaneraren och hemskärms-widgeten.
 ///
-/// Kan aktiveras hur många gånger som helst: allt planen skapar taggas med
-/// `source: 'vardagsplan'` och uppdateras på plats istället för att dubblas.
+/// Aktiveras för EN vald vecka. Poster taggas `source: 'vardagsplan'`.
+/// Ny aktivering för samma vecka ersätter den veckans vardagsplan-poster.
 class VardagsplanPage extends StatefulWidget {
   const VardagsplanPage({super.key});
 
@@ -29,9 +31,34 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
   Map<String, PlanProfil>? _profiler;
   Vardagsplan? _plan;
   bool _aktiverar = false;
+  bool _loadingPlans = true;
+  bool _plansLoadStarted = false;
+  List<_ActiveWeekPlan> _activeWeeks = [];
+
+  /// Måndag för målveckan (default: nästa ISO-vecka).
+  late DateTime _weekStart;
 
   /// Bumpas när förslaget byggs om — tvingar textfälten att ta nya värden.
   int _gen = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    final thisMon = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    _weekStart = thisMon.add(const Duration(days: 7));
+  }
+
+  DateTime get _weekEnd =>
+      DateTime(_weekStart.year, _weekStart.month, _weekStart.day + 6);
+
+  String get _weekLabel {
+    final w = isoWeekNumber(_weekStart);
+    final fmt = DateFormat('d MMM', 'sv');
+    final a = fmt.format(_weekStart);
+    final b = fmt.format(_weekEnd);
+    return 'Gäller v.$w, $a–$b';
+  }
 
   // Snabbval av piktogram för rutinsteg (samma anda som rutin-editorn).
   static const _stegEmojis = [
@@ -54,10 +81,269 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
 
   // ─── AKTIVERA ─────────────────────────────────────────────────────────────
 
-  DateTime _nastaDatumFor(int veckodag) {
-    final nu = DateTime.now();
-    final diff = (veckodag - nu.weekday) % 7;
-    return DateTime(nu.year, nu.month, nu.day + diff);
+  DateTime _datumIVecka(int veckodag) => DateTime(
+        _weekStart.year,
+        _weekStart.month,
+        _weekStart.day + (veckodag - 1),
+      );
+
+  Future<void> _refreshActivePlans(String fid) async {
+    if (fid.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _activeWeeks = [];
+          _loadingPlans = false;
+        });
+      }
+      return;
+    }
+    setState(() => _loadingPlans = true);
+    final db = FirebaseFirestore.instance;
+    final eventSnap = await db
+        .collection('planner_events')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+    final mealSnap = await db
+        .collection('meals')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+    final choreSnap = await db
+        .collection('chores')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+
+    final today = DateTime.now();
+    final todayKey = dateKey(DateTime(today.year, today.month, today.day));
+
+    final byWeek = <String, _ActiveWeekPlan>{};
+
+    void touch(String? rawDate,
+        {int events = 0, int meals = 0, int chores = 0, int openEnded = 0}) {
+      if (rawDate == null || rawDate.isEmpty) return;
+      final d = parseDate(rawDate);
+      if (d == null) return;
+      final mon = DateTime(d.year, d.month, d.day - (d.weekday - 1));
+      final key = dateKey(mon);
+      final cur = byWeek.putIfAbsent(
+        key,
+        () => _ActiveWeekPlan(
+          weekStart: mon,
+          events: 0,
+          meals: 0,
+          chores: 0,
+          openEndedRecurring: 0,
+        ),
+      );
+      cur.events += events;
+      cur.meals += meals;
+      cur.chores += chores;
+      cur.openEndedRecurring += openEnded;
+    }
+
+    for (final doc in eventSnap.docs) {
+      final d = doc.data();
+      final date = d['date'] as String? ??
+          ((d['recurrence'] as Map?)?['startDate'] as String?);
+      final recurring = d['isRecurring'] == true;
+      final end = (d['recurrence'] as Map?)?['endDate'];
+      final open = recurring && end == null;
+      if (date == null) continue;
+      if (open || date.compareTo(todayKey) >= 0) {
+        touch(date, events: 1, openEnded: open ? 1 : 0);
+      }
+    }
+    for (final doc in mealSnap.docs) {
+      final date = doc.data()['date'] as String?;
+      if (date != null && date.compareTo(todayKey) >= 0) {
+        touch(date, meals: 1);
+      }
+    }
+    for (final doc in choreSnap.docs) {
+      final d = doc.data();
+      final date = d['dueDate'] as String? ??
+          ((d['recurrence'] as Map?)?['startDate'] as String?);
+      if (date != null && date.compareTo(todayKey) >= 0) {
+        touch(date, chores: 1);
+      }
+    }
+
+    final list = byWeek.values.toList()
+      ..sort((a, b) => a.weekStart.compareTo(b.weekStart));
+    if (!mounted) return;
+    setState(() {
+      _activeWeeks = list;
+      _loadingPlans = false;
+    });
+  }
+
+  Future<_DeleteCounts> _countVardagsplanInRange({
+    required String fid,
+    required String fromKey,
+    String? toKey,
+    required bool includeOpenRecurring,
+  }) async {
+    final db = FirebaseFirestore.instance;
+    final eventSnap = await db
+        .collection('planner_events')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+    final mealSnap = await db
+        .collection('meals')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+    final choreSnap = await db
+        .collection('chores')
+        .where('familyId', isEqualTo: fid)
+        .where('source', isEqualTo: 'vardagsplan')
+        .get();
+
+    var events = 0, meals = 0, chores = 0;
+    final eventRefs = <DocumentReference>[];
+    final mealRefs = <DocumentReference>[];
+    final choreRefs = <DocumentReference>[];
+
+    bool inRange(String? date) {
+      if (date == null || date.isEmpty) return false;
+      if (date.compareTo(fromKey) < 0) return false;
+      if (toKey != null && date.compareTo(toKey) > 0) return false;
+      return true;
+    }
+
+    for (final doc in eventSnap.docs) {
+      final d = doc.data();
+      final date = d['date'] as String?;
+      final recurring = d['isRecurring'] == true;
+      final end = (d['recurrence'] as Map?)?['endDate'];
+      final open = recurring && end == null;
+      if (inRange(date) || (includeOpenRecurring && open)) {
+        events++;
+        eventRefs.add(doc.reference);
+      }
+    }
+    for (final doc in mealSnap.docs) {
+      final date = doc.data()['date'] as String?;
+      if (inRange(date)) {
+        meals++;
+        mealRefs.add(doc.reference);
+      }
+    }
+    for (final doc in choreSnap.docs) {
+      final d = doc.data();
+      final date = d['dueDate'] as String? ??
+          ((d['recurrence'] as Map?)?['startDate'] as String?);
+      final recurring = d['isRecurring'] == true;
+      final end = (d['recurrence'] as Map?)?['endDate'];
+      final open = recurring && end == null;
+      if (inRange(date) || (includeOpenRecurring && open)) {
+        chores++;
+        choreRefs.add(doc.reference);
+      }
+    }
+    return _DeleteCounts(
+      events: events,
+      meals: meals,
+      chores: chores,
+      eventRefs: eventRefs,
+      mealRefs: mealRefs,
+      choreRefs: choreRefs,
+    );
+  }
+
+  Future<void> _deleteRefs(_DeleteCounts c) async {
+    final db = FirebaseFirestore.instance;
+    final all = [...c.eventRefs, ...c.mealRefs, ...c.choreRefs];
+    for (var i = 0; i < all.length; i += 400) {
+      final batch = db.batch();
+      for (final ref in all.sublist(i, i + 400 > all.length ? all.length : i + 400)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
+  }
+
+  Future<bool> _confirmDangerDelete({
+    required String title,
+    required _DeleteCounts counts,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _DelayedConfirmDialog(
+        title: title,
+        body:
+            'Tar bort ${counts.events} uppdrag, ${counts.meals} middagar, '
+            '${counts.chores} sysslor — kan inte ångras',
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _taBortVecka(String fid, DateTime weekStart) async {
+    final end = DateTime(weekStart.year, weekStart.month, weekStart.day + 6);
+    final counts = await _countVardagsplanInRange(
+      fid: fid,
+      fromKey: dateKey(weekStart),
+      toKey: dateKey(end),
+      includeOpenRecurring: false,
+    );
+    if (counts.total == 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Inget att ta bort för den veckan.')),
+      );
+      return;
+    }
+    final ok = await _confirmDangerDelete(
+      title: 'Ta bort veckans plan?',
+      counts: counts,
+    );
+    if (!ok) return;
+    await _deleteRefs(counts);
+    await _refreshActivePlans(fid);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Tog bort ${counts.total} poster.'),
+        backgroundColor: const Color(0xFF6BAE75),
+      ),
+    );
+  }
+
+  Future<void> _taBortAllaFramtida(String fid) async {
+    final today = DateTime.now();
+    final todayKey = dateKey(DateTime(today.year, today.month, today.day));
+    final counts = await _countVardagsplanInRange(
+      fid: fid,
+      fromKey: todayKey,
+      toKey: null,
+      includeOpenRecurring: true,
+    );
+    if (counts.total == 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Inga framtida vardagsplan-poster.')),
+      );
+      return;
+    }
+    final ok = await _confirmDangerDelete(
+      title: 'Ta bort ALLA framtida?',
+      counts: counts,
+    );
+    if (!ok) return;
+    await _deleteRefs(counts);
+    await _refreshActivePlans(fid);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Tog bort ${counts.total} framtida poster.'),
+        backgroundColor: const Color(0xFF6BAE75),
+      ),
+    );
   }
 
   Future<void> _aktivera(FamilyProvider provider) async {
@@ -69,8 +355,19 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
     setState(() => _aktiverar = true);
     final db = FirebaseFirestore.instance;
     final medlemmar = provider.familyMembers;
+    final fromKey = dateKey(_weekStart);
+    final toKey = dateKey(_weekEnd);
 
     try {
+      // Ersätt befintliga vardagsplan-poster i vald vecka.
+      final existing = await _countVardagsplanInRange(
+        fid: fid,
+        fromKey: fromKey,
+        toKey: toKey,
+        includeOpenRecurring: false,
+      );
+      await _deleteRefs(existing);
+
       final batch = db.batch();
       var antalRutiner = 0;
       var antalUppdrag = 0;
@@ -105,86 +402,69 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
         antalRutiner++;
       }
 
-      // 2. VECKOUPPDRAG — återkommande planner_events, upsert via nyckel.
-      final befintligaEvents = <String, DocumentReference>{};
-      final eventSnap = await db
-          .collection('planner_events')
-          .where('familyId', isEqualTo: fid)
-          .where('source', isEqualTo: 'vardagsplan')
-          .get();
-      for (final doc in eventSnap.docs) {
-        final key = doc.data()['vardagsplanKey'] as String?;
-        if (key != null) befintligaEvents[key] = doc.reference;
-      }
-
-      final anvandaNycklar = <String>{};
+      // 2. VECKOUPPDRAG — återkommande sysslor med endDate = veckans söndag.
+      final choreNotifs = <({String id, Map<String, dynamic> data})>[];
       for (final u in plan.uppdrag) {
         if (u.titel.trim().isEmpty) continue;
-        anvandaNycklar.add(u.nyckel);
-        final datum = _nastaDatumFor(u.veckodag);
+        final datum = _datumIVecka(u.veckodag);
+        final startKey = dateKey(datum);
+        final endKey = dateKey(_weekEnd);
         final persons = medlemmar
             .where((m) => u.personUids.contains(m.uid))
-            .map((m) => m.name)
             .toList();
-        final data = <String, dynamic>{
-          'title': u.titel.trim(),
+        final whoName = persons.isEmpty ? '' : persons.first.name;
+        final whoUid = persons.isEmpty ? '' : persons.first.uid;
+        final whoColor = persons.isEmpty ? '' : persons.first.color;
+        final rotation = u.personUids.where((id) => id.isNotEmpty).toList();
+        final choreData = <String, dynamic>{
+          'chore': u.titel.trim(),
           'piktogram': u.piktogram,
-          'type': 'activity',
-          'date': dateKey(datum),
-          'time': u.tid,
-          'persons': persons,
-          'personUids': u.personUids,
-          'checklist':
-              u.checklista.map((c) => {'item': c, 'isDone': false}).toList(),
-          'isPending': false,
-          'familyId': fid,
+          'who': whoName,
+          'whoUid': whoUid,
+          'whoColor': whoColor,
+          'isDone': false,
+          'doneDates': <String>[],
+          'points': 10,
           'isRecurring': true,
           'recurrence': {
             'type': 'weekly',
-            'startDate': dateKey(datum),
-            'endDate': null,
+            'startDate': startKey,
+            'endDate': endKey,
             'exceptions': <String>[],
           },
+          'dueDate': startKey,
+          if (u.tid.isNotEmpty) 'dueTime': u.tid,
+          'rotationUids': rotation,
+          'familyId': fid,
           'source': 'vardagsplan',
-          'vardagsplanKey': u.nyckel,
+          'vardagsplanKey': '${u.nyckel}|$fromKey',
+          'createdByUid': uid,
         };
-        final ref = befintligaEvents[u.nyckel];
-        if (ref != null) {
-          batch.update(ref, data);
-        } else {
-          batch.set(db.collection('planner_events').doc(), {
-            ...data,
-            'createdBy': uid,
-            'createdByUid': uid,
-          });
-        }
+        final choreRef = db.collection('chores').doc();
+        batch.set(choreRef, choreData);
+        choreNotifs.add((id: choreRef.id, data: choreData));
         antalUppdrag++;
       }
-      // Uppdrag som tagits bort ur planen → ta bort ur agendan.
-      befintligaEvents.forEach((key, ref) {
-        if (!anvandaNycklar.contains(key)) batch.delete(ref);
-      });
 
-      // 3. MATVECKAN — fyll 14 dagar framåt. Manuellt inlagda rätter vinner.
-      final idag = DateTime.now();
-      final dagar = [
-        for (var i = 0; i < 14; i++)
-          DateTime(idag.year, idag.month, idag.day + i),
+      // 3. MATVECKAN — bara vald veckas 7 dagar.
+      final nycklar = [
+        for (var i = 0; i < 7; i++)
+          dateKey(DateTime(
+              _weekStart.year, _weekStart.month, _weekStart.day + i)),
       ];
-      final nycklar = dagar.map(dateKey).toList();
       final befintligaMal = <String, QueryDocumentSnapshot>{};
-      for (final del in [nycklar.sublist(0, 7), nycklar.sublist(7)]) {
-        final snap = await db
-            .collection('meals')
-            .where('familyId', isEqualTo: fid)
-            .where('date', whereIn: del)
-            .get();
-        for (final doc in snap.docs) {
-          final d = doc.data();
-          befintligaMal[d['date'] as String? ?? ''] = doc;
-        }
+      final snap = await db
+          .collection('meals')
+          .where('familyId', isEqualTo: fid)
+          .where('date', whereIn: nycklar)
+          .get();
+      for (final doc in snap.docs) {
+        final d = doc.data();
+        befintligaMal[d['date'] as String? ?? ''] = doc;
       }
-      for (final dag in dagar) {
+      for (var i = 0; i < 7; i++) {
+        final dag = DateTime(
+            _weekStart.year, _weekStart.month, _weekStart.day + i);
         final maltid = plan.matvecka
             .where((m) => m.veckodag == dag.weekday && m.titel.trim().isNotEmpty)
             .toList();
@@ -208,21 +488,29 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
               {'title': m.titel.trim(), 'emoji': m.emoji});
           antalMiddagar++;
         }
+        // Manuella middagar (utan source vardagsplan) lämnas orörda.
       }
 
       await batch.commit();
+      for (final c in choreNotifs) {
+        await NotificationService.scheduleChoreReminders(
+          docId: c.id,
+          data: c.data,
+        );
+      }
+      await _refreshActivePlans(fid);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              'Vardagsplanen är igång! 🌟  $antalRutiner rutiner · '
-              '$antalUppdrag veckouppdrag · $antalMiddagar middagar'),
+              'Vardagsplan $_weekLabel  ·  $antalRutiner rutiner · '
+              '$antalUppdrag sysslor · $antalMiddagar middagar'),
           backgroundColor: const Color(0xFF6BAE75),
           duration: const Duration(seconds: 4),
         ),
       );
-      Navigator.pop(context);
+      setState(() => _aktiverar = false);
     } catch (e, stack) {
       developer.log('Vardagsplan: aktivering misslyckades',
           error: e, stackTrace: stack);
@@ -335,6 +623,13 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
     final provider = context.watch<FamilyProvider>();
     final medlemmar = provider.familyMembers;
     _sakerstallPlan(medlemmar);
+    final fid = provider.currentUser?.familyId ?? '';
+    if (!_plansLoadStarted && fid.isNotEmpty) {
+      _plansLoadStarted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _refreshActivePlans(fid);
+      });
+    }
 
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
     final dayColor = AppTheme.getDayAccentColor();
@@ -381,6 +676,11 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
                     sliver: SliverList(
                       delegate: SliverChildListDelegate([
                         _introKort(),
+                        const SizedBox(height: 16),
+                        _weekPicker(dayColor),
+                        const SizedBox(height: 16),
+                        _aktivaPlanerSektion(
+                            provider.currentUser?.familyId ?? '', dayColor),
                         const SizedBox(height: 20),
                         _profilSektion(medlemmar),
                         const SizedBox(height: 20),
@@ -389,13 +689,13 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
                         const SizedBox(height: 8),
                         ...plan.rutiner.map(_rutinKort),
                         const SizedBox(height: 20),
-                        Text('VECKOUPPDRAG — ÅTERKOMMANDE I AGENDAN',
+                        Text('VECKOUPPDRAG — I VALD VECKA',
                             style: AppTheme.sectionLabelStyle),
                         const SizedBox(height: 8),
                         ...plan.uppdrag.map((u) => _uppdragKort(u, medlemmar)),
                         _laggTillUppdragKnapp(dayColor),
                         const SizedBox(height: 20),
-                        Text('MATVECKAN — SAMMA VARJE VECKA',
+                        Text('MATVECKAN — FÖR VALD VECKA',
                             style: AppTheme.sectionLabelStyle),
                         const SizedBox(height: 8),
                         _matveckaKort(),
@@ -404,8 +704,8 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
                         const SizedBox(height: 8),
                         Center(
                           child: Text(
-                            'Planen kan justeras och aktiveras igen när som '
-                            'helst — allt uppdateras utan dubbletter.',
+                            'Aktivering skriver bara vald vecka. Ny aktivering '
+                            'för samma vecka ersätter den veckans vardagsplan-poster.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 11, color: Colors.grey.shade500),
@@ -419,6 +719,119 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _weekPicker(Color dayColor) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.cardDecoration(radius: 16),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left_rounded),
+            onPressed: () => setState(() {
+              _weekStart = DateTime(
+                  _weekStart.year, _weekStart.month, _weekStart.day - 7);
+            }),
+          ),
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  _weekLabel,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w800),
+                ),
+                TextButton(
+                  onPressed: () {
+                    final now = DateTime.now();
+                    final thisMon = DateTime(
+                        now.year, now.month, now.day - (now.weekday - 1));
+                    setState(
+                        () => _weekStart = thisMon.add(const Duration(days: 7)));
+                  },
+                  child: Text('Nästa vecka',
+                      style: TextStyle(
+                          color: dayColor, fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            onPressed: () => setState(() {
+              _weekStart = DateTime(
+                  _weekStart.year, _weekStart.month, _weekStart.day + 7);
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _aktivaPlanerSektion(String fid, Color dayColor) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: AppTheme.cardDecoration(radius: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('AKTIVA VARDAGSPLANER', style: AppTheme.sectionLabelStyle),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: fid.isEmpty ? null : () => _taBortAllaFramtida(fid),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red.shade700,
+                side: BorderSide(color: Colors.red.shade300),
+              ),
+              child: const Text('Ta bort ALLA framtida vardagsplan-poster'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_loadingPlans)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (_activeWeeks.isEmpty)
+            Text('Inga framtida vardagsplan-poster just nu.',
+                style: TextStyle(color: Colors.grey.shade600, fontSize: 13))
+          else
+            ..._activeWeeks.map((w) {
+              final wn = isoWeekNumber(w.weekStart);
+              final parts = <String>[];
+              if (w.events > 0) parts.add('${w.events} uppdrag');
+              if (w.meals > 0) parts.add('${w.meals} middagar');
+              if (w.chores > 0) parts.add('${w.chores} sysslor');
+              final open = w.openEndedRecurring > 0
+                  ? ' · ⚠ ${w.openEndedRecurring} öppna serier'
+                  : '';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'v.$wn: ${parts.isEmpty ? 'tom' : parts.join(' · ')}$open',
+                        style: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => _taBortVecka(fid, w.weekStart),
+                      child: Text('Ta bort',
+                          style: TextStyle(color: Colors.red.shade700)),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
       ),
     );
   }
@@ -740,9 +1153,86 @@ class _VardagsplanPageState extends State<VardagsplanPage> {
         ),
         child: _aktiverar
             ? const CircularProgressIndicator(color: Colors.white)
-            : const Text('Aktivera vardagsplanen 🌟',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            : Text('Aktivera $_weekLabel 🌟',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
       ),
+    );
+  }
+}
+
+class _ActiveWeekPlan {
+  final DateTime weekStart;
+  int events;
+  int meals;
+  int chores;
+  int openEndedRecurring;
+
+  _ActiveWeekPlan({
+    required this.weekStart,
+    required this.events,
+    required this.meals,
+    required this.chores,
+    required this.openEndedRecurring,
+  });
+}
+
+class _DeleteCounts {
+  final int events;
+  final int meals;
+  final int chores;
+  final List<DocumentReference> eventRefs;
+  final List<DocumentReference> mealRefs;
+  final List<DocumentReference> choreRefs;
+
+  const _DeleteCounts({
+    required this.events,
+    required this.meals,
+    required this.chores,
+    required this.eventRefs,
+    required this.mealRefs,
+    required this.choreRefs,
+  });
+
+  int get total => events + meals + chores;
+}
+
+class _DelayedConfirmDialog extends StatefulWidget {
+  final String title;
+  final String body;
+
+  const _DelayedConfirmDialog({required this.title, required this.body});
+
+  @override
+  State<_DelayedConfirmDialog> createState() => _DelayedConfirmDialogState();
+}
+
+class _DelayedConfirmDialogState extends State<_DelayedConfirmDialog> {
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _ready = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Text(widget.body),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Avbryt'),
+        ),
+        FilledButton(
+          onPressed: _ready ? () => Navigator.pop(context, true) : null,
+          style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          child: Text(_ready ? 'Ta bort' : 'Vänta…'),
+        ),
+      ],
     );
   }
 }

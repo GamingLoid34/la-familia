@@ -28,7 +28,7 @@ int _daysBetween(DateTime a, DateTime b) =>
 bool recurringOccursOnDay(Map<String, dynamic> d, DateTime day) {
   final rec = d['recurrence'] as Map<String, dynamic>?;
   if (rec == null) return false;
-  final start = parseDate(rec['startDate'] ?? d['date']);
+  final start = parseDate(rec['startDate'] ?? d['date'] ?? d['dueDate']);
   if (start == null) return false;
 
   final d0 = _dayOnly(day);
@@ -45,6 +45,8 @@ bool recurringOccursOnDay(Map<String, dynamic> d, DateTime day) {
   if (exceptions.contains(dateKey(d0))) return false;
 
   switch (rec['type'] as String? ?? '') {
+    case 'daily':
+      return true;
     case 'weekly':
       return d0.weekday == s0.weekday;
     case 'biweekly':
@@ -93,6 +95,8 @@ String recurrenceLabel(Map<String, dynamic> d) {
       'fredag', 'lördag', 'söndag'];
   final dayName = start != null ? days[start.weekday] : '';
   switch (rec['type'] as String? ?? '') {
+    case 'daily':
+      return 'Varje dag';
     case 'weekly':
       return 'Varje $dayName';
     case 'biweekly':

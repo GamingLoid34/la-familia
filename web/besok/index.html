@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Besök hos Noomi 💜</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- ─── 0. Laddning & Felvyer ─── -->
+    <div id="view-loading" class="spinner-container">
+      <div class="spinner"></div>
+      <p>Hämtar tider och dagsläge… 🫶</p>
+    </div>
+
+    <div id="view-error" class="error-card hidden">
+      <h3>Kunde inte hämta tiderna</h3>
+      <p id="error-message">Kontrollera din internetanslutning och försök igen.</p>
+      <button type="button" id="btn-retry" class="btn-primary" style="margin-top: 14px;">Försök igen</button>
+    </div>
+
+    <div id="view-invalid-token" class="card hidden" style="text-align: center; padding: 30px 20px;">
+      <div style="font-size: 40px; margin-bottom: 12px;">💜</div>
+      <h2>Länken verkar inte stämma</h2>
+      <p style="color: var(--text-muted); margin-top: 8px;">
+        Be familjen skicka en ny länk så att du kan se lediga tider.
+      </p>
+    </div>
+
+    <!-- ─── 1. Vy: Start / Tillgänglighet ─── -->
+    <div id="view-start" class="hidden">
+      <header>
+        <h1>Besök hos <span id="person-first-name">Noomi</span> 💜</h1>
+        <p class="subtitle">Säg till när du kommer, så vet familjen.</p>
+        <!-- medvetet familjespecifikt -->
+        <p class="visit-rule-notice">Just nu tar träningen mycket kraft — därför ett sällskap per dag och besök på högst en timme.</p>
+      </header>
+
+      <!-- Flytt-läge indikator om aktiv -->
+      <div id="move-mode-banner" class="move-banner hidden">
+        <span>🔄 Välj ny ankomsttid för ditt besök</span>
+        <button type="button" id="btn-cancel-move" class="btn-back" style="margin: 0; color: #1B4F72;">Avbryt</button>
+      </div>
+
+      <!-- Dagens läge (visas endast vid gult/rött) -->
+      <div id="today-banner" class="status-banner hidden">
+        <div class="status-icon" id="today-icon">💛</div>
+        <div id="today-text"></div>
+      </div>
+
+      <!-- medvetet familjespecifikt -->
+      <!-- TODO: verifiera att nålen hamnar på hus T1 — annars ersätt med delningslänk från Google Maps / Apple Kartor -->
+      <details class="directions-details">
+        <summary class="directions-summary">📍 Hitta hit — adress & hur man kommer in</summary>
+        <div class="directions-content">
+          <div class="directions-address">
+            <strong>Rehabiliteringsmedicinska kliniken, Länssjukhuset Ryhov</strong><br>
+            Terapivägen, hus T1, Jönköping
+          </div>
+          <a href="https://www.google.com/maps/search/?api=1&query=Rehabiliteringsmedicinska+kliniken+L%C3%A4nssjukhuset+Ryhov+J%C3%B6nk%C3%B6ping" target="_blank" rel="noopener noreferrer" class="btn-maps">
+            Visa vägen dit 🗺️
+          </a>
+          <div class="door-instruction">
+            <span class="door-icon">🔔</span>
+            <span>Är dörren låst? Ring på och säg att ni ska besöka Noomi Valladares.</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- Daglista -->
+      <div id="days-list"></div>
+
+      <!-- Länk för att återfinna anmälan -->
+      <div class="find-link-container">
+        <button type="button" id="btn-show-find" class="link-discrete">
+          Redan anmäld men tappat bort din länk?
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── 2. Vy: Hitta borttappad anmälan ─── -->
+    <div id="view-find" class="hidden">
+      <button type="button" id="btn-back-from-find" class="btn-back">‹ Tillbaka till startsidan</button>
+
+      <div class="card">
+        <h2 style="font-size: 20px; color: var(--primary-dark); margin-bottom: 6px;">Hitta min anmälan 🔍</h2>
+        <p style="font-size: 15px; color: var(--text-muted); line-height: 1.4; margin-bottom: 16px;">
+          Ange telefonnumret du använde vid anmälan för att hitta ditt besök.
+        </p>
+
+        <form id="find-form">
+          <div class="form-group">
+            <label for="input-find-phone">Ditt telefonnummer *</label>
+            <input type="tel" id="input-find-phone" placeholder="t.ex. 070-123 45 67" required pattern="[0-9+\s\-()]{6,20}" autocomplete="tel">
+          </div>
+
+          <div id="find-error" class="error-card hidden" style="padding: 12px; margin-top: 14px; font-size: 15px;"></div>
+
+          <button type="submit" id="btn-submit-find" class="btn-primary" style="margin-top: 16px;">
+            Hitta min anmälan
+          </button>
+        </form>
+
+        <div id="find-results" class="hidden" style="margin-top: 24px;">
+          <h3 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">Dina kommande besök:</h3>
+          <div id="find-results-list"></div>
+        </div>
+
+        <!-- medvetet familjespecifikt -->
+        <div id="find-empty-message" class="info-card hidden" style="margin-top: 20px; background: #FEF9E7; border-color: #F9E79F; color: #7D6608; text-align: left;">
+          Hittade ingen anmälan på det numret. Kontrollera numret eller hör av dig till Oscar & Noomi.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── 3. Vy: Formulär ─── -->
+    <div id="view-booking" class="hidden">
+      <button type="button" id="btn-back-to-start" class="btn-back">‹ Välj en annan tid</button>
+
+      <div class="card">
+        <h2 style="font-size: 20px; color: var(--primary-dark); margin-bottom: 4px;" id="booking-form-title">Kom och hälsa på</h2>
+        <div style="font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 18px;" id="booking-slot-display">
+          Onsdag 27/8 — jag kommer ca 18:30
+        </div>
+
+        <form id="booking-form">
+          <div class="form-group">
+            <label for="input-names">Vilka kommer? *</label>
+            <input type="text" id="input-names" placeholder="t.ex. Mormor" required minlength="2" maxlength="60" autocomplete="name">
+            <div class="input-hint">Förnamn räcker fint.</div>
+          </div>
+
+          <div class="form-group">
+            <label for="input-phone">Ditt telefonnummer *</label>
+            <input type="tel" id="input-phone" placeholder="t.ex. 070-123 45 67" required pattern="[0-9+\s\-()]{6,20}" autocomplete="tel">
+            <!-- medvetet familjespecifikt -->
+            <div class="input-hint">Så Oscar & Noomi kan nå dig om orken eller läget ändras.</div>
+          </div>
+
+          <div id="booking-error" class="error-card hidden" style="padding: 12px; margin-top: 14px; font-size: 15px;"></div>
+
+          <button type="submit" id="btn-submit-booking" class="btn-primary" style="margin-top: 18px;">
+            Jag kommer då 💜
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ─── 3. Vy: Bekräftelse ─── -->
+    <div id="view-confirmation" class="hidden">
+      <div class="success-banner">
+        <div style="font-size: 40px; margin-bottom: 8px;">💜</div>
+        <h2>Vad fint! 💜</h2>
+        <div class="success-details" id="confirm-summary">
+          Noomi ser fram emot ert besök onsdag 27/8 ca 18:30.
+        </div>
+        <div class="visit-duration-hint">Besöket är max en timme.</div>
+      </div>
+
+      <!-- medvetet familjespecifikt -->
+      <!-- TODO: verifiera att nålen hamnar på hus T1 — annars ersätt med delningslänk från Google Maps / Apple Kartor -->
+      <div class="card directions-card">
+        <h3 class="directions-card-title">📍 Hitta hit</h3>
+        <div class="directions-address">
+          <strong>Rehabiliteringsmedicinska kliniken, Länssjukhuset Ryhov</strong><br>
+          Terapivägen, hus T1, Jönköping
+        </div>
+        <a href="https://www.google.com/maps/search/?api=1&query=Rehabiliteringsmedicinska+kliniken+L%C3%A4nssjukhuset+Ryhov+J%C3%B6nk%C3%B6ping" target="_blank" rel="noopener noreferrer" class="btn-maps">
+          Visa vägen dit 🗺️
+        </a>
+        <div class="door-instruction">
+          <span class="door-icon">🔔</span>
+          <span>Är dörren låst? Ring på och säg att ni ska besöka Noomi Valladares.</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size: 17px; margin-bottom: 6px;">Spara din personliga länk 🔗</h3>
+        <p style="font-size: 15px; color: var(--text-muted); line-height: 1.4;">
+          Spara den här länken — med den kan du ändra tid eller avanmäla dig om något kommer emellan.
+        </p>
+
+        <div class="link-box" id="confirm-link-url"></div>
+
+        <button type="button" id="btn-copy-confirm-link" class="btn-primary">
+          Kopiera min länk 📋
+        </button>
+        <div id="copy-feedback" style="text-align: center; font-size: 14px; color: var(--green); font-weight: bold; margin-top: 8px;" class="hidden">
+          Länk kopierad till urklipp! ✓
+        </div>
+      </div>
+
+      <button type="button" id="btn-done" class="btn-secondary">
+        ‹ Tillbaka till startsidan
+      </button>
+    </div>
+
+    <!-- ─── 4. Vy: Hantera befintligt besök ─── -->
+    <div id="view-manage" class="hidden">
+      <header>
+        <h1>Ditt besök 🫶</h1>
+        <p class="subtitle">Här kan du se, ändra tid eller avanmäla ditt besök</p>
+      </header>
+
+      <div class="card">
+        <div style="font-size: 14px; font-weight: 700; color: var(--primary); text-transform: uppercase; margin-bottom: 4px;">
+          Inplanerat besök
+        </div>
+        <div style="font-size: 22px; font-weight: 800; color: var(--text); margin-bottom: 4px;" id="manage-datetime">
+          Onsdag 27/8 — ankomst ca 18:30
+        </div>
+        <div class="visit-duration-hint" style="margin-bottom: 14px;">Besöket är max en timme.</div>
+
+        <div style="font-size: 15px; color: var(--text-muted); line-height: 1.6; margin-bottom: 16px;">
+          <div><strong>Besökare:</strong> <span id="manage-names"></span></div>
+          <div><strong>Telefon:</strong> <span id="manage-phone"></span></div>
+        </div>
+
+        <!-- medvetet familjespecifikt -->
+        <!-- TODO: verifiera att nålen hamnar på hus T1 — annars ersätt med delningslänk från Google Maps / Apple Kartor -->
+        <div class="directions-embedded">
+          <h3 class="directions-card-title">📍 Hitta hit</h3>
+          <div class="directions-address">
+            <strong>Rehabiliteringsmedicinska kliniken, Länssjukhuset Ryhov</strong><br>
+            Terapivägen, hus T1, Jönköping
+          </div>
+          <a href="https://www.google.com/maps/search/?api=1&query=Rehabiliteringsmedicinska+kliniken+L%C3%A4nssjukhuset+Ryhov+J%C3%B6nk%C3%B6ping" target="_blank" rel="noopener noreferrer" class="btn-maps">
+            Visa vägen dit 🗺️
+          </a>
+          <div class="door-instruction">
+            <span class="door-icon">🔔</span>
+            <span>Är dörren låst? Ring på och säg att ni ska besöka Noomi Valladares.</span>
+          </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+          <button type="button" id="btn-start-move" class="btn-primary">
+            Byt tid
+          </button>
+          <button type="button" id="btn-cancel-booking" class="btn-danger">
+            Avanmäl besöket
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Footer ─── -->
+    <!-- medvetet familjespecifikt -->
+    <footer>
+      Uppgifterna ses bara av Oscar & Noomi. Inga cookies används.
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

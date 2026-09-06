@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -10,6 +11,7 @@ import '../services/notification_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
 import '../utils/quick_add_parser.dart';
+import 'add_event_sheet.dart';
 
 /// Snabbinmatning (ROADMAP Etapp 10 + röst): skriv ELLER tala in en rad →
 /// tolkat utkast → bekräfta → sparad. Förstår aktiviteter, sysslor
@@ -26,7 +28,11 @@ class QuickAddBar extends StatefulWidget {
     required this.familyMembers,
     required this.familyId,
     this.onFallbackToForm,
+    this.dense = false,
   });
+
+  /// Mindre vertikal padding, ingen tung skuggkänsla.
+  final bool dense;
 
   @override
   State<QuickAddBar> createState() => _QuickAddBarState();
@@ -39,7 +45,7 @@ class _QuickAddBarState extends State<QuickAddBar> {
 
   @override
   void dispose() {
-    _speech.stop();
+    if (!kIsWeb) _speech.stop();
     _ctrl.dispose();
     super.dispose();
   }
@@ -47,6 +53,7 @@ class _QuickAddBarState extends State<QuickAddBar> {
   /// Tryck på mikrofonen → börja lyssna direkt (svenska). Live-texten
   /// skrivs i fältet; när taget är klart tolkas och bekräftas det.
   Future<void> _toggleListen() async {
+    if (kIsWeb) return;
     if (_listening) {
       await _speech.stop();
       if (mounted) setState(() => _listening = false);
@@ -114,6 +121,25 @@ class _QuickAddBarState extends State<QuickAddBar> {
         onSaved: () {
           _ctrl.clear();
         },
+        onAdjust: draft.intent == QuickAddIntent.activity
+            ? () {
+                _ctrl.clear();
+                showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => AddEventSheet(
+                    selectedDay: draft.date,
+                    familyMembers: widget.familyMembers,
+                    familyId: widget.familyId.isEmpty ? null : widget.familyId,
+                    initialTitle: draft.title,
+                    initialTime: draft.time.isNotEmpty ? draft.time : null,
+                    initialPersonUids:
+                        draft.persons.map((m) => m.uid).toList(),
+                  ),
+                );
+              }
+            : null,
       ),
     );
   }
@@ -121,32 +147,39 @@ class _QuickAddBarState extends State<QuickAddBar> {
   @override
   Widget build(BuildContext context) {
     final palette = AppTheme.dayPalette();
+    final dense = widget.dense;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      padding: EdgeInsets.fromLTRB(12, dense ? 4 : 10, 12, dense ? 0 : 2),
       child: TextField(
         controller: _ctrl,
         textInputAction: TextInputAction.done,
         onSubmitted: (_) => _submit(),
+        style: TextStyle(fontSize: dense ? 14 : 15),
         decoration: InputDecoration(
+          isDense: dense,
           hintText: _listening
               ? '🎙️ Lyssnar… tala nu'
-              : '⚡ Skriv eller tryck 🎤 — "Fotboll tis 17:00 Liam"',
+              : dense
+                  ? '⚡ Skriv eller 🎤…'
+                  : '⚡ Skriv eller tryck 🎤 — "Fotboll tis 17:00 Liam"',
           hintStyle: TextStyle(
-            fontSize: 13,
+            fontSize: dense ? 12 : 13,
             color: _listening ? palette.deep : Colors.grey.shade500,
             fontWeight: _listening ? FontWeight.w700 : FontWeight.normal,
           ),
           filled: true,
           fillColor: Colors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: dense ? 8 : 10,
+          ),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(dense ? 12 : 14),
             borderSide:
                 BorderSide(color: palette.base.withValues(alpha: 0.25)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(dense ? 12 : 14),
             borderSide: BorderSide(
               color: _listening
                   ? palette.base
@@ -157,18 +190,23 @@ class _QuickAddBarState extends State<QuickAddBar> {
           suffixIcon: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                icon: Icon(
-                  _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
-                  color: _listening ? Colors.red.shade400 : palette.deep,
-                  size: 24,
+              if (!kIsWeb)
+                IconButton(
+                  visualDensity:
+                      dense ? VisualDensity.compact : VisualDensity.standard,
+                  icon: Icon(
+                    _listening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                    color: _listening ? Colors.red.shade400 : palette.deep,
+                    size: dense ? 22 : 24,
+                  ),
+                  tooltip: _listening ? 'Sluta lyssna' : 'Tala in',
+                  onPressed: _toggleListen,
                 ),
-                tooltip: _listening ? 'Sluta lyssna' : 'Tala in',
-                onPressed: _toggleListen,
-              ),
               IconButton(
+                visualDensity:
+                    dense ? VisualDensity.compact : VisualDensity.standard,
                 icon: Icon(Icons.arrow_circle_up_rounded,
-                    color: palette.deep, size: 26),
+                    color: palette.deep, size: dense ? 22 : 26),
                 onPressed: _submit,
               ),
             ],
@@ -183,11 +221,13 @@ class _QuickAddConfirmSheet extends StatefulWidget {
   final QuickAddDraft draft;
   final String familyId;
   final VoidCallback onSaved;
+  final VoidCallback? onAdjust;
 
   const _QuickAddConfirmSheet({
     required this.draft,
     required this.familyId,
     required this.onSaved,
+    this.onAdjust,
   });
 
   @override
@@ -476,6 +516,25 @@ class _QuickAddConfirmSheetState extends State<_QuickAddConfirmSheet> {
               ),
             ],
           ),
+          if (d.intent == QuickAddIntent.activity && widget.onAdjust != null) ...[
+            const SizedBox(height: 10),
+            Center(
+              child: TextButton.icon(
+                onPressed: _saving
+                    ? null
+                    : () {
+                        Navigator.pop(context);
+                        widget.onAdjust!();
+                      },
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                label: const Text('Justera i formuläret'),
+                style: TextButton.styleFrom(
+                  foregroundColor: palette.deep,
+                  textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     ),

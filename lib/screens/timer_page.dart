@@ -15,7 +15,7 @@ class TimerPage extends StatefulWidget {
 }
 
 class _TimerPageState extends State<TimerPage> {
-  final TimerService _service = TimerService(); // Koppla upp oss
+  final TimerService _service = TimerService.instance;
 
   @override
   void initState() {

@@ -14,6 +14,8 @@ class UserModel {
   final String? familyId;
   /// Valfri profilbild (Firebase Storage URL).
   final String? avatarUrl;
+  final List<String> fcmTokens;
+  final bool pushFamilyEvents;
 
   const UserModel({
     required this.uid,
@@ -25,6 +27,8 @@ class UserModel {
     required this.energy,
     this.familyId,
     this.avatarUrl,
+    this.fcmTokens = const [],
+    this.pushFamilyEvents = true,
   });
 
   static String _defaultViewMode(Map<String, dynamic> data) {
@@ -47,6 +51,11 @@ class UserModel {
       energy: (data['energy'] as int?) ?? 3,
       familyId: data['familyId'] as String?,
       avatarUrl: data['avatarUrl'] as String?,
+      fcmTokens: (data['fcmTokens'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      pushFamilyEvents: data['pushFamilyEvents'] as bool? ?? true,
     );
   }
 
@@ -60,6 +69,8 @@ class UserModel {
       'energy': energy,
       'familyId': familyId,
       if (avatarUrl != null) 'avatarUrl': avatarUrl,
+      if (fcmTokens.isNotEmpty) 'fcmTokens': fcmTokens,
+      'pushFamilyEvents': pushFamilyEvents,
     };
   }
 
@@ -72,6 +83,8 @@ class UserModel {
     int? energy,
     String? familyId,
     String? avatarUrl,
+    List<String>? fcmTokens,
+    bool? pushFamilyEvents,
   }) {
     return UserModel(
       uid: uid,
@@ -83,6 +96,8 @@ class UserModel {
       energy: energy ?? this.energy,
       familyId: familyId ?? this.familyId,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      fcmTokens: fcmTokens ?? this.fcmTokens,
+      pushFamilyEvents: pushFamilyEvents ?? this.pushFamilyEvents,
     );
   }
 

@@ -62,3 +62,30 @@ DateTime? parseDateTime(Map<String, dynamic> d) {
   }
   return null;
 }
+
+/// ISO 8601-veckonummer (1–53). Måndag = veckans första dag;
+/// vecka 1 är den som innehåller årets första torsdag.
+int isoWeekNumber(DateTime date) {
+  final d = DateTime.utc(date.year, date.month, date.day);
+  // Torsdagen i samma ISO-vecka bestämmer år/vecka.
+  final thursday = d.add(Duration(days: DateTime.thursday - d.weekday));
+  final jan1 = DateTime.utc(thursday.year, 1, 1);
+  final dayOfYear = thursday.difference(jan1).inDays + 1;
+  return ((dayOfYear - 1) ~/ 7) + 1;
+}
+
+/// ISO-veckoår för [date] (kan skilja sig från kalenderåret vid årsskifte).
+int isoWeekYear(DateTime date) {
+  final d = DateTime.utc(date.year, date.month, date.day);
+  final thursday = d.add(Duration(days: DateTime.thursday - d.weekday));
+  return thursday.year;
+}
+
+/// "om 45 min" istället för bara klockslag — NPF: hur länge till, inte när.
+String untilLabel(Duration left) {
+  if (left.inMinutes < 1) return 'nu!';
+  if (left.inMinutes < 60) return 'om ${left.inMinutes} min';
+  final h = left.inHours;
+  final m = left.inMinutes % 60;
+  return m == 0 ? 'om $h h' : 'om $h h $m min';
+}

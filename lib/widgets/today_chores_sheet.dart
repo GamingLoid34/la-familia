@@ -2,11 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:confetti/confetti.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../utils/date_utils.dart';
+import '../utils/chore_utils.dart';
 import '../utils/layout.dart';
 import '../app_theme.dart';
 import '../providers/family_provider.dart';
+import '../services/notification_service.dart';
 import '../services/chore_service.dart';
-import '../utils/person_match.dart';
 
 /// Enkel vy: bara familjens sysslor att bocka av (från hem-skärmen).
 class TodayChoresSheet extends StatefulWidget {
@@ -45,22 +47,25 @@ class _TodayChoresSheetState extends State<TodayChoresSheet> {
   Widget build(BuildContext context) {
     final maxH = MediaQuery.sizeOf(context).height * 0.88;
     final dayColor = AppTheme.getDayAccentColor();
+    final today = DateTime.now();
     final raw = context.watch<FamilyProvider>().chores;
-    var chores = widget.onlyAssignedTo == null
-        ? raw.toList()
-        : raw.where((d) {
-            return assignedToPerson(d.data() as Map<String, dynamic>,
-                uid: widget.onlyAssignedToUid ?? '',
-                name: widget.onlyAssignedTo!);
-          }).toList();
+    var chores = raw.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (!choreOccursOnDay(d, today)) return false;
+      if (widget.onlyAssignedTo == null) return true;
+      return choreAssignedToOnDay(d, today,
+          uid: widget.onlyAssignedToUid ?? '',
+          name: widget.onlyAssignedTo!);
+    }).toList();
 
     // Räkna FÖRE filtrering av klara — annars blir "X av Y" alltid 0.
     final total = chores.length;
-    final done =
-        chores.where((d) => (d.data() as Map)['isDone'] == true).length;
+    final done = chores
+        .where((d) => choreDoneOnDay(d.data() as Map<String, dynamic>, today))
+        .length;
 
     final open = chores
-        .where((d) => (d.data() as Map)['isDone'] != true)
+        .where((d) => !choreDoneOnDay(d.data() as Map<String, dynamic>, today))
         .toList();
 
     return wrapBottomSheet(
@@ -193,7 +198,17 @@ class _ChoreToggleTileState extends State<_ChoreToggleTile> {
       _optimisticDone = next;
     });
     try {
-      await ChoreService.completeChore(choreId: widget.doc.id, done: next);
+      await ChoreService.completeChore(
+        choreId: widget.doc.id,
+        done: next,
+        dayKey: dateKey(DateTime.now()),
+      );
+      if (next) {
+        await NotificationService.cancelChoreInstance(
+          widget.doc.id,
+          DateTime.now(),
+        );
+      }
       if (next) widget.onComplete();
     } catch (e) {
       if (mounted) {
@@ -225,7 +240,8 @@ class _ChoreToggleTileState extends State<_ChoreToggleTile> {
     final title = d['chore'] as String? ?? d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '✅';
     final who = d['who'] as String? ?? '';
-    final isDone = _optimisticDone ?? (d['isDone'] == true);
+    final isDone = _optimisticDone ??
+        choreDoneOnDay(d, DateTime.now());
     final weight = (d['points'] as int?) ?? 0;
 
     return AnimatedOpacity(

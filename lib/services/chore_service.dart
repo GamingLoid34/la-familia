@@ -3,10 +3,11 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../utils/date_utils.dart';
 
-/// Klient för `completeChore`-callablen (Fas 2).
+/// Klient för `completeChore`-callablen (Fas 2–3).
 class ChoreService {
-  /// Bockar av / ångrar en syssla via servern (skriver chore_log + isDone).
-  /// [done] = true → klar, false → ångra.
+  /// Bockar av / ångrar en syssla via servern.
+  /// Engångs → `isDone` + logg `choreId`.
+  /// Återkommande → `doneDates` arrayUnion/Remove + logg `{choreId}_{dateKey}`.
   static Future<void> completeChore({
     required String choreId,
     required bool done,

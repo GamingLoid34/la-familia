@@ -14,7 +14,8 @@ enum WindowSize {
   static const double navMaxWidth = 700;
   static const double settingsMaxWidth = 700;
 
-  /// Ungefärlig höjd för bottennav + marginal (scroll-padding).
+  /// Tidigare scroll-clearance för bottennav; behålls för bakåtkompat.
+  /// Använd [navSafeBottom] i flikvyer (body slutar redan ovanför navet).
   static const double navScrollPadding = 100;
 
   static WindowSize of(BuildContext context) =>
@@ -33,6 +34,11 @@ enum WindowSize {
   /// ≥ 600 — mer yta (ingen 430-klämma, capped sheets).
   bool get isExpanded => this != WindowSize.compact;
 }
+
+/// Liten luft under scrollinnehåll (body slutar redan ovanför navet
+/// när yttre Scaffold har `extendBody: false`).
+EdgeInsets navSafeBottom(BuildContext c) =>
+    const EdgeInsets.only(bottom: 16);
 
 /// Centrerar bottom sheets till [WindowSize.sheetMaxWidth] på icke-kompakt.
 Widget wrapBottomSheet(BuildContext context, Widget child) {

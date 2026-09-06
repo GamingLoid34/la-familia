@@ -50,3 +50,10 @@ android/app/google-services.json
 
 # Firebase CLI cache
 .firebase/
+
+# Android release-signering (Play) — aldrig committa
+android/key.properties
+android/*.jks
+android/*.keystore
+*.jks
+*.keystore

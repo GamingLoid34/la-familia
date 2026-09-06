@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
+import '../utils/chore_utils.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
 import '../utils/person_match.dart';
@@ -21,24 +22,15 @@ import '../widgets/quick_add_bar.dart';
 import 'calendar_import_page.dart';
 import 'chore_stats_page.dart';
 import 'chores_page.dart';
+import 'stadlage_page.dart';
 import '../widgets/add_event_sheet.dart';
 import '../widgets/weather_widgets.dart';
+import '../utils/event_actions.dart';
 import 'work_schedule_page.dart';
 
 enum AgendaTab { all, activities, chores }
 
-/// Syssla utan `dueDate` visas alla dagar; med datum bara den dagen.
-bool _choreVisibleOnDay(Map<String, dynamic> d, DateTime day) {
-  final raw = d['dueDate'];
-  if (raw == null) return true;
-  if (raw is String && raw.isEmpty) return true;
-  if (raw is String) {
-    final parsed = parseDate(raw);
-    if (parsed == null) return true;
-    return isSameDay(parsed, day);
-  }
-  return true;
-}
+
 
 class AgendaPage extends StatefulWidget {
   final AgendaTab initialTab;
@@ -131,17 +123,17 @@ class _AgendaPageState extends State<AgendaPage>
   ) {
     final list = docs.where((doc) {
       final d = doc.data() as Map<String, dynamic>;
-      if (!_choreVisibleOnDay(d, day)) return false;
+      if (!choreOccursOnDay(d, day)) return false;
       if (_filterPerson != null) {
-        return assignedToPerson(d,
+        return choreAssignedToOnDay(d, day,
             uid: _filterPersonUid ?? '', name: _filterPerson!);
       }
       return true;
     }).toList();
 
     list.sort((a, b) {
-      final da = (a.data() as Map)['isDone'] == true ? 1 : 0;
-      final db = (b.data() as Map)['isDone'] == true ? 1 : 0;
+      final da = choreDoneOnDay(a.data() as Map<String, dynamic>, day) ? 1 : 0;
+      final db = choreDoneOnDay(b.data() as Map<String, dynamic>, day) ? 1 : 0;
       return da.compareTo(db);
     });
 
@@ -531,6 +523,7 @@ class _AgendaPageState extends State<AgendaPage>
                               (_, i) => RepaintBoundary(
                                 child: AgendaChoreRow(
                                   doc: chores[i],
+                                  day: _selectedDay,
                                   dayColor: dayColor,
                                   familyMembers: members,
                                   familyId: user?.familyId ?? '',
@@ -548,9 +541,9 @@ class _AgendaPageState extends State<AgendaPage>
                             ),
                           ),
                       ],
-                      const SliverToBoxAdapter(
+                      SliverToBoxAdapter(
                           child:
-                              SizedBox(height: WindowSize.navScrollPadding)),
+                              SizedBox(height: navSafeBottom(context).bottom)),
                     ];
 
                 if (wide) {
@@ -580,8 +573,8 @@ class _AgendaPageState extends State<AgendaPage>
                                       dayColor,
                                     ),
                                   const SizedBox(height: 24),
-                                  const SizedBox(
-                                      height: WindowSize.navScrollPadding),
+                                  SizedBox(
+                                      height: navSafeBottom(context).bottom),
                                 ],
                               ),
                             ),
@@ -1100,88 +1093,14 @@ class AgendaActivityRow extends StatelessWidget {
   });
 
   Future<void> _handleMenu(BuildContext context, String value) async {
-    if (value == 'edit') {
-      final d = doc.data() as Map<String, dynamic>;
-      var day = listDay;
-      final pd = parseDate(d['date']);
-      if (pd != null) day = pd;
-      if (!context.mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => AddEventSheet(
-          selectedDay: day,
-          familyMembers: familyMembers,
-          familyId: familyId.isEmpty ? null : familyId,
-          eventToEdit: doc,
-        ),
-      );
-    } else if (value == 'delete') {
-      final d = doc.data() as Map<String, dynamic>;
-      final isRecurring = d['recurrence'] != null;
-
-      if (isRecurring) {
-        // Återkommande: fråga om bara denna dag eller alla gånger.
-        final choice = await showDialog<String>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Ta bort återkommande aktivitet?'),
-            content: Text(
-                '"${d['title'] ?? ''}" upprepas (${recurrenceLabel(d)}).'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, null),
-                child: const Text('Avbryt'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, 'single'),
-                child: const Text('Bara denna dag'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, 'all'),
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                child: const Text('Alla gånger'),
-              ),
-            ],
-          ),
-        );
-        if (choice == 'single') {
-          await NotificationService.cancelActivityInstance(doc.id, listDay);
-          await doc.reference.update({
-            'recurrence.exceptions':
-                FieldValue.arrayUnion([dateKey(listDay)]),
-          });
-        } else if (choice == 'all') {
-          await NotificationService.cancelActivityReminders(doc.id, d);
-          await doc.reference.delete();
-        }
-        return;
-      }
-
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Ta bort aktivitet?'),
-          content: const Text('Den tas bort från planeringen.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Avbryt'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Ta bort'),
-            ),
-          ],
-        ),
-      );
-      if (ok == true) {
-        await NotificationService.cancel(doc.id);
-        await doc.reference.delete();
-      }
-    }
+    await handleEventMenuAction(
+      context,
+      action: value,
+      doc: doc,
+      listDay: listDay,
+      familyMembers: familyMembers,
+      familyId: familyId,
+    );
   }
 
   @override
@@ -1305,17 +1224,23 @@ class AgendaChoreRow extends StatefulWidget {
   final UserModel? currentUser;
   final bool allowDrag;
   final VoidCallback onComplete;
+  /// Dag som sysslan avser (för återkommande doneDates / rotation).
+  final DateTime day;
+  /// Valfri undertext (ersätter/kompletterar standard undertext, t.ex. "nästa: lördag 12/9").
+  final String? subtitle;
 
-  const AgendaChoreRow({
+  AgendaChoreRow({
     super.key,
     required this.doc,
     required this.dayColor,
     required this.familyMembers,
     required this.familyId,
     required this.onComplete,
+    DateTime? day,
     this.currentUser,
     this.allowDrag = true,
-  });
+    this.subtitle,
+  }) : day = day ?? DateTime.now();
 
   @override
   State<AgendaChoreRow> createState() => _AgendaChoreRowState();
@@ -1370,9 +1295,10 @@ class _AgendaChoreRowState extends State<AgendaChoreRow> {
       await ChoreService.completeChore(
         choreId: widget.doc.id,
         done: nextDone,
+        dayKey: dateKey(widget.day),
       );
       if (nextDone) {
-        await NotificationService.cancel(widget.doc.id);
+        await NotificationService.cancelChoreInstance(widget.doc.id, widget.day);
         widget.onComplete();
       }
     } catch (e) {
@@ -1398,9 +1324,30 @@ class _AgendaChoreRowState extends State<AgendaChoreRow> {
     final d = widget.doc.data() as Map<String, dynamic>;
     final title = d['chore'] as String? ?? d['title'] as String? ?? '';
     final pik = d['piktogram'] as String? ?? '✅';
-    final who = d['who'] as String? ?? '';
-    final isDone = d['isDone'] == true;
+    final assigneeUid = assigneeForDay(d, widget.day);
+    var who = d['who'] as String? ?? '';
+    if (assigneeUid != null && assigneeUid.isNotEmpty) {
+      for (final m in widget.familyMembers) {
+        if (m.uid == assigneeUid) {
+          who = m.name;
+          break;
+        }
+      }
+    }
+    final nextUid = nextAssigneeAfter(d, widget.day);
+    String? nextName;
+    if (nextUid != null) {
+      for (final m in widget.familyMembers) {
+        if (m.uid == nextUid) {
+          nextName = m.name.split(' ').first;
+          break;
+        }
+      }
+    }
+    final isDone = choreDoneOnDay(d, widget.day);
     final weight = (d['points'] as int?) ?? 0;
+    final rawSubsteps = (d['substeps'] as List? ?? []);
+    final hasSubsteps = rawSubsteps.isNotEmpty;
 
     final card = AnimatedOpacity(
       duration: const Duration(milliseconds: 250),
@@ -1431,9 +1378,19 @@ class _AgendaChoreRowState extends State<AgendaChoreRow> {
                             isDone ? TextDecoration.lineThrough : null,
                       ),
                     ),
-                    if (who.isNotEmpty)
+                    if (widget.subtitle != null) ...[
+                      if (who.isNotEmpty)
+                        Text(
+                          who,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
                       Text(
-                        who,
+                        widget.subtitle!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1441,6 +1398,30 @@ class _AgendaChoreRowState extends State<AgendaChoreRow> {
                           color: Colors.grey.shade500,
                         ),
                       ),
+                    ] else ...[
+                      if (who.isNotEmpty)
+                        Text(
+                          nextName != null
+                              ? 'Idag: ${who.split(' ').first} · nästa: $nextName'
+                              : who,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                      if (choreIsRecurring(d) && who.isEmpty)
+                        Text(
+                          '🔁 ${recurrenceLabel(d)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                    ],
                   ],
                 ),
               ),
@@ -1454,6 +1435,30 @@ class _AgendaChoreRowState extends State<AgendaChoreRow> {
                     fontWeight: FontWeight.w600,
                     color: Colors.grey.shade500,
                   ),
+                ),
+              ],
+              if (hasSubsteps && !isDone) ...[
+                const SizedBox(width: 2),
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                  icon: Icon(
+                    Icons.play_arrow_rounded,
+                    color: widget.dayColor,
+                    size: 24,
+                  ),
+                  tooltip: 'Fokusläge',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => StadlagePage(
+                          choreId: widget.doc.id,
+                          accent: widget.dayColor,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
               const SizedBox(width: 4),

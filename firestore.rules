@@ -53,6 +53,12 @@ service cloud.firestore {
       allow read: if isAuth() && familyId == myFamilyId();
       allow create: if isAuth();
       allow update: if isAuth() && familyId == myFamilyId() && iAmParent();
+
+      // Display-konfiguration (scener, schema, moduler)
+      match /display_config/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+      }
     }
 
     // 3. KÄRNDATA

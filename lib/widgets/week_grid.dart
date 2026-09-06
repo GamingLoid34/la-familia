@@ -5,9 +5,9 @@ import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
-import '../utils/person_match.dart';
-import '../utils/recurrence.dart';
+import '../utils/schedule_display.dart';
 import '../utils/schedule_time_utils.dart';
+import '../utils/week_bucketing.dart';
 import 'member_avatar.dart';
 
 /// Veckogrid: medlem × dag, Familjen-rad för events utan personer,
@@ -21,6 +21,8 @@ class WeekGrid extends StatefulWidget {
       List<QueryDocumentSnapshot> dayEvents) onCellTap;
   final void Function(DateTime day, List<QueryDocumentSnapshot> dayEvents)?
       onFamilyRowTap;
+  final void Function(UserModel member)? onMemberAvatarTap;
+  final Map<String, Color>? presenceRingByUid;
 
   const WeekGrid({
     super.key,
@@ -30,6 +32,8 @@ class WeekGrid extends StatefulWidget {
     required this.onCellTap,
     this.shifts = const [],
     this.onFamilyRowTap,
+    this.onMemberAvatarTap,
+    this.presenceRingByUid,
   });
 
   @override
@@ -44,12 +48,7 @@ class _WeekGridState extends State<WeekGrid> {
   static const double _avatarColW = 56;
   static const double _familyRowH = 56;
 
-  /// uid → (dateKey → events)
-  Map<String, Map<String, List<QueryDocumentSnapshot>>> _byMember = {};
-  Map<String, List<QueryDocumentSnapshot>> _familyByDay = {};
-  /// uid → (dateKey → shifts touching day)
-  Map<String, Map<String, List<QueryDocumentSnapshot>>> _shiftsByMember = {};
-
+  late WeekBucketingResult _bucketing;
   final Map<String, List<DateTime>> _recurrenceCache = {};
 
   @override
@@ -67,6 +66,7 @@ class _WeekGridState extends State<WeekGrid> {
         !identical(oldWidget.events, widget.events) ||
         !identical(oldWidget.members, widget.members) ||
         !identical(oldWidget.shifts, widget.shifts) ||
+        !identical(oldWidget.presenceRingByUid, widget.presenceRingByUid) ||
         oldWidget.events.length != widget.events.length ||
         oldWidget.members.length != widget.members.length ||
         oldWidget.shifts.length != widget.shifts.length) {
@@ -75,115 +75,24 @@ class _WeekGridState extends State<WeekGrid> {
     }
   }
 
-  List<DateTime> _daysOfWeek() {
-    return List.generate(
-      7,
-      (i) => DateTime(widget.weekStart.year, widget.weekStart.month,
-          widget.weekStart.day + i),
+  void _rebuildIndex() {
+    _bucketing = bucketWeekData(
+      members: widget.members,
+      events: widget.events,
+      shifts: widget.shifts,
+      weekStart: widget.weekStart,
+      recurrenceCache: _recurrenceCache,
     );
   }
 
-  List<DateTime> _occurrenceDays(
-      QueryDocumentSnapshot doc, Map<String, dynamic> d, List<DateTime> days) {
-    final weekKey = dateKey(widget.weekStart);
-    final cacheKey = '${doc.id}_$weekKey';
-    final cached = _recurrenceCache[cacheKey];
-    if (cached != null) return cached;
-
-    final out = <DateTime>[];
-    if (d['recurrence'] != null) {
-      for (final day in days) {
-        if (recurringOccursOnDay(d, day)) out.add(day);
-      }
-    } else {
-      for (final day in days) {
-        if (eventOccursOnDay(d, day)) out.add(day);
-      }
-    }
-    _recurrenceCache[cacheKey] = out;
-    return out;
-  }
-
-  void _rebuildIndex() {
-    final days = _daysOfWeek();
-    final map = <String, Map<String, List<QueryDocumentSnapshot>>>{};
-    final shiftMap = <String, Map<String, List<QueryDocumentSnapshot>>>{};
-    for (final m in widget.members) {
-      map[m.uid] = {
-        for (final day in days) dateKey(day): <QueryDocumentSnapshot>[]
-      };
-      shiftMap[m.uid] = {
-        for (final day in days) dateKey(day): <QueryDocumentSnapshot>[]
-      };
-    }
-    final family = {
-      for (final day in days) dateKey(day): <QueryDocumentSnapshot>[]
-    };
-
-    for (final doc in widget.events) {
-      final d = doc.data() as Map<String, dynamic>;
-      final occ = _occurrenceDays(doc, d, days);
-      if (occ.isEmpty) continue;
-
-      if (eventHasNoPersons(d)) {
-        for (final day in occ) {
-          family[dateKey(day)]!.add(doc);
-        }
-        continue;
-      }
-
-      for (final m in widget.members) {
-        if (!eventIncludesPerson(d, uid: m.uid, name: m.name)) continue;
-        final byDay = map[m.uid]!;
-        for (final day in occ) {
-          byDay[dateKey(day)]!.add(doc);
-        }
-      }
-    }
-
-    for (final doc in widget.shifts) {
-      final d = doc.data() as Map<String, dynamic>;
-      for (final m in widget.members) {
-        if (!assignedToPerson(d, uid: m.uid, name: m.name)) continue;
-        final byDay = shiftMap[m.uid]!;
-        for (final day in days) {
-          if (shiftTouchesDay(d, day)) {
-            byDay[dateKey(day)]!.add(doc);
-          }
-        }
-      }
-    }
-
-    for (final byDay in map.values) {
-      for (final list in byDay.values) {
-        list.sort((a, b) {
-          final ta = ((a.data() as Map)['time'] as String? ?? '99:99');
-          final tb = ((b.data() as Map)['time'] as String? ?? '99:99');
-          return ta.compareTo(tb);
-        });
-      }
-    }
-    for (final list in family.values) {
-      list.sort((a, b) {
-        final ta = ((a.data() as Map)['time'] as String? ?? '99:99');
-        final tb = ((b.data() as Map)['time'] as String? ?? '99:99');
-        return ta.compareTo(tb);
-      });
-    }
-
-    _byMember = map;
-    _familyByDay = family;
-    _shiftsByMember = shiftMap;
-  }
-
   List<QueryDocumentSnapshot> _eventsFor(UserModel m, DateTime day) =>
-      _byMember[m.uid]?[dateKey(day)] ?? const [];
+      _bucketing.eventsFor(m, day);
 
   List<QueryDocumentSnapshot> _shiftsFor(UserModel m, DateTime day) =>
-      _shiftsByMember[m.uid]?[dateKey(day)] ?? const [];
+      _bucketing.shiftsFor(m, day);
 
   List<QueryDocumentSnapshot> _familyFor(DateTime day) =>
-      _familyByDay[dateKey(day)] ?? const [];
+      _bucketing.familyFor(day);
 
   @override
   Widget build(BuildContext context) {
@@ -193,7 +102,7 @@ class _WeekGridState extends State<WeekGrid> {
     final cellH = wide ? _wideCellH : _compactCellH;
     final maxEvents = wide ? 4 : 2;
     final showFamily =
-        _familyByDay.values.any((l) => l.isNotEmpty) || widget.onFamilyRowTap != null;
+        _bucketing.hasFamilyEvents || widget.onFamilyRowTap != null;
 
     Widget dayColumns({required double? cellW}) {
       return Row(
@@ -286,19 +195,29 @@ class _WeekGridState extends State<WeekGrid> {
                   height: cellH,
                   width: _avatarColW,
                   child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        FamilyMemberAvatar(member: m, size: 34),
-                        const SizedBox(height: 2),
-                        Text(
-                          m.name.split(' ').first,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 9, fontWeight: FontWeight.w700),
-                        ),
-                      ],
+                    child: GestureDetector(
+                      onTap: widget.onMemberAvatarTap == null
+                          ? null
+                          : () => widget.onMemberAvatarTap!(m),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          FamilyMemberAvatar(
+                            member: m,
+                            size: 34,
+                            presenceColor:
+                                widget.presenceRingByUid?[m.uid],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            m.name.split(' ').first,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 9, fontWeight: FontWeight.w700),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -391,9 +310,16 @@ class _WeekGridState extends State<WeekGrid> {
     final rows = <Widget>[];
     var slotsUsed = 0;
 
-    if (schedule.isNotEmpty && slotsUsed < maxEvents) {
-      rows.add(_scheduleBlock(schedule, rich: rich));
-      slotsUsed++;
+    // Vecka: alltid klumpa skolan (clumpSchool: true).
+    for (final entry in buildScheduleDisplay(
+      schedule,
+      clumpSchool: true,
+    )) {
+      if (slotsUsed >= maxEvents) break;
+      if (entry is ScheduleClusterEntry) {
+        rows.add(_scheduleBlock(entry.docs, rich: rich, label: entry.label));
+        slotsUsed++;
+      }
     }
 
     final activitySlots = maxEvents - slotsUsed;
@@ -477,25 +403,16 @@ class _WeekGridState extends State<WeekGrid> {
   Widget _scheduleBlock(
     List<QueryDocumentSnapshot> scheduleDocs, {
     required bool rich,
+    String? label,
   }) {
-    String? minStart;
-    String? maxEnd;
-    for (final doc in scheduleDocs) {
-      final d = doc.data() as Map<String, dynamic>;
-      final t = (d['time'] as String? ?? '').trim();
-      if (t.isEmpty) continue;
-      final endRaw = (d['endTime'] as String? ?? '').trim();
-      final end = endRaw.isNotEmpty ? endRaw : t;
-      if (minStart == null || t.compareTo(minStart) < 0) minStart = t;
-      if (maxEnd == null || end.compareTo(maxEnd) > 0) maxEnd = end;
-    }
-    final label = (minStart != null && maxEnd != null)
-        ? '🏫 $minStart–$maxEnd'
-        : '🏫';
+    final text = label ??
+        scheduleBlockLabel(
+          scheduleDocs.map((d) => d.data() as Map<String, dynamic>),
+        );
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Text(
-        label,
+        text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(

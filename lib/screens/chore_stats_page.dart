@@ -153,7 +153,8 @@ class _ChoreStatsPageState extends State<ChoreStatsPage> {
             else if (wide && _range != _StatsRange.fourWeeks)
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 40),
+                  padding: EdgeInsets.fromLTRB(
+                      8, 0, 8, navSafeBottom(context).bottom),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -184,7 +185,7 @@ class _ChoreStatsPageState extends State<ChoreStatsPage> {
             else
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 40),
+                  padding: navSafeBottom(context),
                   child: _StatsPanel(
                     title: '',
                     familyId: familyId,

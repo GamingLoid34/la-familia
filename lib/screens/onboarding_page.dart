@@ -148,7 +148,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const MainPage()),
+            MaterialPageRoute(builder: (context) => rootAfterAuth()),
           );
         }
       }
@@ -181,7 +181,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       if (mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => const MainPage()),
+          MaterialPageRoute(builder: (context) => rootAfterAuth()),
         );
       }
     } catch (e, stack) {

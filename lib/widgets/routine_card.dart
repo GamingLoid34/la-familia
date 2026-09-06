@@ -112,6 +112,34 @@ class RoutineCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (step['tid'] != null &&
+                          (step['tid'] as String).isNotEmpty) ...[
+                        Container(
+                          margin: const EdgeInsets.only(left: 6, right: 10),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.grey.shade300,
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            step['tid'] as String,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: done
+                                  ? Colors.grey.shade400
+                                  : Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(width: 8),
+                      ],
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 150),
                         width: 28,
