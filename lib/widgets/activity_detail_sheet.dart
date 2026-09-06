@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/layout.dart';
+import '../utils/schedule_time_utils.dart';
 import '../app_theme.dart';
 import 'event_reactions_row.dart';
 import 'planner_event_leading.dart';
@@ -96,9 +97,13 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
             ? DateFormat('HH:mm').format(date)
             : '');
     final endTime = (_data['endTime'] as String?)?.trim() ?? '';
-    final timeLine = timeStr.isNotEmpty && endTime.isNotEmpty
-        ? '$timeStr – $endTime'
-        : timeStr;
+    final String timeLine;
+    if (timeStr.isNotEmpty && endTime.isNotEmpty) {
+      final dur = durationLabelHm(timeStr, endTime);
+      timeLine = '$timeStr – $endTime${dur.isEmpty ? '' : ' ($dur)'}';
+    } else {
+      timeLine = timeStr;
+    }
 
     final location = (_data['location'] as String?)?.trim() ?? '';
     final calDesc = (_data['calendarDescription'] as String?)?.trim() ??

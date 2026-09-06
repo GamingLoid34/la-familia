@@ -195,3 +195,58 @@ String timeSortKey(Map<String, dynamic> d, {bool isWork = false}) {
   }
   return (d['time'] as String? ?? '00:00').padLeft(5, '0');
 }
+
+/// Reservregel för blockscheman: fyller i saknad `endTime` med nästa händelses
+/// `time` samma dag (dagens sista lämnas orörd, befintliga endTime rörs
+/// aldrig). Muterar mapparna i [events] (nycklar: 'date', 'time', 'endTime').
+/// Returnerar antalet ifyllda sluttider.
+int inferBlockEndTimes(List<Map<String, dynamic>> events) {
+  int count = 0;
+  final byDate = <String, List<Map<String, dynamic>>>{};
+  for (final ev in events) {
+    final date = ev['date'] as String?;
+    if (date != null && date.isNotEmpty) {
+      byDate.putIfAbsent(date, () => []).add(ev);
+    }
+  }
+  for (final dayEvents in byDate.values) {
+    dayEvents.sort((a, b) {
+      final ta = (a['time'] as String? ?? '');
+      final tb = (b['time'] as String? ?? '');
+      return ta.compareTo(tb);
+    });
+    for (int i = 0; i < dayEvents.length - 1; i++) {
+      final cur = dayEvents[i];
+      final next = dayEvents[i + 1];
+      final curEnd = cur['endTime'] as String?;
+      final curTime = (cur['time'] as String? ?? '').trim();
+      final nextTime = (next['time'] as String? ?? '').trim();
+      if ((curEnd == null || curEnd.trim().isEmpty) &&
+          nextTime.compareTo(curTime) > 0) {
+        cur['endTime'] = nextTime;
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+/// Läsbar längd mellan två 'HH:mm' samma dag: '2 t 30 min', '45 min', '2 t'.
+/// Tom sträng om ogiltig input eller om slutet inte är efter starten.
+String durationLabelHm(String startHm, String endHm) {
+  final baseDay = DateTime(2000, 1, 1);
+  final start = parseHmOnDate(startHm, baseDay);
+  final end = parseHmOnDate(endHm, baseDay);
+  if (start == null || end == null) return '';
+  if (!end.isAfter(start)) return '';
+
+  final diff = end.difference(start);
+  final totalMinutes = diff.inMinutes;
+  final h = totalMinutes ~/ 60;
+  final m = totalMinutes % 60;
+
+  if (h > 0 && m > 0) return '$h t $m min';
+  if (h > 0) return '$h t';
+  if (m > 0) return '$m min';
+  return '';
+}

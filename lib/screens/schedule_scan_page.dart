@@ -185,6 +185,7 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
         _selectedMember = matched;
         _selectedSchemaKind = defaultKind;
         _events = result.events;
+        _inferBlockEndTimes(_events);
         _step = _ScanStep.review;
         _errorMsg = null;
       });
@@ -971,5 +972,28 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
         ],
       ),
     );
+  }
+
+  // Reservregel: aktivitet pågår tills nästa börjar samma dag. Rör aldrig
+  // sluttider AI:n läst ur text/rutnät. Spegling finns i
+  // functions/schedule_scan.js (saveScheduleImport).
+  void _inferBlockEndTimes(List<ParsedScheduleEvent> events) {
+    final byDate = <String, List<ParsedScheduleEvent>>{};
+    for (final ev in events) {
+      if (ev.date.isNotEmpty) {
+        byDate.putIfAbsent(ev.date, () => []).add(ev);
+      }
+    }
+    for (final dayEvents in byDate.values) {
+      dayEvents.sort((a, b) => a.time.compareTo(b.time));
+      for (int i = 0; i < dayEvents.length - 1; i++) {
+        final cur = dayEvents[i];
+        final next = dayEvents[i + 1];
+        if ((cur.endTime == null || cur.endTime!.isEmpty) &&
+            next.time.compareTo(cur.time) > 0) {
+          cur.endTime = next.time;
+        }
+      }
+    }
   }
 }

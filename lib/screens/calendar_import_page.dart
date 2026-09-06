@@ -14,6 +14,7 @@ import '../services/calendar_feed_service.dart';
 import '../services/family_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/person_match.dart';
+import '../utils/schedule_time_utils.dart';
 import 'schedule_scan_page.dart';
 
 /// Kalenderimport (ICS) — hanteras under Planering, inte Inställningar.
@@ -28,6 +29,7 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
   UserModel? _currentUser;
   List<UserModel> _familyMembers = [];
   List<Map<String, dynamic>> _calendarImports = [];
+  final Set<String> _inferringIds = {};
   bool _loading = true;
 
   @override
@@ -147,11 +149,13 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
           _ImportCard(
             dayColor: dayColor,
             calendarImports: _calendarImports,
+            inferringImportIds: _inferringIds,
             onAddTap: _showAddCalendarDialog,
             onPurgeTap: _currentUser?.familyId == null
                 ? null
                 : _confirmPurgeAllCalendarImports,
             onDeleteImport: _confirmDeleteCalendarImport,
+            onInferEndTimes: _inferEndTimesForImport,
             onToggleAutoSync: _toggleAutoSync,
             onSyncNow: _syncNow,
           ),
@@ -711,6 +715,112 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
     }
   }
 
+  Future<void> _inferEndTimesForImport(String docId) async {
+    if (_inferringIds.contains(docId)) return;
+    setState(() => _inferringIds.add(docId));
+    try {
+      final impRef =
+          FirebaseFirestore.instance.collection('calendar_imports').doc(docId);
+      final impDoc = await impRef.get();
+      if (!impDoc.exists) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Kunde inte fylla i sluttider.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      final data = impDoc.data()!;
+      final familyId = data['familyId'] as String? ?? '';
+      final calendarName = data['name'] as String? ?? '';
+
+      final eventsSnap = await FirebaseFirestore.instance
+          .collection('planner_events')
+          .where('familyId', isEqualTo: familyId)
+          .get();
+
+      final candidates = <Map<String, dynamic>>[];
+      for (final d in eventsSnap.docs) {
+        final m = d.data();
+        if (m['source'] != 'calendar') continue;
+        final byId = m['calendarImportId'] == docId;
+        final legacy = m['calendarImportId'] == null &&
+            m['calendarName'] == calendarName;
+        if (!byId && !legacy) continue;
+
+        final time = (m['time'] as String? ?? '').trim();
+        if (time.isEmpty) continue;
+
+        candidates.add({
+          'date': m['date'] as String? ?? '',
+          'time': time,
+          'endTime': m['endTime'] as String?,
+          'ref': d.reference,
+        });
+      }
+
+      final initialEndTimes = <dynamic, String?>{
+        for (final c in candidates) c['ref']: c['endTime'] as String?,
+      };
+      final filledCount = inferBlockEndTimes(candidates);
+
+      if (filledCount > 0) {
+        var batch = FirebaseFirestore.instance.batch();
+        var ops = 0;
+        for (final c in candidates) {
+          final ref = c['ref'] as DocumentReference;
+          final prevEnd = initialEndTimes[ref];
+          final newEnd = c['endTime'] as String?;
+          if (newEnd != null && newEnd.isNotEmpty && newEnd != prevEnd) {
+            batch.update(ref, {'endTime': newEnd});
+            ops++;
+            if (ops >= 400) {
+              await batch.commit();
+              batch = FirebaseFirestore.instance.batch();
+              ops = 0;
+            }
+          }
+        }
+        if (ops > 0) {
+          await batch.commit();
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              filledCount > 0
+                  ? 'Fyllde i sluttider för $filledCount aktiviteter. ✅'
+                  : 'Alla aktiviteter hade redan sluttid.',
+            ),
+            backgroundColor: filledCount > 0
+                ? const Color(0xFF6BAE75)
+                : Colors.grey.shade700,
+          ),
+        );
+      }
+    } catch (e, stack) {
+      developer.log('Kunde inte fylla i sluttider',
+          error: e, stackTrace: stack);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Kunde inte fylla i sluttider.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _inferringIds.remove(docId));
+      }
+    }
+  }
+
   Future<void> _confirmPurgeAllCalendarImports() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -1055,18 +1165,22 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
 class _ImportCard extends StatelessWidget {
   final Color dayColor;
   final List<Map<String, dynamic>> calendarImports;
+  final Set<String> inferringImportIds;
   final VoidCallback onAddTap;
   final VoidCallback? onPurgeTap;
   final void Function(String id) onDeleteImport;
+  final void Function(String id) onInferEndTimes;
   final void Function(String id, bool value) onToggleAutoSync;
   final void Function(String id) onSyncNow;
 
   const _ImportCard({
     required this.dayColor,
     required this.calendarImports,
+    required this.inferringImportIds,
     required this.onAddTap,
     required this.onPurgeTap,
     required this.onDeleteImport,
+    required this.onInferEndTimes,
     required this.onToggleAutoSync,
     required this.onSyncNow,
   });
@@ -1162,6 +1276,26 @@ class _ImportCard extends StatelessWidget {
                             color: dayColor,
                           ),
                         ),
+                        if (imp['importKind'] == 'photo')
+                          inferringImportIds.contains(imp['id'])
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                )
+                              : IconButton(
+                                  icon: Icon(Icons.timelapse_rounded,
+                                      size: 22, color: Colors.grey.shade600),
+                                  tooltip: 'Fyll i sluttider',
+                                  onPressed: () {
+                                    final id = imp['id'];
+                                    if (id is String) onInferEndTimes(id);
+                                  },
+                                ),
                         IconButton(
                           icon: Icon(Icons.delete_outline_rounded,
                               size: 22, color: Colors.grey.shade600),

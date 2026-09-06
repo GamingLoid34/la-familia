@@ -16,6 +16,7 @@ import '../utils/date_utils.dart';
 import '../utils/day_events.dart';
 import '../utils/layout.dart';
 import '../utils/person_match.dart';
+import '../utils/schedule_time_utils.dart';
 import 'activity_detail_sheet.dart';
 import 'meal_choice_sheet.dart';
 import 'today_chores_sheet.dart';
@@ -1248,7 +1249,15 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     final piktogram = isMeal ? '🍽️' : (d['piktogram'] as String? ?? '📅');
     final timeStr = DateFormat('HH:mm').format(item.start);
     final endTimeStr = (d['endTime'] as String? ?? '').trim();
-    final timeRange = endTimeStr.isNotEmpty ? '$timeStr–$endTimeStr' : timeStr;
+    final String timeRange;
+    if (endTimeStr.isNotEmpty) {
+      final dur = durationLabelHm(timeStr, endTimeStr);
+      timeRange = dur.isEmpty
+          ? '$timeStr–$endTimeStr'
+          : '$timeStr–$endTimeStr · $dur';
+    } else {
+      timeRange = timeStr;
+    }
     final checklist = _extractChecklist(d['checklist']);
     final transport = d['transport'] as String?;
 

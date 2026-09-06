@@ -15,7 +15,15 @@ const PARSE_SCHEDULE_IMAGE_SYSTEM =
   "2026-08-24) — använd dem i första hand. Saknas datum: använd angiven\n" +
   "veckostart (måndag) + veckodagen i rubriken. Tider skrivna med punkt\n" +
   "(07.30) blir 07:30. Ta med ALLA läsbara poster inklusive Lunch.\n" +
-  "Sätt endTime ENDAST om en sluttid uttryckligen står i texten.\n" +
+  "STARTTID (time): tryckt tid i rutan gäller alltid. Saknar rutan tryckt\n" +
+  "tid men schemat är ett tidsrutnät med timaxel: läs av rutans ÖVERKANT\n" +
+  "mot timaxeln, avrundat till närmaste kvart (:00/:15/:30/:45).\n" +
+  "SLUTTID (endTime), i prioritetsordning:\n" +
+  "1) En sluttid som står i texten (t.ex. '13.30-14.45') gäller alltid.\n" +
+  "2) I ett tidsrutnät: läs av rutans NEDERKANT mot timaxeln, avrundat\n" +
+  "till närmaste kvart. Rutans höjd = aktivitetens längd.\n" +
+  "3) Annars endTime = null. Gissa ALDRIG en sluttid som varken står i\n" +
+  "text eller går att läsa ur rutnätet.\n" +
   "Hitta aldrig på händelser — hoppa över oläsliga rader. Titlar exakt\n" +
   "som de står (behåll namn som 'Fysioterapi Maria').";
 
@@ -169,6 +177,7 @@ exports.parseScheduleImage = onCall({
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
         max_tokens: 3000,
+        temperature: 0,
         system: PARSE_SCHEDULE_IMAGE_SYSTEM,
         messages: [{
           role: "user",
@@ -300,6 +309,31 @@ exports.saveScheduleImport = onCall({
 
     validEvents.push({date, time, endTime, title, location});
   }
+
+  // Reservregel: aktivitet pågår tills nästa börjar samma dag. Rör aldrig
+  // sluttider AI:n läst ur text/rutnät. Spegling finns i
+  // lib/screens/schedule_scan_page.dart (_inferBlockEndTimes).
+  const inferBlockEndTimes = (events) => {
+    const byDate = new Map();
+    for (const ev of events) {
+      if (!ev.date) continue;
+      if (!byDate.has(ev.date)) {
+        byDate.set(ev.date, []);
+      }
+      byDate.get(ev.date).push(ev);
+    }
+    for (const dayEvents of byDate.values()) {
+      dayEvents.sort((a, b) => a.time.localeCompare(b.time));
+      for (let i = 0; i < dayEvents.length - 1; i++) {
+        const cur = dayEvents[i];
+        const next = dayEvents[i + 1];
+        if (!cur.endTime && next.time > cur.time) {
+          cur.endTime = next.time;
+        }
+      }
+    }
+  };
+  inferBlockEndTimes(validEvents);
 
   if (validEvents.length === 0) {
     throw new HttpsError("invalid-argument", "Inga giltiga händelser att spara.");
