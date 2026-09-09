@@ -29,6 +29,9 @@ exports.onPlannerEventDeleted = visitBooking.onPlannerEventDeleted;
 const webReminders = require("./web_reminders");
 exports.sendDueWebReminders = webReminders.sendDueWebReminders;
 
+const displayTransit = require("./display_transit");
+exports.displayTransit = displayTransit.displayTransit;
+
 // ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
 // Skickar push till familjemedlemmar. Respekterar:
 //  - pushFamilyEvents === false (toggle i Inställningar)
