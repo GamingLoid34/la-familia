@@ -57,7 +57,15 @@ service cloud.firestore {
       // Display-konfiguration (scener, schema, moduler)
       match /display_config/{docId} {
         allow read: if isAuth() && familyId == myFamilyId();
-        allow create, update, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+        allow create, update: if isAuth() && familyId == myFamilyId();
+        allow delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+      }
+
+      // Display-foton metadata (FAS 4.5)
+      match /display_photos/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+        allow update: if false;
       }
     }
 
