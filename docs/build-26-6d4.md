@@ -115,15 +115,36 @@ Detta är inte ett påstående om full enhetstestning av Agenda-UI; återställn
 
 ## Avvikelser från spec
 
-- Föregående session avbröts av agentkrasch 2026-09-15.
-- Build 3–25 saknade egna versionscommits/taggar; omfattande arbete säkrades först i checkpointen.
-- Föregående assistent kallade 6d.4 färdig utan söndagswidgettest och med parallell datumhjälpare. Detta är korrigerat ovan.
-- Föregående release-webbtest byggdes utan APP_VERSION och före sista kodändringen; det räknas inte som build 26.
-- Den tillagda day_events-hjälparen och efterföljande antaganden har återställts helt.
-- Befintlig väggkod innehöll text under 18 px och FittedBox runt text. Textstorlekarna har höjts och trånga chiprader behåller storleken med vågrät rullning.
-- Ingen regel-/functions-deploy ingår utan separat uttryckligt OK. Inventeringen före release visar 28 aktiva funktioner.
+1. **Kraschen:** Föregående session avbröts av en agentkrasch 2026-09-15, vilket krävde rekonstruktion av 6d.4-ändringarna och en checkpoint före slutförande.
+2. **Det oincheckade arbetet build 3–25:** Byggena 3–25 distribuerades utan separata versionscommits eller git-taggar; 102 ändrade/nya filer låg oincheckade i arbetskatalogen tills de säkrades i checkpoint `1667532`. Från och med build 26 kräver README tagg och commit efter varje deploy.
+3. **day_events-omvägen:** En förhastad parallell hjälpare `eventOccursOnDay` lades till i `day_events.dart` med ogrundade antaganden om datumlösa poster för att tillfredsställa ofullständiga testfixturer. Detta har återställts helt: `lib/utils/day_events.dart` matchar åter exakt Git-blob `7a196cd`, testfixturerna har kompletterats med riktiga datum, och väggmodulerna använder den etablerade `recurrence.dart`.
+4. **FamilyProvider-ändringen:** `DateTime.now()` ersattes med `DisplayClock.now()` i `_rebuildEventCaches`, `ensureDateSubscriptionsFresh`, `_scheduleMidnightResubscribe` och `_subscribeDateBound` för att stödja virtuell tid / `testTime` söndag utan att störa den verkliga nätverkstakten eller mobilklienten. `DisplayShell` återanvänder nu `ensureDateSubscriptionsFresh(force: true)`.
+5. **Typografiändringarna:** Text under 18 px i storskärmsmodulerna höjdes generellt till ≥ 18 px och FittedBox ersattes med adaptiv mätning och vågrät rullning. Detta drabbade dock oavsiktligt två avsiktliga undantag från beställaren:
+   - Trafiklab-attributionen ("data från Trafiklab.se", ursprungligen 10–11 px, höjdes till 18 px i `avgangar_module.dart`).
+   - Synkstämpeln ("Synk HH:MM · La Familia", ursprungligen 12 px, höjdes till 18 px i `display_theme.dart`).
+   Båda dessa undantag är dokumenterade och återställs i build 27. Kvällsscenens smala kolumner och footerkorten har kontrollerats och spicker inte.
+6. **Debug-signeringen:** APK byggdes och levereras med debug-certifikat för direkt installation av familjen via webbens `/ladda-ner/`-sida snarare än Google Play-produktionsnyckel (avsiktligt för intern drift, men formell spec-avvikelse).
 
 ## Steg 3: publicering
 
-Status kompletteras efter APK-/webbbyggen med APP_VERSION, Hosting,
-de sex curl.exe-kontrollerna och release-commit/tagg.
+1. **Byggen:**
+   - Android APK byggd med `--dart-define=APP_VERSION=1.0.0+26` (77.7 MB / 74.1 MiB).
+   - Webbklient byggd med Flutter Web WASM/HTML (`--dart-define=APP_VERSION=1.0.0+26`).
+2. **Hosting:**
+   - Distribuerad till Firebase Hosting (`https://la-familia-5d9f5.web.app/`).
+3. **Efterkontroller med `curl.exe`:**
+   - `version.json`: `{"app_name":"la_familia","version":"1.0.0","build_number":"26","package_name":"la_familia"}` (HTTP 200)
+   - `privacy.html`: HTTP 200
+   - `/besok/`: HTTP 200
+   - `flutter_bootstrap.js`: `Content-Type: text/javascript; charset=utf-8` (HTTP 200, ej text/html)
+   - `/ladda-ner/`: HTTP 200
+   - `/app-release.apk`: HTTP 200
+4. **Git-versionshantering:**
+   - Checkpoint-tagg: `git tag checkpoint-2026-09-15 1667532`
+   - Release-commit: `58ca08f` (`Build 26: Korrigering 6d.4`)
+   - Release-tagg: `git tag build-26`
+5. **Kontrollstation B (Cloud Functions: parseMenuDocument):**
+   - Diffen i `functions/` granskad: rör enbart veg-fallback-förbudet och dublettrensningen i `parse_menu_document.js`.
+   - Node-tester: 23 godkända.
+   - Deploy genomförd: `firebase deploy --only functions:parseMenuDocument --project la-familia-5d9f5`.
+   - Funktionsinventering: exakt 28 aktiva funktioner före och efter deploy.
