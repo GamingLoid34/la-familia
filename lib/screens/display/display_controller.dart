@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../app_theme.dart';
+import '../../models/user_model.dart';
 import '../../utils/date_utils.dart';
 import '../../utils/web_reload.dart';
 import 'display_log.dart';
@@ -36,9 +37,11 @@ class DisplayController extends ChangeNotifier {
   final DateTime Function() nowProvider;
   final void Function({String? replaceUrl}) onReload;
   final DisplayConfig Function()? configProvider;
+  final List<UserModel> Function()? membersProvider;
 
   int _weekOffset = 0;
   String? _manualSceneId;
+  int? _spotlightIndex;
   DateTime _lastScheduleTime;
   String? _feedbackMessage;
   bool _showDebugOverlay = false;
@@ -54,17 +57,30 @@ class DisplayController extends ChangeNotifier {
     DateTime Function()? nowProvider,
     void Function({String? replaceUrl})? onReload,
     this.configProvider,
+    this.membersProvider,
   })  : nowProvider = nowProvider ?? DateTime.now,
         onReload = onReload ?? reloadWebPage,
         _lastScheduleTime = (nowProvider ?? DateTime.now)();
 
   int get weekOffset => _weekOffset;
   String? get manualSceneId => _manualSceneId;
+  int? get spotlightIndex => _spotlightIndex;
   String? get feedbackMessage => _feedbackMessage;
   bool get showDebugOverlay => _showDebugOverlay;
 
   DisplayConfig get currentConfig =>
       configProvider?.call() ?? DisplayConfig.defaultConfig();
+
+  /// Hämtar namnet på aktuell spotlight-medlem om en sådan är aktiv.
+  String? getSpotlightMemberName() {
+    if (_spotlightIndex == null) return null;
+    final members = membersProvider?.call() ?? const [];
+    if (_spotlightIndex! >= 1 && _spotlightIndex! <= members.length) {
+      final name = members[_spotlightIndex! - 1].name.trim();
+      return name.isNotEmpty ? name.split(' ').first : 'Person $_spotlightIndex';
+    }
+    return null;
+  }
 
   /// Avgör vilken scen som visas för angivet klockslag [now] och [config].
   /// Manuell scen gäller tills schemagräns passeras, 10-minuters timeout löper ut, eller 'home' trycks.
@@ -95,6 +111,7 @@ class DisplayController extends ChangeNotifier {
           'Schemagräns passerad ($prevScheduled → $currScheduled): rensar manuell scen "$_manualSceneId"',
         );
         _manualSceneId = null;
+        _spotlightIndex = null;
         notifyListeners();
       }
     }
@@ -109,6 +126,7 @@ class DisplayController extends ChangeNotifier {
           'scen: auto-återgång till schema',
         );
         _manualSceneId = null;
+        _spotlightIndex = null;
         _sceneTimeoutTimer = null;
         notifyListeners();
       }
@@ -127,6 +145,22 @@ class DisplayController extends ChangeNotifier {
     });
   }
 
+  /// Hanterar tryckning på siffertangent 1–9 (eller Stream Deck sifferknappar).
+  /// Slår upp scen i currentConfig.keymap[digit].
+  /// Om mappad körs `scene:<id>`. Om omappad loggas det via DisplayLog.
+  void handleDigitKey(String digit) {
+    final cfg = currentConfig;
+    final sceneId = cfg.keymap[digit];
+    if (sceneId != null && sceneId.isNotEmpty) {
+      handleCommand('scene:$sceneId');
+    } else {
+      DisplayLog.instance.log(
+        'kommando',
+        'Siffertangent $digit är inte mappad till någon scen',
+      );
+    }
+  }
+
   /// Huvudingång för alla kommandon på storskärmen.
   void handleCommand(String commandId) {
     final now = nowProvider();
@@ -136,6 +170,12 @@ class DisplayController extends ChangeNotifier {
     if (commandId.startsWith('scene:')) {
       final sceneId = commandId.substring('scene:'.length).trim();
       _handleSetScene(sceneId);
+      return;
+    }
+
+    if (commandId.startsWith('person:')) {
+      final idxStr = commandId.substring('person:'.length).trim();
+      _handlePerson(idxStr);
       return;
     }
 
@@ -177,6 +217,7 @@ class DisplayController extends ChangeNotifier {
   }
 
   void _handleSetScene(String sceneId) {
+    _spotlightIndex = null;
     final cfg = currentConfig;
     if (cfg.scenes.containsKey(sceneId)) {
       _manualSceneId = sceneId;
@@ -196,10 +237,47 @@ class DisplayController extends ChangeNotifier {
     }
   }
 
+  void _handlePerson(String idxStr) {
+    final index = int.tryParse(idxStr);
+    final members = membersProvider?.call() ?? const [];
+
+    if (index == null ||
+        index < 1 ||
+        (members.isNotEmpty && index > members.length) ||
+        (members.isEmpty && index > 8)) {
+      DisplayLog.instance.log(
+        'scen',
+        'Ogiltigt spotlight-index: "$idxStr" (antal medlemmar: ${members.length})',
+      );
+      DisplayLog.instance.log(
+        'kommando',
+        'Ogiltigt person-kommando: person:$idxStr',
+      );
+      return;
+    }
+
+    _spotlightIndex = index;
+    _manualSceneId = 'person';
+    _startSceneTimeout();
+
+    final memberName = (index <= members.length)
+        ? members[index - 1].name.trim().split(' ').first
+        : 'Person $index';
+    final displayName = memberName.isNotEmpty ? memberName : 'Person $index';
+
+    showFeedback(displayName);
+    DisplayLog.instance.log(
+      'scen',
+      'Personspotlight: $displayName (index $index)',
+    );
+    notifyListeners();
+  }
+
   void _handleHome() {
     _weekOffset = 0;
     _sceneTimeoutTimer?.cancel();
     _sceneTimeoutTimer = null;
+    _spotlightIndex = null;
     if (_manualSceneId != null) {
       _manualSceneId = null;
       DisplayLog.instance.log('scenbyte', 'Home-kommando: återgår till schema');

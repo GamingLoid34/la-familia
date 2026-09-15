@@ -4,45 +4,47 @@ import '../../utils/date_utils.dart';
 import '../../utils/person_match.dart';
 import '../../utils/week_bucketing.dart';
 
-/// Formatterar ett klockslag kompakt för Storskärm (FAS 1.2):
-/// - Inledande nollor tas bort (`08:15` → `8:15`, `07:00` → `7`)
-/// - `:00` tas bort (`17:00` → `17`, `08:00` → `8`)
-String formatCompactSingleTime(String raw) {
+/// Formaterar ett klockslag för Storskärm (FAS 6d.3):
+/// Alltid strikt HH:MM med nollutfyllnad:
+/// - `9:00` → `09:00`
+/// - `9` → `09:00`
+/// - `08:15` → `08:15`
+/// - `15:00` → `15:00`
+/// - `–6:00` → `–06:00`
+String formatWallTime(String raw) {
   final trimmed = raw.trim();
   if (trimmed.isEmpty) return '';
 
-  final parts = trimmed.split(':');
+  // Hantera eventuellt inledande bindestreck (t.ex. '–06:00' eller '-6')
+  final isPrefixedWithDash = trimmed.startsWith('–') || trimmed.startsWith('-');
+  final cleanStr = isPrefixedWithDash ? trimmed.substring(1).trim() : trimmed;
+  final prefix = isPrefixedWithDash ? '–' : '';
+
+  final parts = cleanStr.split(':');
   if (parts.isEmpty) return trimmed;
 
   final h = int.tryParse(parts[0]);
   if (h == null) return trimmed;
 
-  if (parts.length == 1) return '$h';
+  final m = parts.length > 1 ? (int.tryParse(parts[1].trim()) ?? 0) : 0;
+  final paddedH = h.toString().padLeft(2, '0');
+  final paddedM = m.toString().padLeft(2, '0');
 
-  final mStr = parts[1].trim();
-  final m = int.tryParse(mStr);
-  if (m == null || m == 0) {
-    return '$h';
-  }
-
-  final paddedM = mStr.padLeft(2, '0');
-  return '$h:$paddedM';
+  return '$prefix$paddedH:$paddedM';
 }
 
-/// Formatterar ett tidsintervall kompakt:
-/// - `17:00` → `17`
-/// - `08:15–14:00` → `8:15–14`
-/// - `07:30–16:00` → `7:30–16`
-/// - `18:30–19:30` → `18:30–19:30`
-/// - `–06:00` → `–6`
-/// - `–06:30` → `–6:30`
-String formatCompactTime(String start, [String? end]) {
+/// Formaterar ett tidsintervall för Storskärm (FAS 6d.3):
+/// Alltid strikt HH:MM–HH:MM med nollutfyllnad:
+/// - `08:15–14:00`
+/// - `09:00–13:00`
+/// - `15:00`
+String formatWallRange(String start, [String? end]) {
   final s = start.trim();
   final e = (end ?? '').trim();
 
   if (e.isNotEmpty) {
-    final startFormatted = formatCompactSingleTime(s);
-    final endFormatted = formatCompactSingleTime(e);
+    final startFormatted = formatWallTime(s);
+    final endFormatted = formatWallTime(e);
     if (startFormatted.isNotEmpty && endFormatted.isNotEmpty) {
       return '$startFormatted–$endFormatted';
     }
@@ -55,25 +57,39 @@ String formatCompactTime(String start, [String? end]) {
   if (s.contains('–')) {
     final p = s.split('–');
     if (p.length == 2) {
-      final p0 = formatCompactSingleTime(p[0]);
-      final p1 = formatCompactSingleTime(p[1]);
+      final p0 = formatWallTime(p[0]);
+      final p1 = formatWallTime(p[1]);
       if (p0.isEmpty && p1.isNotEmpty) return '–$p1';
       if (p0.isNotEmpty && p1.isNotEmpty) return '$p0–$p1';
     }
   } else if (s.contains('-') && !s.startsWith('-')) {
     final p = s.split('-');
     if (p.length == 2) {
-      final p0 = formatCompactSingleTime(p[0]);
-      final p1 = formatCompactSingleTime(p[1]);
+      final p0 = formatWallTime(p[0]);
+      final p1 = formatWallTime(p[1]);
       if (p0.isNotEmpty && p1.isNotEmpty) return '$p0–$p1';
     }
   } else if (s.startsWith('–') || s.startsWith('-')) {
     final after = s.substring(1).trim();
-    final f = formatCompactSingleTime(after);
+    final f = formatWallTime(after);
     return f.isNotEmpty ? '–$f' : '';
   }
 
-  return formatCompactSingleTime(s);
+  return formatWallTime(s);
+}
+
+/// Bakåtkompatibla alias som pekar på formatWallTime och formatWallRange (FAS 6d.3).
+String formatCompactSingleTime(String raw) => formatWallTime(raw);
+String formatCompactTime(String start, [String? end]) => formatWallRange(start, end);
+
+/// Returnerar prefix för nästa händelse i display-heron baserat på om plats är angiven (FAS 4.2).
+/// - Ifyllt platsfält -> "Ut genom dörren"
+/// - Saknar plats / null / tom sträng -> "Härnäst"
+String formatHeroPrefix(String? location) {
+  if (location != null && location.trim().isNotEmpty) {
+    return 'Ut genom dörren';
+  }
+  return 'Härnäst';
 }
 
 /// Resultat av familjefoldning för displaylagret.

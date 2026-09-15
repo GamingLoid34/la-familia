@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 import '../../../app_theme.dart';
 import '../../../models/user_model.dart';
 import '../../../providers/family_provider.dart';
 import '../../../utils/day_events.dart';
+import '../../../utils/member_presence.dart';
 import '../../../utils/person_match.dart';
 import '../../../utils/schedule_display.dart';
 import '../../../utils/schedule_time_utils.dart';
@@ -14,6 +15,13 @@ import '../display_chips.dart';
 import '../display_formatters.dart';
 import '../display_log.dart';
 import '../display_module_registry.dart';
+import '../display_palette.dart';
+import '../display_scene_models.dart';
+import '../display_school_menu_data.dart';
+import '../../../utils/school_subject_utils.dart';
+import '../../../utils/svenska_dagar.dart';
+import '../../../widgets/member_avatar.dart';
+import '../display_theme.dart';
 
 /// Modul: Idag & Nu ("idag_nu") (FAS 4).
 /// Dagsöversikt för morgonvyn med hero-nedräkning till nästa familjehändelse,
@@ -38,7 +46,12 @@ class _IdagNuModuleState extends State<IdagNuModule> {
   @override
   void initState() {
     super.initState();
+    DisplaySchoolMenuData.instance.addListener(_onMenuChanged);
     _subscribe();
+  }
+
+  void _onMenuChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -52,6 +65,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
 
   @override
   void dispose() {
+    DisplaySchoolMenuData.instance.removeListener(_onMenuChanged);
     _shiftsSub?.cancel();
     _busySub?.cancel();
     super.dispose();
@@ -72,32 +86,38 @@ class _IdagNuModuleState extends State<IdagNuModule> {
       'Startar skift- och närvaroprenumerationer för Idag-Nu-vyn',
     );
 
-    _shiftsSub = FirebaseFirestore.instance
-        .collection('work_shifts')
-        .where('familyId', isEqualTo: fid)
-        .snapshots()
-        .listen(
-      (snap) {
-        if (mounted) setState(() => _shifts = snap.docs);
-      },
-      onError: (e) {
-        DisplayLog.instance.log('strömfel', 'Fel vid hämtning av skift i Idag-Nu: $e');
-      },
-    );
+    try {
+      _shiftsSub = FirebaseFirestore.instance
+          .collection('work_shifts')
+          .where('familyId', isEqualTo: fid)
+          .snapshots()
+          .listen(
+        (snap) {
+          if (mounted) setState(() => _shifts = snap.docs);
+        },
+        onError: (e) {
+          DisplayLog.instance.log('strömfel', 'Fel vid hämtning av skift i Idag-Nu: $e');
+        },
+      );
 
-    _busySub = FirebaseFirestore.instance
-        .collection('families')
-        .doc(fid)
-        .collection('busy_sessions')
-        .snapshots()
-        .listen(
-      (snap) {
-        if (mounted) setState(() => _busyDocs = snap.docs);
-      },
-      onError: (e) {
-        DisplayLog.instance.log('strömfel', 'Fel vid hämtning av busy_sessions i Idag-Nu: $e');
-      },
-    );
+      _busySub = FirebaseFirestore.instance
+          .collection('busy_sessions')
+          .where('familyId', isEqualTo: fid)
+          .snapshots()
+          .listen(
+        (snap) {
+          if (mounted) setState(() => _busyDocs = snap.docs);
+        },
+        onError: (e) {
+          DisplayLog.instance.log('strömfel', 'Fel vid hämtning av busy_sessions i Idag-Nu: $e');
+        },
+      );
+    } catch (e) {
+      DisplayLog.instance.log(
+        'strömfel',
+        'Kunde inte starta Firestore-prenumeration i Idag-Nu: $e',
+      );
+    }
   }
 
   Color _memberColor(UserModel m, DayPalette palette) {
@@ -114,37 +134,13 @@ class _IdagNuModuleState extends State<IdagNuModule> {
     DateTime now,
     List<QueryDocumentSnapshot> memberEvents,
   ) {
-    // 1. Arbetspass aktivt nu?
-    for (final doc in _shifts) {
-      final d = doc.data() as Map<String, dynamic>;
-      if (!assignedToPerson(d, uid: member.uid, name: member.name)) continue;
-      if (workShiftIsActiveNow(d, now)) return 'Arbetar';
-    }
-
-    // 2. Skola/schema aktivt nu?
-    for (final doc in memberEvents) {
-      final d = doc.data() as Map<String, dynamic>;
-      if (d['planningImportKind'] == 'schedule') {
-        if (plannerTimedEventIsActiveNow(d, now)) return 'Skola';
-      }
-    }
-
-    // 3. Upptagen session eller aktiv aktivitet?
-    for (final doc in _busyDocs) {
-      final d = doc.data() as Map<String, dynamic>;
-      final busyUid = d['userUid'] as String? ?? '';
-      final matches = busyUid.isNotEmpty
-          ? busyUid == member.uid
-          : (d['userName'] as String? ?? '') == member.name;
-      if (matches && busySessionIsActiveNow(d, now)) return 'Upptagen';
-    }
-
-    for (final doc in memberEvents) {
-      final d = doc.data() as Map<String, dynamic>;
-      if (plannerTimedEventIsActiveNow(d, now)) return 'Upptagen';
-    }
-
-    return 'Hemma';
+    return computeMemberPresenceLabel(
+      member,
+      memberTodayEvents: memberEvents,
+      familyShiftDocs: _shifts,
+      familyBusyDocs: _busyDocs,
+      now: now,
+    );
   }
 
   Widget _buildPresenceBadge(String label) {
@@ -158,20 +154,25 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         border = const Color(0xFF90CAF9);
         text = const Color(0xFF1565C0);
         break;
-      case 'Skola':
-        bg = const Color(0xFFF3E5F5);
-        border = const Color(0xFFCE93D8);
-        text = const Color(0xFF6A1B9A);
-        break;
       case 'Upptagen':
         bg = const Color(0xFFFFEBEE);
         border = const Color(0xFFEF9A9A);
         text = const Color(0xFFC62828);
         break;
-      default: // 'Hemma'
+      case 'Hemma':
         bg = const Color(0xFFE8F5E9);
         border = const Color(0xFFA5D6A7);
         text = const Color(0xFF2E7D32);
+        break;
+      case 'Skola':
+      case 'Rehab':
+      case 'Jobb':
+      case 'Schema':
+      default:
+        // Schemaimporter (Skola, Rehab, Jobb etc.)
+        bg = const Color(0xFFF3E5F5);
+        border = const Color(0xFFCE93D8);
+        text = const Color(0xFF6A1B9A);
         break;
     }
 
@@ -202,19 +203,28 @@ class _IdagNuModuleState extends State<IdagNuModule> {
     final palette = AppTheme.dayPalette(now.weekday);
     final isLowStimuli = AppTheme.lowStimuli;
 
-    final todayEvents = provider.todayEvents;
+    final todayEvents = provider.todayEvents.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      return eventOccursOnDay(d, now);
+    }).toList();
 
-    // ─── 1. Hero: Hitta nästa familjehändelse ──────────────────────────────
+    // ─── 1. Hero: Hitta nästa kommande händelse idag (FAS 5.4) ────────────
+    // Krav: nästa kommande händelse idag för NÅGON medlem (inkl. familjehändelser),
+    // hela dagen fram till midnatt, med namn i parentes som i lördagens visning.
     QueryDocumentSnapshot? nextUpcomingEvent;
     int minDiffMinutes = 999999;
 
     for (final doc in todayEvents) {
       final d = doc.data() as Map<String, dynamic>;
       if (d['planningImportKind'] == 'schedule') continue;
-      final s = plannerTimedStart(d);
+
+      // Beräkna starttid för IDAG (now) via centrala hjälparen plannerTimedStart.
+      final s = plannerTimedStart(d, now);
       if (s == null) continue;
+
       final diff = s.difference(now).inMinutes;
-      if (diff >= 0 && diff < minDiffMinutes) {
+      // Infaller idag från och med now fram till midnatt
+      if (diff >= 0 && sameCalendarDay(s, now) && diff < minDiffMinutes) {
         minDiffMinutes = diff;
         nextUpcomingEvent = doc;
       }
@@ -238,10 +248,17 @@ class _IdagNuModuleState extends State<IdagNuModule> {
             .toList();
         if (matched.isNotEmpty) {
           who = ' (${matched.join(', ')})';
+        } else {
+          final pName = (d['personName'] as String? ?? '').trim();
+          if (pName.isNotEmpty) {
+            who = ' (${pName.split(' ').first})';
+          }
         }
       }
 
-      heroText = 'Ut genom dörren $countdownStr · $piktogram $title $time$who';
+      final prefix = formatHeroPrefix(d['location'] as String?);
+      final timePart = time.isNotEmpty ? ' $time' : '';
+      heroText = '$prefix $countdownStr · $piktogram $title$timePart$who';
     } else {
       heroText = 'Inget mer planerat idag';
     }
@@ -272,6 +289,11 @@ class _IdagNuModuleState extends State<IdagNuModule> {
       }
     }
 
+    final displayPalette = DisplayPalette.of(context);
+    final heroTextColor = displayPalette.isDark
+        ? palette.light
+        : displayPalette.dayHeaderTextColor(now.weekday);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -287,36 +309,62 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                   color: isLowStimuli ? palette.base : null,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Text(
+                child: Text(
                   'IDAG',
                   style: TextStyle(
                     fontFamily: 'Nunito',
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
-                    color: Colors.white,
+                    color: palette.onColor,
                     letterSpacing: 1.0,
                   ),
                 ),
               ),
               const SizedBox(width: 12),
-              Text(
-                dateStr,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF1A1A2E),
-                ),
+              Builder(
+                builder: (context) {
+                  final names = namnsdagFor(now).take(2).join(', ');
+                  final flag = isFlaggdag(now) ? ' 🇸🇪' : '';
+                  final nameLine = '$names$flag'.trim();
+
+                  return Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: dateStr),
+                        if (nameLine.isNotEmpty)
+                          TextSpan(
+                            text: ' · $nameLine',
+                            style: TextStyle(
+                              fontFamily: 'Nunito',
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: displayPalette.textMuted,
+                            ),
+                          ),
+                      ],
+                    ),
+                    style: TextStyle(
+                      fontFamily: 'Nunito',
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: displayPalette.textPrimary,
+                    ),
+                  );
+                },
               ),
               const Spacer(),
               // Hero Banner
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
-                  color: palette.base.withValues(alpha: 0.10),
+                  color: palette.base.withValues(
+                    alpha: displayPalette.isDark ? 0.20 : 0.10,
+                  ),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: palette.base.withValues(alpha: 0.35),
+                    color: palette.base.withValues(
+                      alpha: displayPalette.isDark ? 0.45 : 0.35,
+                    ),
                     width: 1.5,
                   ),
                 ),
@@ -328,7 +376,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                           ? Icons.directions_walk_rounded
                           : Icons.check_circle_outline_rounded,
                       size: 20,
-                      color: palette.deep,
+                      color: heroTextColor,
                     ),
                     const SizedBox(width: 8),
                     Text(
@@ -337,7 +385,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                         fontFamily: 'Nunito',
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
-                        color: palette.deep,
+                        color: heroTextColor,
                       ),
                     ),
                   ],
@@ -356,6 +404,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
               // Kolumn 1: Familjen
               Expanded(
                 child: _buildColumnCard(
+                  displayPalette: displayPalette,
                   header: Row(
                     children: [
                       Container(
@@ -370,14 +419,14 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Familjen',
                           style: TextStyle(
                             fontFamily: 'Nunito',
                             fontSize: 18,
                             fontWeight: FontWeight.w800,
-                            color: Color(0xFF1A1A2E),
+                            color: displayPalette.textPrimary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -386,36 +435,71 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                     ],
                   ),
                   content: familyEvents.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Text(
                             'Inga familjehändelser idag',
                             style: TextStyle(
                               fontFamily: 'Nunito',
                               fontSize: 14,
-                              color: Color(0xFF888888),
+                              color: displayPalette.textMuted,
                             ),
                           ),
                         )
-                      : ListView.separated(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          itemCount: familyEvents.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 6),
-                          itemBuilder: (context, i) {
-                            final doc = familyEvents[i];
-                            final d = doc.data() as Map<String, dynamic>;
-                            final isOngoing = plannerTimedEventIsActiveNow(d, now);
-                            final end = plannerTimedEnd(d);
-                            final isPast = end != null && end.isBefore(now);
+                      : Builder(
+                          builder: (context) {
+                            QueryDocumentSnapshot? nextFamilyDoc;
+                            int minFamilyDiff = 999999;
+                            for (final doc in familyEvents) {
+                              final d = doc.data() as Map<String, dynamic>;
+                              final isOngoing =
+                                  plannerTimedEventIsActiveNow(d, now);
+                              final end = plannerTimedEnd(d, onDay: now);
+                              final isPast = end != null && end.isBefore(now);
+                              if (isOngoing || isPast) continue;
+                              final s = plannerTimedStart(d, now);
+                              if (s == null) continue;
+                              final diff = s.difference(now).inMinutes;
+                              if (diff >= 0 && diff < minFamilyDiff) {
+                                minFamilyDiff = diff;
+                                nextFamilyDoc = doc;
+                              }
+                            }
 
-                            return DisplayActivityCard(
-                              data: d,
-                              memberColor: palette.base,
-                              isFolded: true,
-                              isLowStimuli: isLowStimuli,
-                              isOngoing: isOngoing,
-                              isPast: isPast,
-                              badgeText: isOngoing ? 'PÅGÅR' : null,
+                            return ListView.separated(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              itemCount: familyEvents.length,
+                              separatorBuilder: (context, index) =>
+                                  const SizedBox(height: 6),
+                              itemBuilder: (context, i) {
+                                final doc = familyEvents[i];
+                                final d = doc.data() as Map<String, dynamic>;
+                                final isOngoing =
+                                    plannerTimedEventIsActiveNow(d, now);
+                                final end = plannerTimedEnd(d, onDay: now);
+                                final isPast = end != null && end.isBefore(now);
+                                final isNextUpcoming = doc == nextFamilyDoc &&
+                                    !isOngoing &&
+                                    !isPast;
+
+                                String? badgeText;
+                                if (isOngoing) {
+                                  badgeText = 'PÅGÅR';
+                                } else if (isNextUpcoming &&
+                                    minFamilyDiff >= 0) {
+                                  badgeText =
+                                      formatCountdownMinutes(minFamilyDiff);
+                                }
+
+                                return DisplayActivityCard(
+                                  data: d,
+                                  memberColor: palette.base,
+                                  isFolded: true,
+                                  isLowStimuli: isLowStimuli,
+                                  isOngoing: isOngoing,
+                                  isPast: isPast,
+                                  badgeText: badgeText,
+                                );
+                              },
                             );
                           },
                         ),
@@ -430,6 +514,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                     member: m,
                     events: memberEventMap[m.uid] ?? const [],
                     palette: palette,
+                    displayPalette: displayPalette,
                     now: now,
                     isLowStimuli: isLowStimuli,
                   ),
@@ -446,13 +531,11 @@ class _IdagNuModuleState extends State<IdagNuModule> {
     required UserModel member,
     required List<QueryDocumentSnapshot> events,
     required DayPalette palette,
+    required DisplayPalette displayPalette,
     required DateTime now,
     required bool isLowStimuli,
   }) {
     final memberColor = _memberColor(member, palette);
-    final initial = member.name.trim().isNotEmpty
-        ? member.name.trim()[0].toUpperCase()
-        : '?';
     final firstName = member.name.split(' ').first;
     final presence = _presenceLabel(member, now, events);
 
@@ -481,6 +564,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
       final d = doc.data() as Map<String, dynamic>;
       final interval = shiftInterval(d);
       final isNight = isNightShift(d);
+      final isOngoing = workShiftIsActiveNow(d, now);
 
       String pik = '💼';
       String label = 'Jobb';
@@ -493,45 +577,199 @@ class _IdagNuModuleState extends State<IdagNuModule> {
           pik = '🌙';
           label = 'Natt';
           timeStr = sameCalendarDay(interval.start, now)
-              ? formatCompactTime(sHm, eHm)
-              : formatCompactTime('–$eHm');
+              ? formatWallRange(sHm, eHm)
+              : formatWallRange('–$eHm');
         } else {
-          timeStr = formatCompactTime(sHm, eHm);
+          timeStr = formatWallRange(sHm, eHm);
         }
       } else {
         final startField = (d['startTime'] ?? d['start']) as String? ?? '';
         final endField = (d['endTime'] ?? d['end']) as String? ?? '';
-        timeStr = formatCompactTime(startField, endField);
+        timeStr = formatWallRange(startField, endField);
       }
 
       final displayText =
           timeStr.isNotEmpty ? '$pik · $label · $timeStr' : '$pik · $label';
 
-      items.add(DisplayRamPlate(text: displayText, memberColor: memberColor));
+      items.add(DisplayRamPlate(
+        piktogram: pik,
+        label: label,
+        time: timeStr,
+        text: displayText,
+        memberColor: memberColor,
+        isOngoing: isOngoing,
+      ));
     }
 
     // 2. Skola/schema klumpning
+    bool lunchShown = false;
     for (final entry in buildScheduleDisplay(scheduleDocs, clumpSchool: true)) {
       if (entry is ScheduleClusterEntry) {
         final maps = entry.docs.map((d) => d.data() as Map<String, dynamic>);
         final pik = maps.isNotEmpty ? schemaPiktogramFor(maps.first) : '🏫';
         final label = maps.isNotEmpty ? schemaLabelFor(maps.first) : 'Skola';
         final span = scheduleTimeSpan(maps);
-        final timeStr = formatCompactTime(span.minStart ?? '', span.maxEnd);
+        final timeStr = formatWallRange(span.minStart ?? '', span.maxEnd);
 
-        final displayText =
-            timeStr.isNotEmpty ? '$pik · $label · $timeStr' : '$pik · $label';
+        final sDt = parseHmOnDate(span.minStart, now);
+        final eDt = parseHmOnDate(span.maxEnd, now);
+        final isOngoing = sDt != null &&
+            eDt != null &&
+            !now.isBefore(sDt) &&
+            now.isBefore(eDt);
 
-        items.add(DisplayRamPlate(text: displayText, memberColor: memberColor));
+        // FAS 6d Beslut 3 & FAS 6d.2: Pågående lektion i Idag & Nu-ramen (liten)
+        String nuSuffix = '';
+        if (isOngoing) {
+          for (final doc in entry.docs) {
+            final docMap = doc.data() as Map<String, dynamic>;
+            final lStart = parseHmOnDate(docMap['time'] as String?, now);
+            final lEnd = parseHmOnDate(docMap['endTime'] as String?, now);
+            if (lStart != null && !now.isBefore(lStart) && (lEnd == null || now.isBefore(lEnd))) {
+              final rawLessonTitle = (docMap['title'] as String? ?? '').trim();
+              final lessonTitle = expandSchoolSubjectTitle(rawLessonTitle);
+              final endStr = (docMap['endTime'] as String? ?? '').trim();
+              if (lessonTitle.isNotEmpty) {
+                final compactEnd = formatWallTime(endStr);
+                nuSuffix = compactEnd.isNotEmpty
+                    ? ' · nu: $lessonTitle (till $compactEnd)'
+                    : ' · nu: $lessonTitle';
+                break;
+              }
+            }
+          }
+        }
+
+        items.add(LayoutBuilder(
+          builder: (context, constraints) {
+            final baseText = timeStr.isNotEmpty
+                ? '$pik · $label · $timeStr'
+                : '$pik · $label';
+            final fullText = '$baseText$nuSuffix';
+
+            bool showNu = false;
+            if (nuSuffix.isNotEmpty && constraints.maxWidth.isFinite && constraints.maxWidth > 0) {
+              // Exakt TextPainter-mätning (som chipsen i 5.6):
+              const double platePadding = 16.0;
+              final double badgeW = isOngoing ? 72.0 : 0.0;
+              final double availWidth = constraints.maxWidth - platePadding - badgeW;
+
+              final textPainter = TextPainter(
+                text: TextSpan(
+                  text: fullText,
+                  style: DisplayTheme.ramTextStyle,
+                ),
+                textDirection: TextDirection.ltr,
+                maxLines: 1,
+              )..layout();
+
+              showNu = textPainter.width <= availWidth;
+            }
+
+            final displayText = showNu ? fullText : baseText;
+
+            return DisplayRamPlate(
+              piktogram: pik,
+              label: label,
+              time: timeStr,
+              text: displayText,
+              memberColor: memberColor,
+              isOngoing: isOngoing,
+            );
+          },
+        ));
+
+        // FAS 5.1, 5.1b & 5.7: Dagens lunch eller väggnudge under barnets skolram
+        final lunchInfo = DisplaySchoolMenuData.instance.lunchFor(
+          member.uid,
+          now,
+          widget.moduleContext.skolmatConfig ?? const DisplaySkolmatConfig(),
+        );
+        if (lunchInfo != null &&
+            lunchInfo.lunch != null &&
+            lunchInfo.lunch!.isNotEmpty) {
+          lunchShown = true;
+          final compactDish = formatCompactLunch(lunchInfo.lunch!);
+          if (compactDish.isNotEmpty) {
+            items.add(Padding(
+              padding: const EdgeInsets.only(left: 8, top: 4, bottom: 2),
+              child: Text(
+                '🍽 $compactDish',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: displayPalette.textMuted,
+                ),
+              ),
+            ));
+          }
+        }
+      }
+    }
+
+    // FAS 5.1b & 5.7: Om barnet saknar schemakluster idag (t.ex. söndag >= 16:00 eller ledig dag),
+    // men en väggnudge för manuell matsedel är aktiv: visa den i barnets kolumn
+    if (!lunchShown) {
+      final lunchInfo = DisplaySchoolMenuData.instance.lunchFor(
+        member.uid,
+        now,
+        widget.moduleContext.skolmatConfig ?? const DisplaySkolmatConfig(),
+      );
+      if (lunchInfo != null && lunchInfo.isNudge && lunchInfo.lunch != null) {
+        final compactDish = formatCompactLunch(lunchInfo.lunch!);
+        if (compactDish.isNotEmpty) {
+          items.add(Padding(
+            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 2),
+            child: Text(
+              '🍽 $compactDish',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Nunito',
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: displayPalette.textMuted,
+              ),
+            ),
+          ));
+        }
       }
     }
 
     // 3. Vanliga aktiviteter
+    QueryDocumentSnapshot? nextMemberDoc;
+    int minMemberDiff = 999999;
     for (final doc in activityDocs) {
       final d = doc.data() as Map<String, dynamic>;
       final isOngoing = plannerTimedEventIsActiveNow(d, now);
-      final end = plannerTimedEnd(d);
+      final end = plannerTimedEnd(d, onDay: now);
       final isPast = end != null && end.isBefore(now);
+      if (isOngoing || isPast) continue;
+      final s = plannerTimedStart(d, now);
+      if (s == null) continue;
+      final diff = s.difference(now).inMinutes;
+      if (diff >= 0 && diff < minMemberDiff) {
+        minMemberDiff = diff;
+        nextMemberDoc = doc;
+      }
+    }
+
+    for (final doc in activityDocs) {
+      final d = doc.data() as Map<String, dynamic>;
+      final isOngoing = plannerTimedEventIsActiveNow(d, now);
+      final end = plannerTimedEnd(d, onDay: now);
+      final isPast = end != null && end.isBefore(now);
+      final isNextUpcoming = doc == nextMemberDoc && !isOngoing && !isPast;
+
+      String? badgeText;
+      if (isOngoing) {
+        badgeText = 'PÅGÅR';
+      } else if (isNextUpcoming && minMemberDiff >= 0) {
+        badgeText = formatCountdownMinutes(minMemberDiff);
+      }
 
       items.add(DisplayActivityCard(
         data: d,
@@ -539,41 +777,31 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         isLowStimuli: isLowStimuli,
         isOngoing: isOngoing,
         isPast: isPast,
-        badgeText: isOngoing ? 'PÅGÅR' : null,
+        badgeText: badgeText,
       ));
     }
 
     return _buildColumnCard(
+      displayPalette: displayPalette,
       header: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: memberColor,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                initial,
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-            ),
+          // Fas 6d: Fas 4.6:s deklarerade undantag ("initialer på väggen") upphävs
+          // på beställarens begäran. Färgringen är 2.5px i medlemsfärgen.
+          FamilyMemberAvatar(
+            member: member,
+            size: 36,
+            borderWidth: 2.5,
+            showRing: true,
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               firstName,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'Nunito',
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
-                color: Color(0xFF1A1A2E),
+                color: displayPalette.textPrimary,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -584,13 +812,13 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         ],
       ),
       content: items.isEmpty
-          ? const Center(
+          ? Center(
               child: Text(
                 'Inga händelser idag',
                 style: TextStyle(
                   fontFamily: 'Nunito',
                   fontSize: 14,
-                  color: Color(0xFF888888),
+                  color: displayPalette.textMuted,
                 ),
               ),
             )
@@ -604,17 +832,20 @@ class _IdagNuModuleState extends State<IdagNuModule> {
   }
 
   Widget _buildColumnCard({
+    required DisplayPalette displayPalette,
     required Widget header,
     required Widget content,
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: displayPalette.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E5EE)),
+        border: Border.all(color: displayPalette.cardBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: displayPalette.isDark
+                ? Colors.black.withValues(alpha: 0.25)
+                : Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -626,7 +857,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         children: [
           header,
           const SizedBox(height: 8),
-          const Divider(height: 1, color: Color(0xFFE2E5EE)),
+          Divider(height: 1, color: displayPalette.divider),
           const SizedBox(height: 6),
           Expanded(child: content),
         ],

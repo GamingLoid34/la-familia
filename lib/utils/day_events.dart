@@ -5,6 +5,22 @@ import 'recurrence.dart';
 /// Delad per-dag-dataström och dedup-logik (FAS D2).
 /// Används av både MemberDaySheet och MinDagPage.
 
+/// Kontrollerar om en händelse inträffar på en given dag (FAS 6d.4).
+/// För återkommande serier kontrolleras [recurringOccursOnDay],
+/// annars kontrolleras om 'date' matchar [dateKey(day)]. Saknas 'date'
+/// betraktas posten som redan dagsspecifik (bakåtkompatibilitet för anropare
+/// som levererar `todayEvents`/`tomorrowEvents`).
+bool eventOccursOnDay(Map<String, dynamic> d, DateTime day) {
+  final target = DateTime(day.year, day.month, day.day);
+  if (d['recurrence'] is Map<String, dynamic>) {
+    return recurringOccursOnDay(d, target);
+  }
+  if (d['isRecurring'] == true) return true;
+  final dateStr = d['date'] as String?;
+  if (dateStr == null || dateStr.trim().isEmpty) return true;
+  return dateStr.trim() == dateKey(target);
+}
+
 /// Slår ihop och dedubblar dagsspecifika och återkommande händelser för ett givet datum.
 List<QueryDocumentSnapshot> mergeAndDedupDayEvents({
   required List<QueryDocumentSnapshot> dateEvents,

@@ -50,16 +50,16 @@ class _DashboardPageState extends State<DashboardPage>
   Stream<QuerySnapshot>? _busyStream(String? fid) => fid == null || fid.isEmpty
       ? null
       : FirebaseFirestore.instance
-          .collection('families')
-          .doc(fid)
           .collection('busy_sessions')
+          .where('familyId', isEqualTo: fid)
           .snapshots();
 
   List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
     final list = rawDocs.toList();
+    final now = DateTime.now();
     list.sort((a, b) {
-      final dA = parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>, now);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>, now);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;
@@ -128,7 +128,7 @@ class _DashboardPageState extends State<DashboardPage>
 
     for (final doc in myEvents) {
       final d = doc.data() as Map<String, dynamic>;
-      final parsed = parseDateTime(d);
+      final parsed = parseDateTime(d, now);
       final timeStr = (d['time'] as String? ?? '').trim();
       if (parsed != null && timeStr.isNotEmpty) {
         final end = _computeEndTime(parsed, d);
@@ -197,10 +197,11 @@ class _DashboardPageState extends State<DashboardPage>
     // 3. Inga fler aktiviteter idag -> kolla morgondagen
     final tomEvents = _eventsForMe(provider.tomorrowEvents, user);
     final timedTomorrow = <({Map<String, dynamic> data, DateTime start})>[];
+    final tomorrow = now.add(const Duration(days: 1));
 
     for (final doc in tomEvents) {
       final d = doc.data() as Map<String, dynamic>;
-      final parsed = parseDateTime(d);
+      final parsed = parseDateTime(d, tomorrow);
       final timeStr = (d['time'] as String? ?? '').trim();
       if (parsed != null && timeStr.isNotEmpty) {
         timedTomorrow.add((data: d, start: parsed));

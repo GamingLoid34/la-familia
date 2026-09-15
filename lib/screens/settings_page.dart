@@ -21,7 +21,9 @@ import '../widgets/food_prefs_sheet.dart';
 import '../widgets/home_location_sheet.dart';
 import 'invite_page.dart';
 import 'manage_members_page.dart';
+import 'settings/storskarm_settings_page.dart';
 import 'verktyg_page.dart';
+import '../widgets/member_avatar.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -277,6 +279,7 @@ class _SettingsPageState extends State<SettingsPage>
                   SliverToBoxAdapter(child: _buildVerktygCard(dayColor)),
                   SliverToBoxAdapter(child: _buildProfileCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFamilyCard(dayColor)),
+                  SliverToBoxAdapter(child: _buildStorskarmCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFoodPrefsCard(dayColor)),
                   SliverToBoxAdapter(child: _buildHomeLocationCard(dayColor)),
                   SliverToBoxAdapter(child: _buildNotificationsCard(dayColor)),
@@ -345,12 +348,6 @@ class _SettingsPageState extends State<SettingsPage>
   Widget _buildProfileCard(Color dayColor) {
     if (_currentUser == null) return const SizedBox.shrink();
     final user = _currentUser!;
-    Color avatarColor;
-    try {
-      avatarColor = Color(user.colorValue);
-    } catch (_) {
-      avatarColor = dayColor;
-    }
     
     final roleLabel = switch (user.role) {
       'parent' || 'admin' => 'Förälder',
@@ -362,16 +359,9 @@ class _SettingsPageState extends State<SettingsPage>
     return _Card(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Row(children: [
-        CircleAvatar(
-          radius: 30,
-          backgroundColor: avatarColor,
-          child: Text(
-            user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 22),
-          ),
+        FamilyMemberAvatar(
+          member: user,
+          size: 60,
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -412,23 +402,12 @@ class _SettingsPageState extends State<SettingsPage>
               itemCount: _familyMembers.length,
               itemBuilder: (_, i) {
                 final m = _familyMembers[i];
-                Color mc;
-                try {
-                  mc = Color(m.colorValue);
-                } catch (_) {
-                  mc = dayColor;
-                }
                 return Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: Column(children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: mc,
-                      child: Text(
-                        m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold),
-                      ),
+                    FamilyMemberAvatar(
+                      member: m,
+                      size: 44,
                     ),
                     const SizedBox(height: 4),
                     Text(m.name.split(' ').first,
@@ -474,6 +453,52 @@ class _SettingsPageState extends State<SettingsPage>
           ),
         ]),
       ]),
+    );
+  }
+
+  // ─── STORSKÄRM CARD (FAS 4.5) ────────────────────────────────────────────────
+  Widget _buildStorskarmCard(Color dayColor) {
+    if (_currentUser == null || !_currentUser!.isParent) {
+      return const SizedBox.shrink();
+    }
+    final fid = _currentUser!.familyId;
+    if (fid == null || fid.isEmpty) return const SizedBox.shrink();
+
+    return _Card(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: dayColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: const Text('🖥️', style: TextStyle(fontSize: 22)),
+        ),
+        title: const Text(
+          'Storskärm',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        subtitle: const Text(
+          'Foton, skolmat och inställningar',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => StorskarmSettingsPage(
+              familyId: fid,
+              dayColor: dayColor,
+              familyMembers: _familyMembers,
+              currentUser: _currentUser,
+            ),
+          ),
+        ),
+      ),
     );
   }
 

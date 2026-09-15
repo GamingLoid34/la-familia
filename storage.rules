@@ -1,0 +1,54 @@
+rules_version = '2';
+// FIREBASE-PROJEKT la-familia-5d9f5 — betjänar ENDAST La Familia.
+// (My Mirai-rester avvecklade 2026-09-08; flyttas till eget projekt senare.)
+// Denna fil är enda sanningen. Deploy:
+//   firebase deploy --only storage --project=la-familia-5d9f5
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAuth() {
+      return request.auth != null;
+    }
+    function myUserDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+    function myFamilyId() {
+      return myUserDoc().get('familyId', '');
+    }
+    function iAmParent() {
+      return myUserDoc().get('role', '') == 'parent'
+          || myUserDoc().get('role', '') == 'admin';
+    }
+
+    // ── Läxunderlag (BEFINTLIG — beteendet oförändrat) ──
+    match /families/{familyId}/homework/{homeworkId}/{fileName} {
+      allow read: if isAuth() && myFamilyId() == familyId;
+      allow write: if isAuth() && myFamilyId() == familyId
+        && request.resource.size < 30 * 1024 * 1024;
+    }
+
+    // ── Storskärmsfoton (NY — FAS 4.5) ──
+    match /families/{familyId}/display_photos/{photoId} {
+      allow read: if isAuth() && myFamilyId() == familyId;
+      allow create: if isAuth() && myFamilyId() == familyId && iAmParent()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuth() && myFamilyId() == familyId && iAmParent();
+      allow update: if false;
+    }
+
+    // ── Medlemsavatarer (NY — lagar latent unauthorized-bugg) ──
+    match /user_avatars/{fileName} {
+      allow read: if isAuth();
+      allow create, update: if isAuth()
+        && (iAmParent() || fileName == (request.auth.uid + '.jpg'))
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if isAuth() && iAmParent();
+    }
+
+    // Allt annat nekat — inklusive f.d. My Mirai documents/-sökvägen.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -112,7 +112,18 @@ class DisplayTheme {
     fontSize: 16.0,
     fontWeight: FontWeight.w700,
   );
+
+  // ─── Chipdensitet (FAS 4.3 & 5.5) ───────────────────────────────────────────────
+  // Den fasta 165-px-tröskeln har utgått (FAS 5.5). Chip mäter tillgänglig
+  // bredd adaptivt via LayoutBuilder och textmätning (a, b, c).
 }
+
+/// Densitetslägen för chip i storskärmsläget (FAS 4.3 & 5.5).
+enum DisplayChipDensity {
+  normal,
+  compact,
+}
+
 
 /// Diskret synkstämpel för storskärmens nedre hörn (FAS 2.2 & 3).
 class DisplaySyncStamp extends StatelessWidget {

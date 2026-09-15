@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:la_familia/app_theme.dart';
+import 'package:la_familia/models/user_model.dart';
 import 'package:la_familia/screens/display/display_controller.dart';
 import 'package:la_familia/screens/display/display_scene_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -287,6 +288,161 @@ void main() {
       // Home nollställer omedelbart
       controller.handleCommand('home');
       expect(controller.manualSceneId, isNull);
+
+      controller.dispose();
+    });
+  });
+
+  group('FAS 5.2 — Storskärm: Personspotlight (person:<index>)', () {
+    final List<UserModel> testMembers = [
+      const UserModel(
+        uid: 'u1',
+        familyId: 'fam1',
+        name: 'Mamma Anna',
+        email: 'anna@test.com',
+        role: 'parent',
+        viewMode: 'parent',
+        energy: 3,
+        color: '#E91E63',
+      ),
+      const UserModel(
+        uid: 'u2',
+        familyId: 'fam1',
+        name: 'Pappa Erik',
+        email: 'erik@test.com',
+        role: 'parent',
+        viewMode: 'parent',
+        energy: 3,
+        color: '#2196F3',
+      ),
+      const UserModel(
+        uid: 'u3',
+        familyId: 'fam1',
+        name: 'Lisa',
+        email: 'lisa@test.com',
+        role: 'child',
+        viewMode: 'child',
+        energy: 3,
+        color: '#4CAF50',
+      ),
+    ];
+
+    test('1. person:1 sätter manualSceneId=person, spotlightIndex=1 och feedback till förnamn', () {
+      final now = DateTime(2026, 9, 9, 10, 0);
+      final controller = DisplayController(
+        nowProvider: () => now,
+        membersProvider: () => testMembers,
+      );
+
+      controller.handleCommand('person:1');
+      expect(controller.manualSceneId, 'person');
+      expect(controller.spotlightIndex, 1);
+      expect(controller.feedbackMessage, 'Mamma');
+
+      controller.handleCommand('person:3');
+      expect(controller.manualSceneId, 'person');
+      expect(controller.spotlightIndex, 3);
+      expect(controller.feedbackMessage, 'Lisa');
+
+      controller.dispose();
+    });
+
+    test('2. Ogiltigt person-index (0, negativt, > medlemmar, icke-siffra) ger ingen tillståndsförändring', () {
+      final now = DateTime(2026, 9, 9, 10, 0);
+      final controller = DisplayController(
+        nowProvider: () => now,
+        membersProvider: () => testMembers,
+      );
+
+      // Börja i normalläge
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      // Ogiltigt: 0 (1-baserat)
+      controller.handleCommand('person:0');
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      // Ogiltigt: 4 (finns bara 3 medlemmar)
+      controller.handleCommand('person:4');
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      // Ogiltigt: icke-numeriskt
+      controller.handleCommand('person:abc');
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      controller.dispose();
+    });
+
+    test('3. person:<index> startar och förnyar 10-minuters återgångstimer', () async {
+      final now = DateTime(2026, 9, 9, 10, 0);
+      final controller = DisplayController(
+        nowProvider: () => now,
+        membersProvider: () => testMembers,
+        sceneTimeoutDuration: const Duration(milliseconds: 60),
+      );
+
+      controller.handleCommand('person:1');
+      expect(controller.manualSceneId, 'person');
+      expect(controller.spotlightIndex, 1);
+
+      // Efter timeout nollställs både scen och spotlightIndex
+      await Future.delayed(const Duration(milliseconds: 80));
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      controller.dispose();
+    });
+
+    test('4. home eller byte av manuell scen rensar spotlightIndex', () {
+      final now = DateTime(2026, 9, 9, 10, 0);
+      final controller = DisplayController(
+        nowProvider: () => now,
+        membersProvider: () => testMembers,
+      );
+
+      controller.handleCommand('person:2');
+      expect(controller.manualSceneId, 'person');
+      expect(controller.spotlightIndex, 2);
+
+      // Scenbyte till 'morgon' ska nolla spotlightIndex
+      controller.handleCommand('scene:morgon');
+      expect(controller.manualSceneId, 'morgon');
+      expect(controller.spotlightIndex, isNull);
+
+      // Tillbaka till person:1
+      controller.handleCommand('person:1');
+      expect(controller.spotlightIndex, 1);
+
+      // 'home' ska nolla allt
+      controller.handleCommand('home');
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
+
+      controller.dispose();
+    });
+
+    test('5. Schemagräns rensar personscen och spotlightIndex', () {
+      final dayTime = DateTime(2026, 9, 9, 14, 0);
+      final nightTime = DateTime(2026, 9, 9, 22, 0);
+
+      var currentTime = dayTime;
+      final controller = DisplayController(
+        nowProvider: () => currentTime,
+        membersProvider: () => testMembers,
+      );
+
+      controller.handleCommand('person:1');
+      expect(controller.manualSceneId, 'person');
+      expect(controller.spotlightIndex, 1);
+
+      // Korsa nattgränsen (22:00)
+      currentTime = nightTime;
+      controller.checkScheduleBoundary(currentTime);
+      expect(controller.manualSceneId, isNull);
+      expect(controller.spotlightIndex, isNull);
 
       controller.dispose();
     });

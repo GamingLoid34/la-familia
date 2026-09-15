@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/family_note.dart';
 import '../models/user_model.dart';
+import '../screens/display/display_clock.dart';
 import '../services/widget_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/recurrence.dart';
@@ -77,7 +78,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<QueryDocumentSnapshot> get tomorrowEvents => _tomorrowEventsCached;
 
   void _rebuildEventCaches() {
-    final now = DateTime.now();
+    final now = DisplayClock.now();
     final tomorrow = now.add(const Duration(days: 1));
 
     final todaySeen = <String>{};
@@ -205,20 +206,23 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// dagens/morgondagens events, meals och notes.
   /// Kan tvingas vid t.ex. uppvaknande från sömn med [force].
   void ensureDateSubscriptionsFresh({bool force = false}) {
-    final today = dateKey(DateTime.now());
+    final today = dateKey(DisplayClock.now());
     if (!force && _subscribedDateKey == today) return;
     _resubscribeDateBound();
   }
 
   void _scheduleMidnightResubscribe() {
     _midnightTimer?.cancel();
-    final now = DateTime.now();
+    final now = DisplayClock.now();
     final nextMidnight = DateTime(now.year, now.month, now.day + 1);
     _midnightTimer = Timer(nextMidnight.difference(now), () {
       _resubscribeDateBound();
       _scheduleMidnightResubscribe();
     });
   }
+
+  /// Tvingar omedelbar omprenumeration av datumbundna resurser för aktuell DisplayClock.
+  void resubscribeDateBound() => _resubscribeDateBound();
 
   void _resubscribeDateBound() {
     final fid = _activeFamilyId;
@@ -420,7 +424,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Dagens/morgondagens events, meals och notes — måste bytas vid midnatt.
   void _subscribeDateBound(String familyId) {
-    final now = DateTime.now();
+    final now = DisplayClock.now();
     _subscribedDateKey = dateKey(now);
 
     _eventsSub?.cancel();

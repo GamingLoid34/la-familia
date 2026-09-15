@@ -36,6 +36,84 @@ firebase deploy --only functions:completeChore,functions:joinFamilyWithCode,func
 
 Ändra inte och deploya inte `functions/index.js` / rules utan att följa instruktionerna i `PROJECT_PLAN_V3.md` (stoppa före deploy när planen säger det).
 
+### Deploysäkring Web, APK & Hosting (Storskärm, Nedladdning & Webb)
+
+Följ alltid denna standardiserade bygg- och deployritual vid releaser:
+
+1. **Versionering och tester:**
+   - Bumpa versionsnumret i `pubspec.yaml` (t.ex. `version: 1.0.0+25`).
+   - Kör testerna:
+     ```powershell
+     flutter test
+     flutter analyze
+     node --test functions/test/*.test.js
+     ```
+
+2. **Release-byggen (APK & Web):**
+   - Bränn in versionsnumret vid kompilering med `--dart-define=APP_VERSION=1.0.0+N`:
+     ```powershell
+     flutter build apk --release --dart-define=APP_VERSION=1.0.0+N
+     flutter build web --release --dart-define=APP_VERSION=1.0.0+N
+     ```
+
+3. **APK-distribution och nedladdningssida:**
+   - Kopiera APK-filen till webbens utdelade kataloger:
+     ```powershell
+     Copy-Item -Force build\app\outputs\flutter-apk\app-release.apk build\web\app-release.apk
+     Copy-Item -Force build\app\outputs\flutter-apk\app-release.apk build\web\la-familia.apk
+     Copy-Item -Force build\app\outputs\flutter-apk\app-release.apk web\app-release.apk
+     ```
+   - Uppdatera versions-/build-numret i både `web/ladda-ner/index.html` och `build/web/ladda-ner/index.html`.
+
+4. **Förkontroll före deploy:**
+   - Läs av nuvarande live-version:
+     ```powershell
+     curl.exe -s https://la-familia-5d9f5.web.app/version.json
+     ```
+
+5. **Deploy:**
+   - Distribuera till Firebase Hosting:
+     ```powershell
+     firebase deploy --only hosting --project la-familia-5d9f5
+     ```
+
+6. **De 6 obligatoriska efterkontrollerna med `curl.exe`:**
+   Kör alltid samtliga 6 kontroller mot produktionsmiljön:
+   ```powershell
+   # 1. Version — verifiera att det nya build-numret är aktivt
+   curl.exe -s https://la-familia-5d9f5.web.app/version.json
+
+   # 2. Integritetspolicy — HTTP 200
+   curl.exe -s -o NUL -w "%{http_code}" https://la-familia-5d9f5.web.app/privacy.html
+
+   # 3. Besöksvy — HTTP 200
+   curl.exe -s -o NUL -w "%{http_code}" https://la-familia-5d9f5.web.app/besok/
+
+   # 4. Bootstrap JS — MIME-typ text/javascript (ej text/html)
+   curl.exe -s -I https://la-familia-5d9f5.web.app/flutter_bootstrap.js | findstr /i content-type
+
+   # 5. Nedladdningssida — HTTP 200
+   curl.exe -s -o NUL -w "%{http_code}" https://la-familia-5d9f5.web.app/ladda-ner/
+
+   # 6. APK-nedladdning — HTTP 200
+   curl.exe -s -o NUL -w "%{http_code}" https://la-familia-5d9f5.web.app/app-release.apk
+   ```
+
+> ℹ️ **Förklaring av APK-filstorlek (MiB vs MB):**
+> När Flutter CLI bygger APK rapporteras t.ex. `✓ Built build\app\outputs\flutter-apk\app-release.apk (77.6MB)`.
+> Flutter anger här storleken i binära mebibyte (MiB, $1024 \times 1024$ bytes):
+> $81{,}409{,}728 \text{ bytes} / (1024 \times 1024) \approx 77.638 \text{ MiB}$.
+> Windows Filhanterare och HTTP `Content-Length` anger däremot decimala megabyte (MB, $10^6$ bytes):
+> $81{,}409{,}728 \text{ bytes} / 1{,}000{,}000 \approx 81.41 \text{ MB}$.
+> Det rör sig alltså om exakt samma fil och bytes — ingen filtillväxt har skett.
+
+> ⚠️ **VAKT — PowerShell curl-aliasregel (gäller alla faser):**
+> Skriv **alltid `curl.exe`**, aldrig bara `curl`, i PowerShell-kommandon.
+> I PowerShell är `curl` ett inbyggt alias för `Invoke-WebRequest`, som inte
+> förstår `-s`-flaggan och hänger i väntan på inmatning. `curl.exe` anropar
+> den riktiga curl-binären. **Ingen deploy får verifieras via aliaset `curl`.**
+
+
 ## Google Play — release-signering
 
 Release-byggen signeras med en **upload-keystore** (inte debug-nyckeln).

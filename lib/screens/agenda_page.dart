@@ -106,8 +106,8 @@ class _AgendaPageState extends State<AgendaPage>
     }).toList();
 
     filtered.sort((a, b) {
-      final dA = parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>, day);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>, day);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;
@@ -1107,7 +1107,7 @@ class AgendaActivityRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? '';
-    final dt = parseDateTime(d);
+    final dt = parseDateTime(d, listDay);
     final startClock = (d['time'] as String? ?? '').trim();
     final endClock = (d['endTime'] as String? ?? '').trim();
     String timeStr;

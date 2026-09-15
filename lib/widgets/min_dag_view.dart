@@ -502,7 +502,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
 
             for (final doc in myEvents) {
               final d = doc.data() as Map<String, dynamic>;
-              final parsed = parseDateTime(d);
+              final parsed = parseDateTime(d, _viewedDay);
               final timeStr = (d['time'] as String? ?? '').trim();
               if (parsed != null && timeStr.isNotEmpty) {
                 final end = _computeEndTime(parsed, d);

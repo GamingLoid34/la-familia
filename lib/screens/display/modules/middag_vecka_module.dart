@@ -7,9 +7,10 @@ import '../../../providers/family_provider.dart';
 import '../../../utils/date_utils.dart';
 import '../../../utils/schedule_time_utils.dart';
 import '../display_module_registry.dart';
+import '../display_palette.dart';
 
-/// Modul: Veckans middagar ("middag_vecka") (FAS 4).
-/// Visar måndag–söndag i sidokortet med fetstil/färgaccent för idag.
+/// Modul: Veckans middagar ("middag_vecka") (FAS 4, 6c).
+/// Visar måndag–söndag i sidokortet med färgprick per dag och accent för idag.
 class MiddagVeckaModule extends StatelessWidget {
   final DisplayModuleContext moduleContext;
 
@@ -17,9 +18,10 @@ class MiddagVeckaModule extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final displayPalette = DisplayPalette.of(context);
     final provider = context.watch<FamilyProvider>();
     final fid = provider.currentUser?.familyId ?? '';
-    final palette = AppTheme.dayPalette(moduleContext.now.weekday);
+    final todayPalette = AppTheme.dayPalette(moduleContext.now.weekday);
 
     final weekDays = List.generate(
       7,
@@ -29,11 +31,14 @@ class MiddagVeckaModule extends StatelessWidget {
 
     if (fid.isEmpty) {
       return _buildCard(
-        palette: palette,
-        child: const Center(
+        displayPalette: displayPalette,
+        child: Center(
           child: Text(
             'Ingen familj vald',
-            style: TextStyle(fontFamily: 'Nunito', color: Color(0xFF888888)),
+            style: TextStyle(
+              fontFamily: 'Nunito',
+              color: displayPalette.textMuted,
+            ),
           ),
         ),
       );
@@ -58,7 +63,7 @@ class MiddagVeckaModule extends StatelessWidget {
         }
 
         return _buildCard(
-          palette: palette,
+          displayPalette: displayPalette,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -68,22 +73,22 @@ class MiddagVeckaModule extends StatelessWidget {
                   Icon(
                     Icons.restaurant_rounded,
                     size: 22,
-                    color: palette.base,
+                    color: todayPalette.base,
                   ),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     'Veckans middagar',
                     style: TextStyle(
                       fontFamily: 'Nunito',
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF1A1A2E),
+                      color: displayPalette.textPrimary,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              const Divider(height: 1, color: Color(0xFFE2E5EE)),
+              Divider(height: 1, color: displayPalette.divider),
               const SizedBox(height: 8),
               // 7 dagsrader
               Expanded(
@@ -93,6 +98,7 @@ class MiddagVeckaModule extends StatelessWidget {
                     final k = dateKey(day);
                     final isToday = sameCalendarDay(day, moduleContext.now);
                     final meal = mealByDate[k];
+                    final dayPal = AppTheme.dayPalette(day.weekday);
 
                     final dayName = DateFormat('EEEE', 'sv').format(day);
                     final dayCapitalized =
@@ -117,20 +123,34 @@ class MiddagVeckaModule extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         color: isToday
-                            ? palette.base.withValues(alpha: 0.12)
+                            ? todayPalette.base.withValues(
+                                alpha: displayPalette.isDark ? 0.20 : 0.12,
+                              )
                             : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                         border: isToday
                             ? Border.all(
-                                color: palette.base.withValues(alpha: 0.4),
+                                color: todayPalette.base.withValues(
+                                  alpha: displayPalette.isDark ? 0.50 : 0.40,
+                                ),
                                 width: 1.5,
                               )
                             : null,
                       ),
                       child: Row(
                         children: [
+                          // Färgprick i dagens färg
+                          Container(
+                            width: 8,
+                            height: 8,
+                            margin: const EdgeInsets.only(right: 8),
+                            decoration: BoxDecoration(
+                              color: dayPal.base,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                           SizedBox(
-                            width: 100,
+                            width: 96,
                             child: Text(
                               dayStr,
                               style: TextStyle(
@@ -139,8 +159,11 @@ class MiddagVeckaModule extends StatelessWidget {
                                 fontWeight:
                                     isToday ? FontWeight.w800 : FontWeight.w600,
                                 color: isToday
-                                    ? palette.deep
-                                    : const Color(0xFF5C6877),
+                                    ? (displayPalette.isDark
+                                        ? todayPalette.light
+                                        : displayPalette
+                                            .dayHeaderTextColor(day.weekday))
+                                    : displayPalette.textMuted,
                               ),
                             ),
                           ),
@@ -156,8 +179,10 @@ class MiddagVeckaModule extends StatelessWidget {
                                 fontWeight:
                                     isToday ? FontWeight.w800 : FontWeight.w600,
                                 color: isToday
-                                    ? const Color(0xFF1A1A2E)
-                                    : const Color(0xFF2C3E50),
+                                    ? displayPalette.textPrimary
+                                    : (displayPalette.isDark
+                                        ? displayPalette.textPrimary
+                                        : const Color(0xFF2C3E50)),
                               ),
                             ),
                           ),
@@ -175,17 +200,19 @@ class MiddagVeckaModule extends StatelessWidget {
   }
 
   Widget _buildCard({
-    required DayPalette palette,
+    required DisplayPalette displayPalette,
     required Widget child,
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: displayPalette.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E5EE)),
+        border: Border.all(color: displayPalette.cardBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: displayPalette.isDark
+                ? Colors.black.withValues(alpha: 0.25)
+                : Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),

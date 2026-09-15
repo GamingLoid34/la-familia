@@ -32,6 +32,12 @@ exports.sendDueWebReminders = webReminders.sendDueWebReminders;
 const displayTransit = require("./display_transit");
 exports.displayTransit = displayTransit.displayTransit;
 
+const displaySchoolMenu = require("./display_school_menu");
+exports.displaySchoolMenu = displaySchoolMenu.displaySchoolMenu;
+
+const parseMenuDocument = require("./parse_menu_document");
+exports.parseMenuDocument = parseMenuDocument.parseMenuDocument;
+
 // ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
 // Skickar push till familjemedlemmar. Respekterar:
 //  - pushFamilyEvents === false (toggle i Inställningar)

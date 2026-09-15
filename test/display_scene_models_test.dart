@@ -117,18 +117,30 @@ void main() {
   });
 
   group('FAS 3 — display_scene_models: Parsning och fallback', () {
-    test('1. Standard fallback konfiguration är komplett (v3)', () {
+    test('1. Standard fallback konfiguration är komplett (v10)', () {
       final config = DisplayConfig.defaultConfig();
-      expect(config.version, 3);
+      expect(config.version, 10);
       expect(config.scenes.containsKey('morgon'), true);
       expect(config.scenes.containsKey('standard'), true);
       expect(config.scenes.containsKey('kvall'), true);
       expect(config.scenes.containsKey('natt'), true);
+      expect(config.scenes.containsKey('foto'), true);
+      expect(config.scenes.containsKey('person'), true);
+      expect(config.keymap.length, 5);
+      expect(config.keymap['1'], 'standard');
+      expect(config.seededSceneIds.length, 6);
       expect(config.scenes['morgon']?.layout, 'board');
+      expect(config.scenes['morgon']?.modules['footer1'], 'avgangar');
       expect(config.scenes['standard']?.layout, 'board');
       expect(config.scenes['kvall']?.layout, 'sidebar');
       expect(config.scenes['natt']?.layout, 'fullscreen');
+      expect(config.scenes['foto']?.layout, 'fullscreen');
+      expect(config.scenes['person']?.layout, 'fullscreen');
+      expect(config.scenes['person']?.modules['main'], 'persondag');
       expect(config.schedule.length, 5);
+      expect(config.transit.stops.length, 1);
+      expect(config.transit.stops.first.name, 'Tranås station');
+      expect(config.skolmat.schools.isEmpty, true);
     });
 
     test('2. Giltig karta parsas felfritt', () {
@@ -272,6 +284,122 @@ void main() {
 
       final parsedNoDays = DisplayScheduleEntry.fromMap({'start': '22:00', 'scene': 'natt'});
       expect(parsedNoDays.days, null);
+    });
+  });
+
+  group('FAS 5, 5.2, 5.1, 6a & 6b — display_scene_models: DisplayTransitConfig & v9 defaults', () {
+    test('1. Standardkonfiguration v10 innehåller transit, fotointervall 45s, morgonscen och personscen', () {
+      final config = DisplayConfig.defaultConfig();
+      expect(config.version, 10);
+      expect(config.foto.intervalSec, 45);
+      expect(config.scenes['morgon']?.modules['footer1'], 'avgangar');
+      expect(config.scenes['person']?.name, 'Person');
+      expect(config.scenes['person']?.layout, 'fullscreen');
+      expect(config.scenes['person']?.modules['main'], 'persondag');
+
+      final transit = config.transit;
+      expect(transit.walkMinutes, 5);
+      expect(transit.modes, ['train']);
+      expect(transit.destinations, ['Mjölby', 'Linköping', 'Norrköping']);
+      expect(transit.stops.length, 1);
+      final stop = transit.stops.first;
+      expect(stop.id, '740000041');
+      expect(stop.name, 'Tranås station');
+      expect(stop.icon, '🚆');
+      expect(stop.walkMinutes, 5);
+      expect(stop.filter, isNotNull);
+      expect(stop.filter!.modes, ['train']);
+      expect(stop.filter!.destinations, ['Mjölby', 'Linköping', 'Norrköping']);
+    });
+
+    test('2. DisplayTransitConfig och per-stop filter toMap och fromMap', () {
+      final original = DisplayTransitConfig(
+        stops: [
+          const DisplayTransitStop(
+            id: '740000041',
+            name: 'Tranås station',
+            icon: '🚆',
+            walkMinutes: 8,
+            filter: DisplayTransitFilter(
+              modes: ['train'],
+              destinations: ['Linköping', 'Mjölby'],
+            ),
+          ),
+        ],
+        destinations: ['Linköping', 'Mjölby'],
+        modes: ['train'],
+        walkMinutes: 8,
+      );
+
+      final map = original.toMap();
+      final parsed = DisplayTransitConfig.fromMap(map);
+
+      expect(parsed.walkMinutes, 8);
+      expect(parsed.destinations, ['Linköping', 'Mjölby']);
+      expect(parsed.modes, ['train']);
+      expect(parsed.stops.length, 1);
+      final stop = parsed.stops.first;
+      expect(stop.id, '740000041');
+      expect(stop.name, 'Tranås station');
+      expect(stop.icon, '🚆');
+      expect(stop.walkMinutes, 8);
+      expect(stop.filter?.modes, ['train']);
+      expect(stop.filter?.destinations, ['Linköping', 'Mjölby']);
+    });
+
+    test('3. Raw map har v10, fotointervall, personscen och skolmat', () {
+      final raw = DisplayConfig.defaultRawMap();
+      expect(raw['version'], 10);
+      expect(raw['foto'] is Map, true);
+      expect(raw['foto']['intervalSec'], 45);
+      final scenes = raw['scenes'] as Map<String, dynamic>;
+      expect(scenes.containsKey('person'), true);
+      expect(scenes['person']['layout'], 'fullscreen');
+      expect(scenes['person']['modules']['main'], 'persondag');
+      final skolmat = raw['skolmat'] as Map<String, dynamic>;
+      final schools = skolmat['schools'] as List;
+      expect(schools.isEmpty, true);
+
+      final transitMap = raw['transit'] as Map<String, dynamic>;
+      final rawStops = transitMap['stops'] as List;
+      expect(rawStops.first['walkMinutes'], 5);
+      expect(rawStops.first['filter']['modes'], ['train']);
+    });
+
+    test('4. DisplayFotoConfig clamps interval to 20-120 seconds', () {
+      final tooLow = DisplayFotoConfig.fromMap({'intervalSec': 10});
+      expect(tooLow.intervalSec, 20);
+
+      final tooHigh = DisplayFotoConfig.fromMap({'intervalSec': 300});
+      expect(tooHigh.intervalSec, 120);
+
+      final valid = DisplayFotoConfig.fromMap({'intervalSec': 60});
+      expect(valid.intervalSec, 60);
+
+      final missing = DisplayFotoConfig.fromMap({});
+      expect(missing.intervalSec, 45);
+    });
+
+    test('5. DisplaySkolmatConfig toMap och fromMap', () {
+      const original = DisplaySkolmatConfig(
+        schools: [
+          DisplaySkolmatSchoolConfig(
+            id: '318',
+            name: 'Junkaremålsskolan',
+            memberUids: ['uid1', 'uid2'],
+          ),
+        ],
+      );
+
+      final map = original.toMap();
+      final parsed = DisplaySkolmatConfig.fromMap(map);
+
+      expect(parsed.schools.length, 1);
+      expect(parsed.schools.first.id, '318');
+      expect(parsed.schools.first.name, 'Junkaremålsskolan');
+      expect(parsed.schools.first.memberUids, ['uid1', 'uid2']);
+      expect(parsed.schoolForMember('uid1')?.id, '318');
+      expect(parsed.schoolForMember('unknown'), null);
     });
   });
 }

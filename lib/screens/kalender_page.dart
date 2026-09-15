@@ -351,8 +351,8 @@ class _KalenderPageState extends State<KalenderPage>
     }).toList();
 
     filtered.sort((a, b) {
-      final dA = parseDateTime(a.data() as Map<String, dynamic>);
-      final dB = parseDateTime(b.data() as Map<String, dynamic>);
+      final dA = parseDateTime(a.data() as Map<String, dynamic>, day);
+      final dB = parseDateTime(b.data() as Map<String, dynamic>, day);
       if (dA == null && dB == null) return 0;
       if (dA == null) return 1;
       if (dB == null) return -1;

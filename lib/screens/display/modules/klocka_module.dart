@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../display_module_registry.dart';
+import '../display_palette.dart';
 
-/// Modul: Stor klocka + svenskt datum (FAS 3).
+/// Modul: Stor klocka + svenskt datum (FAS 3, 6c).
 /// Utbruten ur nattvyn med stöd för inbränningsskydd och anpassningsbar dämpning.
 class KlockaModule extends StatelessWidget {
   final DisplayModuleContext moduleContext;
@@ -29,6 +30,7 @@ class KlockaModule extends StatelessWidget {
     final now = moduleContext.now;
     final timeStr = DateFormat('HH:mm').format(now);
     final dateStr = _formatSwedishDate(now);
+    final palette = DisplayPalette.of(context);
 
     final dx = burnInShift ? ((now.hour * 37) % 70) - 35.0 : 0.0;
     final dy = burnInShift ? ((now.hour * 19) % 50) - 25.0 : 0.0;
@@ -36,12 +38,12 @@ class KlockaModule extends StatelessWidget {
     final clockColor = customTextColor ??
         (dimmed
             ? Colors.white.withValues(alpha: 0.32)
-            : const Color(0xFF1A1A2E));
+            : palette.textPrimary);
 
     final dateColor = customTextColor?.withValues(alpha: 0.75) ??
         (dimmed
             ? Colors.white.withValues(alpha: 0.25)
-            : const Color(0xFF5C6877));
+            : palette.textMuted);
 
     Widget content = Column(
       mainAxisSize: MainAxisSize.min,

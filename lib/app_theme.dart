@@ -112,7 +112,9 @@ class AppTheme {
   /// Faller tillbaka till första palette-färgen vid ogiltig input.
   static Color colorFromHex(String hex) {
     try {
-      final cleaned = hex.startsWith('0x') ? hex.substring(2) : hex;
+      var cleaned = hex.trim();
+      if (cleaned.startsWith('#')) cleaned = cleaned.substring(1);
+      if (cleaned.startsWith('0x')) cleaned = cleaned.substring(2);
       // Acceptera både 'RRGGBB' (6 tecken) och 'AARRGGBB' (8 tecken).
       final withAlpha = cleaned.length == 6 ? 'FF$cleaned' : cleaned;
       return Color(int.parse(withAlpha, radix: 16));

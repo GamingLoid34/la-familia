@@ -18,20 +18,30 @@ bool sameCalendarDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
 /// Kräver att `time` är satt — undviker falska ”hela dagen”-block vid status.
-DateTime? plannerTimedStart(Map<String, dynamic> d) {
-  final day = parseYmdDate(d['date']);
-  if (day == null) return null;
+/// För återkommande serier (eller om [onDay] anges) beräknas starttiden på den relevanta
+/// dagen istället för seriens ursprungliga startdatum i dåtid.
+DateTime? plannerTimedStart(Map<String, dynamic> d, [DateTime? onDay]) {
   final t = d['time'] as String?;
   if (t == null || t.trim().isEmpty) return null;
+  DateTime? day = onDay;
+  if (day == null) {
+    if (d['isRecurring'] == true) {
+      day = DateTime.now();
+    } else {
+      day = parseYmdDate(d['date']);
+    }
+  }
+  if (day == null) return null;
   return parseHmOnDate(t, day);
 }
 
 /// Slut: `endTime` (HH:mm) samma dag om satt, annars [defaultSpan] efter start.
 DateTime? plannerTimedEnd(
   Map<String, dynamic> d, {
+  DateTime? onDay,
   Duration defaultSpan = const Duration(hours: 1),
 }) {
-  final start = plannerTimedStart(d);
+  final start = plannerTimedStart(d, onDay);
   if (start == null) return null;
   final endStr = d['endTime'] as String?;
   if (endStr != null && endStr.isNotEmpty) {
@@ -43,8 +53,8 @@ DateTime? plannerTimedEnd(
 }
 
 bool plannerTimedEventIsActiveNow(Map<String, dynamic> d, DateTime now) {
-  final s = plannerTimedStart(d);
-  final e = plannerTimedEnd(d);
+  final s = plannerTimedStart(d, now);
+  final e = plannerTimedEnd(d, onDay: now);
   if (s == null || e == null) return false;
   return !now.isBefore(s) && now.isBefore(e);
 }

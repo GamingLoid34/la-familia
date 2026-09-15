@@ -7,6 +7,7 @@ import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
+import '../widgets/member_avatar.dart';
 
 /// Rättvisestatistik över klarade sysslor (Fas 2) — ersätter poängligan.
 class ChoreStatsPage extends StatefulWidget {
@@ -364,6 +365,7 @@ class _StatsPanel extends StatelessWidget {
             if (s != null) {
               s.name = m.name;
               s.color = m.color;
+              s.avatarUrl = m.avatarUrl;
               ordered.add(s);
             }
           }
@@ -429,14 +431,11 @@ class _StatsPanel extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: barColor,
-                      child: Text(
-                        s.name.isNotEmpty ? s.name[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold),
-                      ),
+                    FamilyMemberAvatar.raw(
+                      name: s.name,
+                      avatarUrl: s.avatarUrl,
+                      color: barColor,
+                      size: 32,
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -479,6 +478,7 @@ class _StatsPanel extends StatelessWidget {
 class _MemberStats {
   final String uid;
   String name;
+  String? avatarUrl;
   String color = 'ff2A6F97';
   int count = 0;
   int weightSum = 0;

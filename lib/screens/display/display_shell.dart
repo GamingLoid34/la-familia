@@ -8,11 +8,17 @@ import '../../providers/family_provider.dart';
 import '../../utils/web_reload.dart';
 import 'display_config_source.dart';
 import 'display_controller.dart';
+import 'display_clock.dart';
+import 'display_heartbeat.dart';
 import 'display_layouts.dart';
 import 'display_log.dart';
+import 'display_module_error_boundary.dart';
 import 'display_module_registry.dart';
+import 'display_palette.dart';
 import 'display_scene_models.dart';
+import 'display_school_menu_data.dart';
 import 'display_theme.dart';
+import '../../utils/svenska_dagar.dart';
 
 /// Beslut för tick-hoppsdetektorn (FAS 2.2 Beslut 1).
 enum TickJumpDecision {
@@ -78,8 +84,9 @@ class _DisplayShellState extends State<DisplayShell>
   late final DisplayController _controller;
   late final FocusNode _focusNode;
 
-  DateTime _now = DateTime.now();
+  DateTime _now = DisplayClock.now();
   late DateTime _weekStart;
+  // Undantag (FAS 4.2): Tick-hoppsdetektorns mätning ska läsa verklig drifttid
   DateTime _lastTickTime = DateTime.now();
   DateTime _lastKeyPressTime = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -95,7 +102,9 @@ class _DisplayShellState extends State<DisplayShell>
   DateTime _lastCursorArmTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   DisplayConfigSource? _configSource;
+  DisplayHeartbeat? _heartbeat;
   String? _currentFamilyId;
+  String? _lastEffectiveTheme;
 
   bool get _isDisplayMode =>
       kIsWeb && Uri.base.queryParameters['display'] == '1';
@@ -114,20 +123,41 @@ class _DisplayShellState extends State<DisplayShell>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
+    // Initialisera felgräns (FAS 6d Incident / Build 22)
+    DisplayModuleErrorBoundary.initialize();
+
+    // Initialisera testklocka från URL vid sidladdning (FAS 4.2)
+    DisplayClock.init(uri: kIsWeb ? Uri.base : null);
+    _now = DisplayClock.now();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        try {
+          context.read<FamilyProvider>().resubscribeDateBound();
+        } catch (_) {}
+      }
+    });
+
     _controller = DisplayController(
       nowProvider: () => _now,
       configProvider: () =>
           _configSource?.config ?? DisplayConfig.defaultConfig(),
+      membersProvider: () {
+        if (!mounted) return const [];
+        return context.read<FamilyProvider>().familyMembers;
+      },
+      onReload: _performReload,
     );
     _controller.addListener(_onControllerChanged);
 
     _focusNode = FocusNode();
     _focusNode.addListener(_onFocusChanged);
 
+    // Undantag (FAS 4.2): tick-hoppsdetektor mäts i verklig tid
     _lastTickTime = DateTime.now();
     _weekStart = _computeWeekMonday(_now);
     _scheduleNextMinute();
     _scheduleNightReload();
+    unawaited(SvenskaDagar.init());
 
     DisplayLog.instance.log(
       'lifecycle/resume',
@@ -144,6 +174,7 @@ class _DisplayShellState extends State<DisplayShell>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // Undantag (FAS 4.2): App-resume och vila mäts mot verklig drifttid
       final now = DateTime.now();
       if (!shouldHandleResume(now: now, lastHandledResume: _lastHandledResume)) {
         DisplayLog.instance.log(
@@ -165,6 +196,7 @@ class _DisplayShellState extends State<DisplayShell>
   }
 
   void _onControllerChanged() {
+    _heartbeat?.onSceneChanged();
     if (mounted) setState(() {});
   }
 
@@ -179,8 +211,21 @@ class _DisplayShellState extends State<DisplayShell>
     return DateTime(dt.year, dt.month, dt.day - (dt.weekday - 1));
   }
 
+  void _checkThemeTransition(DisplayConfig config, DateTime time) {
+    final effective = config.theme.resolveEffectiveMode(time);
+    if (_lastEffectiveTheme != null && _lastEffectiveTheme != effective) {
+      final modeDesc = config.theme.mode == 'auto' ? ' (auto)' : '';
+      DisplayLog.instance.log(
+        'konfig/scen',
+        'Tema → ${effective == "dark" ? "mörkt" : "ljust"}$modeDesc',
+      );
+    }
+    _lastEffectiveTheme = effective;
+  }
+
   void _scheduleNextMinute() {
     _minuteTimer?.cancel();
+    // Undantag (FAS 4.2): Väntetid till nästa minutpuls baseras på verklig klocka
     final now = DateTime.now();
     final nextMinute = DateTime(
       now.year,
@@ -194,6 +239,7 @@ class _DisplayShellState extends State<DisplayShell>
     final delay = nextMinute.difference(now);
     _minuteTimer = Timer(delay, () {
       if (!mounted) return;
+      // Undantag (FAS 4.2): Tick-hoppsdetektor och sömn utvärderas mot verklig drifttid
       final current = DateTime.now();
       final decision = evaluateTickJump(
         lastTick: _lastTickTime,
@@ -250,12 +296,24 @@ class _DisplayShellState extends State<DisplayShell>
         _focusNode.requestFocus();
       }
 
-      // Schemagränskontroll för nattöverstyrning
-      _controller.checkScheduleBoundary(current);
+      // Visningstid (FAS 4.2): tavlan, schemat och veckoankare följer DisplayClock
+      final displayNow = DisplayClock.now();
 
-      final newMonday = _computeWeekMonday(current);
+      // Schemagränskontroll för nattöverstyrning
+      _controller.checkScheduleBoundary(displayNow);
+
+      final currentConfig =
+          _configSource?.config ?? DisplayConfig.defaultConfig();
+      _checkThemeTransition(currentConfig, displayNow);
+      DisplaySchoolMenuData.instance.fetchIfNeeded(
+        currentConfig.skolmat,
+        displayNow,
+        familyId: _currentFamilyId,
+      );
+
+      final newMonday = _computeWeekMonday(displayNow);
       setState(() {
-        _now = current;
+        _now = displayNow;
         if (newMonday.year != _weekStart.year ||
             newMonday.month != _weekStart.month ||
             newMonday.day != _weekStart.day) {
@@ -268,6 +326,7 @@ class _DisplayShellState extends State<DisplayShell>
 
   void _scheduleNightReload() {
     _reloadTimer?.cancel();
+    // Undantag (FAS 4.2): Omladdningsdisciplinen och 03:00-schemat ska följa verklig drifttid
     final now = DateTime.now();
 
     // Test-override: omladdning efter N minuter
@@ -294,18 +353,17 @@ class _DisplayShellState extends State<DisplayShell>
     });
   }
 
-  void _performReload() {
-    final testMin = _testReloadMin;
-    if (testMin != null && testMin > 0) {
-      final newParams = Map<String, String>.from(Uri.base.queryParameters)
-        ..remove('testReloadMin');
-      final cleanUri = Uri.base.replace(
-        queryParameters: newParams.isEmpty ? null : newParams,
-      );
-      reloadWebPage(replaceUrl: cleanUri.toString());
-      return;
-    }
-    reloadWebPage();
+  void _performReload({String? replaceUrl}) {
+    final baseUri = replaceUrl != null ? Uri.parse(replaceUrl) : Uri.base;
+    // Självsanering (FAS 4.2 Beslut 3): alla testparametrar rensas vid programmatisk omladdning
+    final newParams = Map<String, String>.from(baseUri.queryParameters)
+      ..remove('testReloadMin')
+      ..remove('testTime')
+      ..remove('testNight');
+    final cleanUri = baseUri.replace(
+      queryParameters: newParams.isEmpty ? null : newParams,
+    );
+    reloadWebPage(replaceUrl: cleanUri.toString());
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -315,15 +373,36 @@ class _DisplayShellState extends State<DisplayShell>
     }
 
     // Debounce: max 1 steg per 150 ms vid tangentnedtryckning/auto-repeat
+    // Undantag (FAS 4.2): Tangentbordsdebounce mäts i verklig tid
     final now = DateTime.now();
     if (now.difference(_lastKeyPressTime) < const Duration(milliseconds: 150)) {
       return KeyEventResult.handled;
     }
 
     final key = event.logicalKey;
+    final phys = event.physicalKey;
+    final isShift = HardwareKeyboard.instance.isShiftPressed;
     String? commandId;
 
-    if (key == LogicalKeyboardKey.keyH) {
+    if (isShift) {
+      if (phys == PhysicalKeyboardKey.digit1 || key == LogicalKeyboardKey.digit1) {
+        commandId = 'person:1';
+      } else if (phys == PhysicalKeyboardKey.digit2 || key == LogicalKeyboardKey.digit2) {
+        commandId = 'person:2';
+      } else if (phys == PhysicalKeyboardKey.digit3 || key == LogicalKeyboardKey.digit3) {
+        commandId = 'person:3';
+      } else if (phys == PhysicalKeyboardKey.digit4 || key == LogicalKeyboardKey.digit4) {
+        commandId = 'person:4';
+      } else if (phys == PhysicalKeyboardKey.digit5 || key == LogicalKeyboardKey.digit5) {
+        commandId = 'person:5';
+      } else if (phys == PhysicalKeyboardKey.digit6 || key == LogicalKeyboardKey.digit6) {
+        commandId = 'person:6';
+      } else if (phys == PhysicalKeyboardKey.digit7 || key == LogicalKeyboardKey.digit7) {
+        commandId = 'person:7';
+      } else if (phys == PhysicalKeyboardKey.digit8 || key == LogicalKeyboardKey.digit8) {
+        commandId = 'person:8';
+      }
+    } else if (key == LogicalKeyboardKey.keyH) {
       commandId = 'home';
     } else if (key == LogicalKeyboardKey.arrowLeft) {
       commandId = 'week_prev';
@@ -337,37 +416,17 @@ class _DisplayShellState extends State<DisplayShell>
       commandId = 'debug_toggle';
     } else if (key == LogicalKeyboardKey.keyR) {
       commandId = 'reload';
-    } else if (key == LogicalKeyboardKey.digit1 ||
-        key == LogicalKeyboardKey.numpad1) {
-      commandId = 'scene:standard';
-    } else if (key == LogicalKeyboardKey.digit2 ||
-        key == LogicalKeyboardKey.numpad2) {
-      commandId = 'scene:natt';
-    } else if (key == LogicalKeyboardKey.digit3 ||
-        key == LogicalKeyboardKey.numpad3 ||
-        key == LogicalKeyboardKey.keyI) {
+    } else if (key == LogicalKeyboardKey.keyI) {
       commandId = 'scene:morgon';
-    } else if (key == LogicalKeyboardKey.digit4 ||
-        key == LogicalKeyboardKey.numpad4 ||
-        key == LogicalKeyboardKey.keyM) {
+    } else if (key == LogicalKeyboardKey.keyM) {
       commandId = 'scene:kvall';
-    } else if (key == LogicalKeyboardKey.digit5 ||
-        key == LogicalKeyboardKey.digit6 ||
-        key == LogicalKeyboardKey.digit7 ||
-        key == LogicalKeyboardKey.digit8 ||
-        key == LogicalKeyboardKey.digit9 ||
-        key == LogicalKeyboardKey.numpad5 ||
-        key == LogicalKeyboardKey.numpad6 ||
-        key == LogicalKeyboardKey.numpad7 ||
-        key == LogicalKeyboardKey.numpad8 ||
-        key == LogicalKeyboardKey.numpad9) {
-      _lastKeyPressTime = now;
-      final digitChar = event.character ?? '';
-      DisplayLog.instance.log(
-        'kommando',
-        'Scentangent $digitChar reserverad för senare fas',
-      );
-      return KeyEventResult.handled;
+    } else {
+      final digit = _getDigitKey(key);
+      if (digit != null) {
+        _lastKeyPressTime = now;
+        _controller.handleDigitKey(digit);
+        return KeyEventResult.handled;
+      }
     }
 
     if (commandId != null) {
@@ -379,14 +438,39 @@ class _DisplayShellState extends State<DisplayShell>
     return KeyEventResult.ignored;
   }
 
+  String? _getDigitKey(LogicalKeyboardKey key) {
+    if (key == LogicalKeyboardKey.digit1 || key == LogicalKeyboardKey.numpad1) return '1';
+    if (key == LogicalKeyboardKey.digit2 || key == LogicalKeyboardKey.numpad2) return '2';
+    if (key == LogicalKeyboardKey.digit3 || key == LogicalKeyboardKey.numpad3) return '3';
+    if (key == LogicalKeyboardKey.digit4 || key == LogicalKeyboardKey.numpad4) return '4';
+    if (key == LogicalKeyboardKey.digit5 || key == LogicalKeyboardKey.numpad5) return '5';
+    if (key == LogicalKeyboardKey.digit6 || key == LogicalKeyboardKey.numpad6) return '6';
+    if (key == LogicalKeyboardKey.digit7 || key == LogicalKeyboardKey.numpad7) return '7';
+    if (key == LogicalKeyboardKey.digit8 || key == LogicalKeyboardKey.numpad8) return '8';
+    if (key == LogicalKeyboardKey.digit9 || key == LogicalKeyboardKey.numpad9) return '9';
+    return null;
+  }
+
   void _onConfigChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      final config = _configSource?.config;
+      if (config != null) {
+        _checkThemeTransition(config, _now);
+        DisplaySchoolMenuData.instance.fetchIfNeeded(
+          config.skolmat,
+          _now,
+          familyId: _currentFamilyId,
+        );
+      }
+      setState(() {});
+    }
   }
 
   void _onPointerMoved(PointerHoverEvent event) {
     if (!_cursorVisible) {
       setState(() => _cursorVisible = true);
     }
+    // Undantag (FAS 4.2): Muspekarinaktivitet mäts i verklig drifttid
     final now = DateTime.now();
     if (now.difference(_lastCursorArmTime) >= const Duration(milliseconds: 500)) {
       _lastCursorArmTime = now;
@@ -412,6 +496,7 @@ class _DisplayShellState extends State<DisplayShell>
     _controller.dispose();
     _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
+    _heartbeat?.dispose();
     super.dispose();
   }
 
@@ -427,6 +512,35 @@ class _DisplayShellState extends State<DisplayShell>
       _configSource?.dispose();
       _configSource = DisplayConfigSource(familyId: fid)
         ..addListener(_onConfigChanged);
+
+      _heartbeat?.dispose();
+      if (fid.isNotEmpty) {
+        _heartbeat = DisplayHeartbeat(
+          familyId: fid,
+          activeSceneProvider: () => _isTestNight
+              ? 'natt'
+              : _controller.effectiveSceneId(_now,
+                  _configSource?.config ?? DisplayConfig.defaultConfig()),
+          sceneSourceProvider: () => _controller.spotlightIndex != null
+              ? 'person'
+              : (_controller.manualSceneId != null ? 'manual' : 'schedule'),
+          testModeProvider: () => DisplayClock.isTestTime,
+          configVersionProvider: () => _configSource?.config.version ?? 10,
+          syncOkProvider: () => DisplayLog.instance.syncOk,
+          transitOkProvider: () => DisplayLog.instance.transitOk,
+          weatherOkProvider: () => DisplayLog.instance.weatherOk,
+          lowStimuliProvider: () => AppTheme.lowStimuli,
+          themeProvider: () =>
+              (_configSource?.config ?? DisplayConfig.defaultConfig())
+                  .theme
+                  .resolveEffectiveMode(_now),
+          themeModeProvider: () =>
+              (_configSource?.config ?? DisplayConfig.defaultConfig())
+                  .theme
+                  .mode,
+          lastErrorProvider: () => DisplayLog.instance.lastError,
+        )..start();
+      }
     }
 
     final effectiveWeekStart = DateTime(
@@ -436,6 +550,16 @@ class _DisplayShellState extends State<DisplayShell>
     );
 
     final config = _configSource?.config ?? DisplayConfig.defaultConfig();
+    _lastEffectiveTheme ??= config.theme.resolveEffectiveMode(_now);
+    final isDark = config.theme.resolveIsDark(_now);
+    final palette = isDark ? DisplayPalette.dark : DisplayPalette.light;
+
+    DisplaySchoolMenuData.instance.fetchIfNeeded(
+      config.skolmat,
+      _now,
+      familyId: _currentFamilyId,
+    );
+
     final effectiveSceneId =
         _isTestNight ? 'natt' : _controller.effectiveSceneId(_now, config);
     final scene = config.scenes[effectiveSceneId] ??
@@ -448,13 +572,23 @@ class _DisplayShellState extends State<DisplayShell>
       weekOffset: _controller.weekOffset,
       members: members,
       weatherRefreshEpoch: _weatherRefreshEpoch,
+      familyId: _currentFamilyId,
+      transitConfig: config.transit,
+      skolmatConfig: config.skolmat,
+      fotoConfig: config.foto,
+      palette: palette,
+      spotlightIndex: _controller.spotlightIndex,
     );
 
-    final body = buildDisplayLayout(
+    final rawLayout = buildDisplayLayout(
       layoutId: scene.layout,
       context: context,
       moduleContext: moduleContext,
       zoneModules: scene.modules,
+    );
+    final body = DisplayPaletteScope(
+      palette: palette,
+      child: rawLayout,
     );
 
     final feedbackMsg = _controller.feedbackMessage;
@@ -470,6 +604,42 @@ class _DisplayShellState extends State<DisplayShell>
         child: Stack(
           children: [
             body,
+            // Varningsbanner vid aktiv simulerad testtid (FAS 4.2 Beslut 2)
+            if (DisplayClock.isTestTime)
+              Positioned(
+                top: 14,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFD166), // Varningsgul
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      DisplayClock.formatBannerText(_now),
+                      style: const TextStyle(
+                        fontFamily: 'Nunito',
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF141923),
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             const Positioned(
               bottom: 4,
               right: 8,

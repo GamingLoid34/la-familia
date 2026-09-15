@@ -13,7 +13,10 @@ import '../../utils/week_bucketing.dart';
 import 'display_chips.dart';
 import 'display_formatters.dart';
 import 'display_log.dart';
+import 'display_palette.dart';
 import 'display_theme.dart';
+import '../../utils/svenska_dagar.dart';
+import '../../widgets/member_avatar.dart';
 
 /// Beräknar backoff-intervall för väderhämtning (FAS 2.2 Beslut 4).
 /// 1 fel: 1 min, 2 fel: 2 min, 3+ fel: 5 min.
@@ -111,6 +114,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
   }
 
   Future<void> _fetchWeather({bool isManualTrigger = false}) async {
+    // Undantag (FAS 4.2): Väderns cache- och backofftider mäts mot verklig drifttid
     final now = DateTime.now();
     if (isManualTrigger &&
         shouldSkipManualWeatherFetch(
@@ -135,6 +139,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
       if (res != null) {
         if (mounted) setState(() => _weather = res);
         _consecutiveFailures = 0;
+        // Undantag (FAS 4.2): Cache-tidsstämpel är verklig drifttid
         _lastSuccessfulWeatherFetch = DateTime.now();
         DisplayLog.instance.log(
           'väder',
@@ -187,6 +192,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
   @override
   Widget build(BuildContext context) {
     final palette = AppTheme.dayPalette(widget.now.weekday);
+    final displayPalette = DisplayPalette.of(context);
     final weekEnd = widget.weekStart.add(const Duration(days: 6));
     final weekNum = isoWeekNumber(widget.weekStart);
     final isLowStimuli = AppTheme.lowStimuli;
@@ -213,11 +219,11 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                           children: [
                             Text('V.$weekNum',
                                 style: DisplayTheme.weekNumStyle
-                                    .copyWith(color: const Color(0xFF1A1A2E))),
+                                    .copyWith(color: displayPalette.textPrimary)),
                             const SizedBox(width: 14),
                             Text(weekRangeStr,
                                 style: DisplayTheme.dateRangeStyle.copyWith(
-                                    color: const Color(0xFF5C6877))),
+                                    color: displayPalette.textMuted)),
                             if (widget.weekOffset != 0) ...[
                               const SizedBox(width: 14),
                               Container(
@@ -280,11 +286,11 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                       children: [
                         Text(timeStr,
                             style: DisplayTheme.clockStyle
-                                .copyWith(color: const Color(0xFF1A1A2E))),
+                                .copyWith(color: displayPalette.textPrimary)),
                         const SizedBox(height: 2),
                         Text(dateStr,
                             style: DisplayTheme.dateRangeStyle.copyWith(
-                                color: const Color(0xFF5C6877),
+                                color: displayPalette.textMuted,
                                 fontWeight: FontWeight.w700)),
                       ],
                     ),
@@ -302,7 +308,12 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: _buildDayHeader(day, palette, isLowStimuli),
+                          child: _buildDayHeader(
+                            day,
+                            palette,
+                            isLowStimuli,
+                            displayPalette,
+                          ),
                         ),
                       ),
                   ],
@@ -326,11 +337,20 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                         if (hasFamily)
                           SizedBox(
                             height: rowHeight * 0.88,
-                            child: _buildFamilyRow(palette, isLowStimuli),
+                            child: _buildFamilyRow(
+                              palette,
+                              isLowStimuli,
+                              displayPalette,
+                            ),
                           ),
                         for (final m in widget.members)
                           Expanded(
-                            child: _buildMemberRow(m, palette, isLowStimuli),
+                            child: _buildMemberRow(
+                              m,
+                              palette,
+                              isLowStimuli,
+                              displayPalette,
+                            ),
                           ),
                       ],
                     );
@@ -343,99 +363,170 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
 
   // ─── Byggstenar ───────────────────────────────────────────────────────────
 
-  Widget _buildDayHeader(DateTime day, DayPalette palette, bool isLowStimuli) {
+  Widget _buildDayHeader(
+    DateTime day,
+    DayPalette palette,
+    bool isLowStimuli,
+    DisplayPalette displayPalette,
+  ) {
     final isToday = sameCalendarDay(day, widget.now);
     final isPast = day.isBefore(
       DateTime(widget.now.year, widget.now.month, widget.now.day),
     );
-    final dayLabel = DateFormat('E d', 'sv').format(day);
-    final dayCapitalized = dayLabel[0].toUpperCase() + dayLabel.substring(1);
+    final weekdayName = DateFormat('E', 'sv').format(day);
+    final weekdayCapitalized =
+        weekdayName.isNotEmpty ? weekdayName[0].toUpperCase() + weekdayName.substring(1) : weekdayName;
+    final dayNum = day.day.toString();
+    final isRed = isRodDag(day);
     final forecast = _forecastForDay(day);
+    final dayPalette = AppTheme.dayPalette(day.weekday);
 
     if (isToday) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          gradient: isLowStimuli ? null : palette.gradient,
-          color: isLowStimuli ? palette.base : null,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: palette.base.withValues(alpha: 0.25),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(6),
+      final names = namnsdagFor(day).take(2).join(', ');
+      final flag = isFlaggdag(day) ? ' 🇸🇪' : '';
+      final nameLine = '$names$flag'.trim();
+      final onColor = displayPalette.idagTextColor(day.weekday);
+      final isDarkText = onColor != Colors.white;
+      final scrimAlpha = displayPalette.idagScrimAlpha(day.weekday);
+
+      final textBlock = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isDarkText
+                      ? Colors.black.withValues(alpha: 0.12)
+                      : Colors.white.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  'IDAG',
+                  style: TextStyle(
+                    fontFamily: 'Nunito',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    color: onColor,
+                    letterSpacing: 1.0,
                   ),
-                  child: const Text(
-                    'IDAG',
-                    style: TextStyle(
-                      fontFamily: 'Nunito',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                      letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(text: '$weekdayCapitalized '),
+                    TextSpan(
+                      text: dayNum,
+                      style: TextStyle(
+                        color: (isRed && day.weekday != 7)
+                            ? (isDarkText ? const Color(0xFFC62828) : const Color(0xFFFF8A80))
+                            : onColor,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  dayCapitalized,
-                  style: DisplayTheme.dayNameStyle.copyWith(
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-            if (forecast != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                '${forecast.emoji} ${forecast.maxTemp?.round() ?? ""}°${forecast.minTemp != null ? "/${forecast.minTemp?.round()}°" : ""}',
-                style: const TextStyle(
-                  fontFamily: 'Nunito',
-                  fontSize: DisplayTheme.weatherFontSize,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                style: DisplayTheme.dayNameStyle.copyWith(
+                  color: onColor,
                 ),
               ),
             ],
+          ),
+          if (nameLine.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Text(
+                nameLine,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: onColor.withValues(alpha: 0.92),
+                  height: 1.1,
+                ),
+              ),
+            ),
+          if (forecast != null) ...[
+            const SizedBox(height: 1),
+            Text(
+              '${forecast.emoji} ${forecast.maxTemp?.round() ?? ""}°${forecast.minTemp != null ? "/${forecast.minTemp?.round()}°" : ""}',
+              style: TextStyle(
+                fontFamily: 'Nunito',
+                fontSize: DisplayTheme.weatherFontSize - 2,
+                fontWeight: FontWeight.w700,
+                color: onColor,
+                height: 1.1,
+              ),
+            ),
           ],
+        ],
+      );
+
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          gradient: isLowStimuli ? null : dayPalette.gradient,
+          color: isLowStimuli ? dayPalette.base : null,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: displayPalette.idagHeaderBoxShadow(
+            day.weekday,
+            isLowStimuli: isLowStimuli,
+          ),
         ),
+        child: scrimAlpha != null
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: scrimAlpha),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: textBlock,
+              )
+            : textBlock,
       );
     }
 
     // Passerade eller framtida dagar
+    final redColor = isPast ? const Color(0xFFE57373) : const Color(0xFFD32F2F);
+    final headerBg = displayPalette.dayHeaderBg(day.weekday, isToday: false, isPast: isPast);
+    final headerBorder = displayPalette.dayHeaderBorder(day.weekday, isToday: false, isPast: isPast);
+    final headerTextColor = displayPalette.dayHeaderTextColor(day.weekday, isToday: false, isPast: isPast);
+    final weatherColor = displayPalette.dayHeaderWeatherColor(day.weekday, isToday: false, isPast: isPast);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: headerBg,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: const Color(0xFFE2E5EE),
+          color: headerBorder,
         ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            dayCapitalized,
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: '$weekdayCapitalized '),
+                TextSpan(
+                  text: dayNum,
+                  style: TextStyle(
+                    color: isRed ? redColor : headerTextColor,
+                    fontWeight: isRed ? FontWeight.w900 : null,
+                  ),
+                ),
+              ],
+            ),
             style: DisplayTheme.dayNameStyle.copyWith(
-              color: isPast
-                  ? Colors.grey.shade400
-                  : const Color(0xFF2C3E50),
+              color: headerTextColor,
             ),
           ),
           if (!isPast && forecast != null) ...[
@@ -446,7 +537,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                 fontFamily: 'Nunito',
                 fontSize: DisplayTheme.weatherFontSize,
                 fontWeight: FontWeight.w700,
-                color: const Color(0xFF5C6877),
+                color: weatherColor,
               ),
             ),
           ],
@@ -455,7 +546,11 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
     );
   }
 
-  Widget _buildFamilyRow(DayPalette palette, bool isLowStimuli) {
+  Widget _buildFamilyRow(
+    DayPalette palette,
+    bool isLowStimuli,
+    DisplayPalette displayPalette,
+  ) {
     return Row(
       children: [
         // Rad-etikett: Familjen (~190 px)
@@ -486,12 +581,14 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                   ),
                 ),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Familjen',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: DisplayTheme.memberNameStyle,
+                    style: DisplayTheme.memberNameStyle.copyWith(
+                      color: displayPalette.textPrimary,
+                    ),
                   ),
                 ),
               ],
@@ -510,6 +607,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                 shifts: const [],
                 memberColor: palette.base,
                 isLowStimuli: isLowStimuli,
+                displayPalette: displayPalette,
               ),
             ),
           ),
@@ -518,10 +616,12 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
   }
 
   Widget _buildMemberRow(
-      UserModel m, DayPalette palette, bool isLowStimuli) {
+    UserModel m,
+    DayPalette palette,
+    bool isLowStimuli,
+    DisplayPalette displayPalette,
+  ) {
     final memberColor = _memberColor(m, palette);
-    final initial =
-        m.name.trim().isNotEmpty ? m.name.trim()[0].toUpperCase() : '?';
     final firstName = m.name.split(' ').first;
 
     return Row(
@@ -533,33 +633,13 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
             padding: const EdgeInsets.only(right: 12),
             child: Row(
               children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: memberColor,
-                    shape: BoxShape.circle,
-                    boxShadow: isLowStimuli
-                        ? null
-                        : [
-                            BoxShadow(
-                              color: memberColor.withValues(alpha: 0.35),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      initial,
-                      style: const TextStyle(
-                        fontFamily: 'Nunito',
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
+                // Fas 6d: Fas 4.6:s deklarerade undantag ("initialer på väggen") upphävs
+                // på beställarens begäran. Färgringen (2.5px) behålls även i lågstimuli.
+                FamilyMemberAvatar(
+                  member: m,
+                  size: 44,
+                  borderWidth: 2.5,
+                  showRing: true,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -568,7 +648,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: DisplayTheme.memberNameStyle.copyWith(
-                      color: const Color(0xFF1A1A2E),
+                      color: displayPalette.textPrimary,
                     ),
                   ),
                 ),
@@ -588,6 +668,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                 shifts: widget.data.shiftsFor(m, day),
                 memberColor: memberColor,
                 isLowStimuli: isLowStimuli,
+                displayPalette: displayPalette,
               ),
             ),
           ),
@@ -602,6 +683,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
     required List<QueryDocumentSnapshot> shifts,
     required Color memberColor,
     required bool isLowStimuli,
+    required DisplayPalette displayPalette,
   }) {
     final isToday = sameCalendarDay(day, widget.now);
     final isPast = day.isBefore(
@@ -639,17 +721,17 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
           pik = '🌙';
           label = 'Natt';
           if (sameCalendarDay(interval.start, day)) {
-            timeStr = formatCompactTime(sHm, eHm);
+            timeStr = formatWallRange(sHm, eHm);
           } else {
-            timeStr = formatCompactTime('–$eHm');
+            timeStr = formatWallRange('–$eHm');
           }
         } else {
-          timeStr = formatCompactTime(sHm, eHm);
+          timeStr = formatWallRange(sHm, eHm);
         }
       } else {
         final startField = (d['startTime'] ?? d['start']) as String? ?? '';
         final endField = (d['endTime'] ?? d['end']) as String? ?? '';
-        timeStr = formatCompactTime(startField, endField);
+        timeStr = formatWallRange(startField, endField);
       }
 
       final displayText = timeStr.isNotEmpty
@@ -658,7 +740,14 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
 
       renderedItems.add(_CellItem(
         isRam: true,
-        widget: DisplayRamPlate(text: displayText, memberColor: memberColor),
+        widget: DisplayRamPlate(
+          piktogram: pik,
+          label: label,
+          time: timeStr,
+          text: displayText,
+          memberColor: memberColor,
+          isLowStimuli: isLowStimuli,
+        ),
       ));
     }
 
@@ -669,7 +758,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
         final pik = maps.isNotEmpty ? schemaPiktogramFor(maps.first) : '🏫';
         final label = maps.isNotEmpty ? schemaLabelFor(maps.first) : 'Skola';
         final span = scheduleTimeSpan(maps);
-        final timeStr = formatCompactTime(span.minStart ?? '', span.maxEnd);
+        final timeStr = formatWallRange(span.minStart ?? '', span.maxEnd);
 
         final displayText = timeStr.isNotEmpty
             ? '$pik · $label · $timeStr'
@@ -677,7 +766,14 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
 
         renderedItems.add(_CellItem(
           isRam: true,
-          widget: DisplayRamPlate(text: displayText, memberColor: memberColor),
+          widget: DisplayRamPlate(
+            piktogram: pik,
+            label: label,
+            time: timeStr,
+            text: displayText,
+            memberColor: memberColor,
+            isLowStimuli: isLowStimuli,
+          ),
         ));
       }
     }
@@ -699,16 +795,20 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cellH = constraints.maxHeight;
+        final cellH = constraints.maxHeight - 8.0;
 
         // Dynamisk beräkning av hur många element som ryms utan scroll/overflow:
-        // Ramhändelse ≈ 36 px (inkl margin), Aktivitet ≈ 58 px (inkl margin), +N till ≈ 26 px
+        // Ramhändelse ≈ 36 px (inkl margin), Tvåradig aktivitet ≈ 58-62 px (inkl margin), +N till ≈ 26 px
         var currentH = 0.0;
         var shownCount = 0;
 
         for (var i = 0; i < renderedItems.length; i++) {
           final isLast = i == renderedItems.length - 1;
-          final itemH = renderedItems[i].isRam ? 36.0 : 58.0;
+          final spacing = i > 0 ? 4.0 : 0.0;
+          final itemH = (renderedItems[i].isRam
+                  ? DisplayTheme.ramEstimatedHeight
+                  : DisplayTheme.activityEstimatedHeight) +
+              spacing;
           final neededExact = currentH + itemH;
           final neededWithMore = currentH + itemH + 26.0;
 
@@ -733,15 +833,15 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
           opacity: isPast ? 0.45 : 1.0,
           child: Container(
             decoration: BoxDecoration(
-              color: isToday
-                  ? palette.base.withValues(alpha: 0.09)
-                  : Colors.white,
+              color: displayPalette.dayCellBg(
+                day.weekday,
+                isToday: isToday,
+                isPast: isPast,
+              ),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: isToday
-                    ? palette.base
-                    : const Color(0xFFE2E5EE),
-                width: isToday ? 2.0 : 1.0,
+              border: displayPalette.dayCellBorder(
+                day.weekday,
+                isToday: isToday,
               ),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
@@ -759,7 +859,9 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                         Text(
                           '+$overflowCount till',
                           style: DisplayTheme.moreCountStyle.copyWith(
-                            color: palette.deep,
+                            color: displayPalette.isDark
+                                ? AppTheme.dayPalette(day.weekday).light
+                                : AppTheme.dayPalette(day.weekday).deep,
                           ),
                         ),
                       ],

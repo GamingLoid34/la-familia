@@ -67,6 +67,19 @@ service cloud.firestore {
         allow create, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
         allow update: if false;
       }
+
+      // Manuella skolmatsedlar (FAS 5.1b)
+      match /school_menus/{schoolId}/weeks/{weekId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+      }
+
+      // Storskärmens driftstatus och kommandon (FAS 6b & FAS 6.5)
+      match /display_state/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update: if isAuth() && familyId == myFamilyId() && iAmParent();
+        allow delete: if false;
+      }
     }
 
     // 3. KÄRNDATA

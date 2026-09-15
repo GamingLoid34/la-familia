@@ -86,17 +86,21 @@ void main() {
     });
   });
 
-  group('FAS 1.2 — Kompakt tidsformat', () {
-    test('formatCompactTime removes leading zeros and :00', () {
-      expect(formatCompactTime('17:00'), equals('17'));
-      expect(formatCompactTime('08:15–14:00'), equals('8:15–14'));
-      expect(formatCompactTime('07:30–16:00'), equals('7:30–16'));
+  group('FAS 6d.3 — Tidsformat på hela väggen (HH:MM med nollutfyllnad)', () {
+    test('formatCompactTime och formatWallRange behåller alltid HH:MM med nollutfyllnad', () {
+      expect(formatCompactTime('17:00'), equals('17:00'));
+      expect(formatCompactTime('08:15–14:00'), equals('08:15–14:00'));
+      expect(formatCompactTime('07:30–16:00'), equals('07:30–16:00'));
       expect(formatCompactTime('18:30–19:30'), equals('18:30–19:30'));
-      expect(formatCompactTime('08:00'), equals('8'));
-      expect(formatCompactTime('08:05'), equals('8:05'));
-      expect(formatCompactTime('14:00', '22:00'), equals('14–22'));
-      expect(formatCompactTime('–06:00'), equals('–6'));
-      expect(formatCompactTime('–06:30'), equals('–6:30'));
+      expect(formatCompactTime('08:00'), equals('08:00'));
+      expect(formatCompactTime('08:05'), equals('08:05'));
+      expect(formatCompactTime('14:00', '22:00'), equals('14:00–22:00'));
+      expect(formatCompactTime('–06:00'), equals('–06:00'));
+      expect(formatCompactTime('–06:30'), equals('–06:30'));
+      expect(formatWallTime('9:00'), equals('09:00'));
+      expect(formatWallTime('9'), equals('09:00'));
+      expect(formatWallTime('15:00'), equals('15:00'));
+      expect(formatWallRange('09:00', '13:00'), equals('09:00–13:00'));
     });
   });
 

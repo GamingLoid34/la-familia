@@ -107,4 +107,25 @@ void main() {
       expect(durationLabelHm('', ''), equals(''));
     });
   });
+
+  group('schemaLabelFor (FAS 5.7)', () {
+    test('härleder Rehab för piktogram 🏥 eller kalendernamn rehab', () {
+      expect(schemaLabelFor({'piktogram': '🏥'}), equals('Rehab'));
+      expect(schemaLabelFor({'calendarName': 'Noomi Rehab Träning'}), equals('Rehab'));
+      expect(schemaLabelFor({'title': 'Klinikbesök'}), equals('Rehab'));
+    });
+
+    test('härleder Skola för piktogram 🏫 eller standard', () {
+      expect(schemaLabelFor({'piktogram': '🏫'}), equals('Skola'));
+      expect(schemaLabelFor({'calendarName': 'Schema'}), equals('Skola'));
+    });
+
+    test('härleder Jobb för piktogram 💼', () {
+      expect(schemaLabelFor({'piktogram': '💼'}), equals('Jobb'));
+    });
+
+    test('prioriterar explicit schemaLabel', () {
+      expect(schemaLabelFor({'schemaLabel': 'Praktik', 'piktogram': '🏥'}), equals('Praktik'));
+    });
+  });
 }

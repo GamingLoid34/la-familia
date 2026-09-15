@@ -38,9 +38,18 @@ DateTime? parseDate(dynamic v) {
 }
 
 /// Tolkar ett Firestore-dokuments `date` + ev. `time` (`HH:mm`) till [DateTime].
-DateTime? parseDateTime(Map<String, dynamic> d) {
+/// För återkommande händelser (eller om [onDay] anges) appliceras tiden på måldagen
+/// istället för seriens ursprungliga startdatum.
+DateTime? parseDateTime(Map<String, dynamic> d, [DateTime? onDay]) {
   try {
-    final base = parseDate(d['date']);
+    DateTime? base = onDay;
+    if (base == null) {
+      if (d['isRecurring'] == true) {
+        base = DateTime.now();
+      } else {
+        base = parseDate(d['date']);
+      }
+    }
     if (base == null) return null;
     final timeStr = d['time'] as String? ?? '';
     if (timeStr.isNotEmpty) {

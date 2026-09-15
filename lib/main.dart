@@ -18,6 +18,7 @@ import 'screens/dashboard_page.dart';
 import 'screens/kalender_page.dart';
 import 'screens/sysslor_page.dart';
 import 'screens/settings_page.dart';
+import 'screens/display/display_clock.dart';
 import 'screens/display/display_shell.dart';
 import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
@@ -35,6 +36,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  DisplayClock.init(uri: kIsWeb ? Uri.base : null);
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);

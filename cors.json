@@ -1,0 +1,11 @@
+[
+  {
+    "origin": [
+      "https://la-familia-5d9f5.web.app",
+      "https://la-familia-5d9f5.firebaseapp.com"
+    ],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type"]
+  }
+]

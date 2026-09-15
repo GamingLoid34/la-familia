@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'display_log.dart';
 import 'display_module_registry.dart';
+import 'display_palette.dart';
 import 'display_theme.dart';
 
 /// Layoutmall "board" (FAS 3 Beslut 1).
@@ -22,9 +23,10 @@ class BoardLayout extends StatelessWidget {
     final f1Mod = zoneModules['footer1'] ?? '';
     final f2Mod = zoneModules['footer2'] ?? '';
     final f3Mod = zoneModules['footer3'] ?? '';
+    final palette = DisplayPalette.of(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F8),
+      backgroundColor: palette.background,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
@@ -119,9 +121,10 @@ class SidebarLayout extends StatelessWidget {
     final f1Mod = zoneModules['footer1'] ?? '';
     final f2Mod = zoneModules['footer2'] ?? '';
     final f3Mod = zoneModules['footer3'] ?? '';
+    final palette = DisplayPalette.of(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F8),
+      backgroundColor: palette.background,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),

@@ -1,13 +1,15 @@
+import 'dart:developer' as developer;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import '../app_theme.dart';
 import '../firebase_options.dart';
 import '../services/family_service.dart';
+import '../widgets/member_avatar.dart';
 
 class ManageMembersPage extends StatefulWidget {
   const ManageMembersPage({super.key});
@@ -27,6 +29,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
   String? _familyId;
   bool _isLoading = false;
   String? _avatarUrl;
+  Uint8List? _previewBytes;
   bool _uploadingAvatar = false;
 
   @override
@@ -68,6 +71,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
       _selectedRole = 'Barn';
       _editingId = null;
       _avatarUrl = null;
+      _previewBytes = null;
     });
     FocusScope.of(context).unfocus();
     // Föreslå nästa lediga färg igen efter sparat barn.
@@ -83,6 +87,7 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
       _editingId = doc.id;
       _selectedColor = data['color'] ?? AppTheme.memberColorPalette.first;
       _avatarUrl = data['avatarUrl'] as String?;
+      _previewBytes = null;
       
       // Översätt databas-roll till rullgardin
       final r = data['role'] ?? 'child';
@@ -228,9 +233,13 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
     );
     if (x == null) return;
 
-    setState(() => _uploadingAvatar = true);
+    final bytes = await x.readAsBytes();
+    setState(() {
+      _uploadingAvatar = true;
+      _previewBytes = bytes;
+    });
+
     try {
-      final bytes = await x.readAsBytes();
       final ref = FirebaseStorage.instance.ref().child('user_avatars/$uid.jpg');
       await ref.putData(
         bytes,
@@ -241,16 +250,28 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
         'avatarUrl': url,
       });
       if (mounted) {
-        setState(() => _avatarUrl = url);
+        setState(() {
+          _avatarUrl = url;
+          _previewBytes = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Profilbild uppdaterad')),
         );
       }
-    } catch (e) {
+    } catch (e, stack) {
+      developer.log(
+        'Kunde inte ladda upp avatarbild',
+        name: 'ManageMembersPage',
+        error: e,
+        stackTrace: stack,
+      );
       if (mounted) {
+        setState(() {
+          _previewBytes = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Kunde inte ladda upp bild: $e'),
+          const SnackBar(
+            content: Text('Kunde inte ladda upp bilden'),
             backgroundColor: Colors.red,
           ),
         );
@@ -347,28 +368,29 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                           children: [
                             GestureDetector(
                               onTap: _uploadingAvatar ? null : _pickAndUploadAvatar,
-                              child: CircleAvatar(
-                                radius: 36,
-                                backgroundColor: Color(int.parse(
+                              child: FamilyMemberAvatar.raw(
+                                name: _nameController.text,
+                                avatarUrl: _avatarUrl,
+                                previewBytes: _previewBytes,
+                                color: Color(int.parse(
                                   _selectedColor.startsWith('0x')
                                       ? _selectedColor
                                       : '0xFF$_selectedColor',
                                 )),
-                                backgroundImage: _avatarUrl != null &&
-                                        _avatarUrl!.isNotEmpty
-                                    ? CachedNetworkImageProvider(_avatarUrl!)
-                                    : null,
-                                child: _uploadingAvatar
-                                    ? const Padding(
-                                        padding: EdgeInsets.all(16),
+                                size: 72,
+                                borderWidth: 2,
+                                overlay: _uploadingAvatar
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
                                         child: CircularProgressIndicator(
                                           color: Colors.white,
-                                          strokeWidth: 2,
+                                          strokeWidth: 2.5,
                                         ),
                                       )
-                                    : (_avatarUrl == null || _avatarUrl!.isEmpty)
+                                    : (_avatarUrl == null || _avatarUrl!.isEmpty) && _previewBytes == null
                                         ? const Icon(Icons.add_a_photo_rounded,
-                                            color: Colors.white, size: 28)
+                                            color: Colors.white, size: 24)
                                         : null,
                               ),
                             ),
@@ -495,15 +517,12 @@ class _ManageMembersPageState extends State<ManageMembersPage> {
                               boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
                             ),
                             child: ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: avatarColor,
-                                backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
-                                    ? CachedNetworkImageProvider(avatarUrl)
-                                    : null,
-                                child: avatarUrl != null && avatarUrl.isNotEmpty
-                                    ? null
-                                    : Text(name.toString().isNotEmpty ? name.toString()[0].toUpperCase() : '?',
-                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                              leading: FamilyMemberAvatar.raw(
+                                name: name.toString(),
+                                avatarUrl: avatarUrl,
+                                color: avatarColor,
+                                size: 40,
+                                borderWidth: 1.5,
                               ),
                               title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Text(email, style: const TextStyle(fontSize: 12)),

@@ -1,8 +1,10 @@
 import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../../providers/family_provider.dart';
+import 'display_clock.dart';
 import 'display_controller.dart';
 
 /// En loggpost för display-lägets telemetri.
@@ -21,16 +23,51 @@ class DisplayLogEntry {
 /// Ringbuffert för display-lägets loggar (max 100 poster).
 /// Fungerar som telemetri-nav och kan observeras av [DisplayDebugOverlay].
 class DisplayLog extends ChangeNotifier {
-  DisplayLog._();
+  DisplayLog._() {
+    loadVersion();
+  }
   static final DisplayLog instance = DisplayLog._();
 
-  static const String appVersion = '1.0.0+2';
+  static const String _compileTimeVersion =
+      String.fromEnvironment('APP_VERSION', defaultValue: '');
+  static String _runtimeVersion = '';
+  static String get appVersion {
+    if (_compileTimeVersion.isNotEmpty) {
+      return _compileTimeVersion;
+    }
+    if (_runtimeVersion.isNotEmpty) {
+      return '$_runtimeVersion (runtime)';
+    }
+    return '1.0.0 (runtime)';
+  }
+
+  static Future<void> loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final v = info.version.trim();
+      final b = info.buildNumber.trim();
+      if (v.isNotEmpty && b.isNotEmpty) {
+        _runtimeVersion = '$v+$b';
+      } else if (v.isNotEmpty) {
+        _runtimeVersion = v;
+      }
+      instance.notifyListeners();
+    } catch (e) {
+      developer.log('DisplayLog: kunde inte läsa package_info: $e');
+    }
+  }
+
   static const int maxEntries = 100;
 
   final List<DisplayLogEntry> _entries = [];
+  // Undantag (FAS 4.2): Driftloggens starttid ska mäta verklig tid
   final DateTime startedAt = DateTime.now();
 
   int activeWeekSubscriptions = 3;
+
+  bool syncOk = true;
+  bool transitOk = true;
+  bool weatherOk = true;
 
   List<DisplayLogEntry> get entries => List.unmodifiable(_entries);
 
@@ -40,15 +77,53 @@ class DisplayLog extends ChangeNotifier {
       _entries.removeAt(0);
     }
     _entries.add(DisplayLogEntry(
+      // Undantag (FAS 4.2): Driftloggens tidsstämplar ska läsa verklig drifttid
       timestamp: DateTime.now(),
       category: category,
       message: message,
     ));
+
+    // Uppdatera hälsoflaggor baserat på loggkategori
+    final cat = category.toLowerCase();
+    final msg = message.toLowerCase();
+    if (cat.contains('strömfel') || cat.contains('synk-fel')) {
+      syncOk = false;
+    } else if (cat.contains('synk') || cat.contains('konfig')) {
+      syncOk = true;
+    }
+
+    if (cat.contains('transit-fel') || (cat.contains('transit') && msg.contains('fel'))) {
+      transitOk = false;
+    } else if (cat.contains('transit') && !msg.contains('fel')) {
+      transitOk = true;
+    }
+
+    if (cat.contains('väder') && (msg.contains('väderfel') || msg.contains('fel') || msg.contains('misslyckades'))) {
+      weatherOk = false;
+    } else if (cat.contains('väder') && (msg.contains('väder hämtat') || msg.contains('färsk data'))) {
+      weatherOk = true;
+    }
+
     notifyListeners();
+  }
+
+  /// Hämtar senaste loggade fel eller varning (om någon finns).
+  String? get lastError {
+    for (var i = _entries.length - 1; i >= 0; i--) {
+      final entry = _entries[i];
+      final cat = entry.category.toLowerCase();
+      if (cat.contains('fel') || cat.contains('error') || cat.contains('krasch') || cat.contains('render')) {
+        return '${entry.category}: ${entry.message}';
+      }
+    }
+    return null;
   }
 
   void clear() {
     _entries.clear();
+    syncOk = true;
+    transitOk = true;
+    weatherOk = true;
     notifyListeners();
   }
 }
@@ -90,6 +165,8 @@ class DisplayDebugOverlay extends StatelessWidget {
         return const Color(0xFF6BCB77);
       case 'lifecycle/resume':
         return const Color(0xFF06D6A0);
+      case 'testtid':
+        return const Color(0xFFFFD166);
       case 'prenumeration':
       default:
         return const Color(0xFFE0E0E0);
@@ -98,8 +175,12 @@ class DisplayDebugOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<FamilyProvider>();
-    final log = DisplayLog.instance;
+    return ListenableBuilder(
+      listenable: DisplayLog.instance,
+      builder: (context, _) {
+        final provider = context.watch<FamilyProvider>();
+        final log = DisplayLog.instance;
+    // Undantag (FAS 4.2): uptime och driftmätning ska läsa verklig tid
     final uptime = DateTime.now().difference(log.startedAt);
     final lastSync = provider.lastSyncAt;
     final syncStr = lastSync != null
@@ -108,7 +189,8 @@ class DisplayDebugOverlay extends StatelessWidget {
     final activeSubs = provider.activeSubscriptionsCount + log.activeWeekSubscriptions;
 
     final cfg = controller.currentConfig;
-    final now = DateTime.now();
+    // Visningstid för scenupplösning i overlayt följer DisplayClock (FAS 4.2)
+    final now = DisplayClock.now();
     final activeSceneId = controller.effectiveSceneId(now, cfg);
     final activeSceneName = cfg.scenes[activeSceneId]?.name ?? activeSceneId;
     final isManual = controller.manualSceneId != null;
@@ -199,7 +281,19 @@ class DisplayDebugOverlay extends StatelessWidget {
                     'Aktiv scen',
                     '$activeSceneName (${isManual ? "Manuell" : "Schema"})',
                   ),
+                  if (controller.spotlightIndex != null)
+                    _statusBadge(
+                      'Spotlight',
+                      '${controller.getSpotlightMemberName() ?? "Person ${controller.spotlightIndex}"} (#${controller.spotlightIndex})',
+                      color: const Color(0xFF64B5F6),
+                    ),
                   _statusBadge('Konfigversion', 'v${cfg.version}'),
+                  if (DisplayClock.isTestTime)
+                    _statusBadge(
+                      'Tidskälla',
+                      'TESTTID (${DisplayClock.formatOffset(DisplayClock.offset)})',
+                      color: const Color(0xFFFFD166),
+                    ),
                 ],
               ),
               const SizedBox(height: 14),
@@ -286,6 +380,8 @@ class DisplayDebugOverlay extends StatelessWidget {
         ),
       ),
     );
+  },
+);
   }
 
   Widget _statusBadge(String label, String value, {Color? color}) {

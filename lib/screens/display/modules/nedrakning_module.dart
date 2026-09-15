@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../app_theme.dart';
 import '../../../providers/family_provider.dart';
 import '../display_module_registry.dart';
+import '../display_palette.dart';
 import 'footer_modules.dart';
 
 /// Modul: Nedräkning ("nedrakning") (FAS 4).
@@ -117,14 +118,18 @@ class NedrakningModule extends StatelessWidget {
             }
 
             // Stort kortläge (om placerad i main eller side)
+            final displayPalette = DisplayPalette.of(context);
+
             return Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: displayPalette.card,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE2E5EE)),
+                border: Border.all(color: displayPalette.cardBorder),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.03),
+                    color: displayPalette.isDark
+                        ? Colors.black.withValues(alpha: 0.25)
+                        : Colors.black.withValues(alpha: 0.03),
                     blurRadius: 6,
                     offset: const Offset(0, 2),
                   ),
@@ -142,29 +147,29 @@ class NedrakningModule extends StatelessWidget {
                         color: palette.base,
                       ),
                       const SizedBox(width: 8),
-                      const Text(
+                      Text(
                         'Nedräkningar',
                         style: TextStyle(
                           fontFamily: 'Nunito',
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFF1A1A2E),
+                          color: displayPalette.textPrimary,
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Divider(height: 1, color: Color(0xFFE2E5EE)),
+                  Divider(height: 1, color: displayPalette.divider),
                   const SizedBox(height: 8),
                   if (items.isEmpty)
-                    const Expanded(
+                    Expanded(
                       child: Center(
                         child: Text(
                           'Inga aktiva nedräkningar',
                           style: TextStyle(
                             fontFamily: 'Nunito',
                             fontSize: 15,
-                            color: Color(0xFF888888),
+                            color: displayPalette.textMuted,
                           ),
                         ),
                       ),
@@ -189,7 +194,9 @@ class NedrakningModule extends StatelessWidget {
                               vertical: 10,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF7F8FA),
+                              color: displayPalette.isDark
+                                  ? displayPalette.background
+                                  : const Color(0xFFF7F8FA),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Row(
@@ -202,11 +209,11 @@ class NedrakningModule extends StatelessWidget {
                                 Expanded(
                                   child: Text(
                                     item.title,
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontFamily: 'Nunito',
                                       fontSize: 16,
                                       fontWeight: FontWeight.w700,
-                                      color: Color(0xFF1A1A2E),
+                                      color: displayPalette.textPrimary,
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -219,7 +226,9 @@ class NedrakningModule extends StatelessWidget {
                                     vertical: 3,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: palette.base.withValues(alpha: 0.15),
+                                    color: palette.base.withValues(
+                                      alpha: displayPalette.isDark ? 0.25 : 0.15,
+                                    ),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
@@ -228,7 +237,9 @@ class NedrakningModule extends StatelessWidget {
                                       fontFamily: 'Nunito',
                                       fontSize: 14,
                                       fontWeight: FontWeight.w800,
-                                      color: palette.deep,
+                                      color: displayPalette.isDark
+                                          ? palette.light
+                                          : palette.deep,
                                     ),
                                   ),
                                 ),

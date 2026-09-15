@@ -675,7 +675,7 @@ class _EventTile extends StatelessWidget {
     } else if (start.isNotEmpty) {
       timeStr = start;
     } else {
-      final dt = parseDateTime(d);
+      final dt = parseDateTime(d, listDay);
       timeStr = dt != null ? DateFormat('HH:mm').format(dt) : '';
     }
     final canEdit = canEditDoc(currentUser, d);

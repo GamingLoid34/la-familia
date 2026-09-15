@@ -4,10 +4,12 @@ import '../../../app_theme.dart';
 import '../../../providers/family_provider.dart';
 import '../../../utils/chore_utils.dart';
 import '../display_module_registry.dart';
+import '../display_palette.dart';
 import '../display_theme.dart';
 
-/// Gemensamt fotkort för storskärmen (FAS 3).
-/// Exakt samma mått, styling, typografi och skuggor som dagens veckotavla.
+/// Gemensamt fotkort för storskärmen (FAS 3, 6c).
+/// Exakt samma mått, styling, typografi och skuggor som dagens veckotavla,
+/// anpassat efter ljust och mörkt tema via DisplayPalette.
 class DisplayFooterCard extends StatelessWidget {
   final IconData iconData;
   final Color iconColor;
@@ -24,15 +26,19 @@ class DisplayFooterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = DisplayPalette.of(context);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E5EE)),
+        border: Border.all(color: palette.cardBorder),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
+            color: palette.isDark
+                ? Colors.black.withValues(alpha: 0.25)
+                : Colors.black.withValues(alpha: 0.03),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -48,11 +54,11 @@ class DisplayFooterCard extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Nunito',
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF5C6877),
+                  color: palette.textMuted,
                 ),
               ),
             ],
@@ -63,7 +69,7 @@ class DisplayFooterCard extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: DisplayTheme.footerStyle.copyWith(
-              color: const Color(0xFF1A1A2E),
+              color: palette.textPrimary,
             ),
           ),
         ],
