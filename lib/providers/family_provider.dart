@@ -221,9 +221,6 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  /// Tvingar omedelbar omprenumeration av datumbundna resurser för aktuell DisplayClock.
-  void resubscribeDateBound() => _resubscribeDateBound();
-
   void _resubscribeDateBound() {
     final fid = _activeFamilyId;
     if (fid == null || fid.isEmpty) return;

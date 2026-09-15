@@ -90,7 +90,7 @@ class DisplayModuleErrorBoundaryState extends State<DisplayModuleErrorBoundary> 
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: FontWeight.w700,
               color: palette.textMuted,
             ),
@@ -146,7 +146,7 @@ class _ModuleErrorFallbackWidgetState extends State<_ModuleErrorFallbackWidget> 
         'Kunde inte visa innehåll',
         style: TextStyle(
           fontFamily: 'Nunito',
-          fontSize: 14,
+          fontSize: 18,
           color: Color(0xFF888899),
         ),
       ),

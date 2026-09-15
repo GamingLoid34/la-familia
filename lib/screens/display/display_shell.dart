@@ -131,9 +131,7 @@ class _DisplayShellState extends State<DisplayShell>
     _now = DisplayClock.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        try {
-          context.read<FamilyProvider>().resubscribeDateBound();
-        } catch (_) {}
+        context.read<FamilyProvider>().ensureDateSubscriptionsFresh(force: true);
       }
     });
 
@@ -631,7 +629,7 @@ class _DisplayShellState extends State<DisplayShell>
                       DisplayClock.formatBannerText(_now),
                       style: const TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 14,
+                        fontSize: 18,
                         fontWeight: FontWeight.w800,
                         color: Color(0xFF141923),
                         letterSpacing: 0.3,

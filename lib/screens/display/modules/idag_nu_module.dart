@@ -6,7 +6,8 @@ import 'package:provider/provider.dart';
 import '../../../app_theme.dart';
 import '../../../models/user_model.dart';
 import '../../../providers/family_provider.dart';
-import '../../../utils/day_events.dart';
+import '../../../utils/recurrence.dart';
+import '../../../utils/day_events.dart' show formatCountdownMinutes;
 import '../../../utils/member_presence.dart';
 import '../../../utils/person_match.dart';
 import '../../../utils/schedule_display.dart';
@@ -187,7 +188,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         label,
         style: TextStyle(
           fontFamily: 'Nunito',
-          fontSize: 11,
+          fontSize: 18,
           fontWeight: FontWeight.w800,
           color: text,
         ),
@@ -313,7 +314,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                   'IDAG',
                   style: TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 14,
+                    fontSize: 18,
                     fontWeight: FontWeight.w900,
                     color: palette.onColor,
                     letterSpacing: 1.0,
@@ -336,7 +337,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                             text: ' · $nameLine',
                             style: TextStyle(
                               fontFamily: 'Nunito',
-                              fontSize: 16,
+                              fontSize: 18,
                               fontWeight: FontWeight.w600,
                               color: displayPalette.textMuted,
                             ),
@@ -383,7 +384,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                       heroText,
                       style: TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 15,
+                        fontSize: 18,
                         fontWeight: FontWeight.w800,
                         color: heroTextColor,
                       ),
@@ -440,7 +441,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                             'Inga familjehändelser idag',
                             style: TextStyle(
                               fontFamily: 'Nunito',
-                              fontSize: 14,
+                              fontSize: 18,
                               color: displayPalette.textMuted,
                             ),
                           ),
@@ -699,7 +700,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 13,
+                  fontSize: 18,
                   fontWeight: FontWeight.w600,
                   color: displayPalette.textMuted,
                 ),
@@ -729,7 +730,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 13,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
                 color: displayPalette.textMuted,
               ),
@@ -817,7 +818,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
                 'Inga händelser idag',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 14,
+                  fontSize: 18,
                   color: displayPalette.textMuted,
                 ),
               ),

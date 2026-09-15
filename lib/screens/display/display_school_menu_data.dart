@@ -564,4 +564,3 @@ class DisplaySchoolMenuData extends ChangeNotifier {
     notifyListeners();
   }
 }
-

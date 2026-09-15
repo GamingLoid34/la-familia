@@ -155,7 +155,7 @@ class MiddagVeckaModule extends StatelessWidget {
                               dayStr,
                               style: TextStyle(
                                 fontFamily: 'Nunito',
-                                fontSize: 15,
+                                fontSize: 18,
                                 fontWeight:
                                     isToday ? FontWeight.w800 : FontWeight.w600,
                                 color: isToday
@@ -175,7 +175,7 @@ class MiddagVeckaModule extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontFamily: 'Nunito',
-                                fontSize: 15,
+                                fontSize: 18,
                                 fontWeight:
                                     isToday ? FontWeight.w800 : FontWeight.w600,
                                 color: isToday

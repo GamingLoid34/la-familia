@@ -420,7 +420,7 @@ class _FotoModuleState extends State<FotoModule> {
               'Lägg till foton under Inställningar → Storskärm i appen',
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 16,
+                fontSize: 18,
                 fontWeight: FontWeight.w500,
                 color: Colors.white.withValues(alpha: 0.45),
               ),

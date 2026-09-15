@@ -248,7 +248,7 @@ class DisplayDebugOverlay extends StatelessWidget {
                       'Tryck D för att stänga',
                       style: TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 13,
+                        fontSize: 18,
                         fontWeight: FontWeight.w700,
                         color: Colors.white70,
                       ),
@@ -303,7 +303,7 @@ class DisplayDebugOverlay extends StatelessWidget {
                 'Senaste händelser i loggen:',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 14,
+                  fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: Colors.white70,
                 ),
@@ -326,7 +326,7 @@ class DisplayDebugOverlay extends StatelessWidget {
                             style: TextStyle(
                               fontFamily: 'Courier',
                               color: Colors.white38,
-                              fontSize: 13,
+                              fontSize: 18,
                             ),
                           ),
                         )
@@ -344,7 +344,7 @@ class DisplayDebugOverlay extends StatelessWidget {
                                 text: TextSpan(
                                   style: const TextStyle(
                                     fontFamily: 'Courier',
-                                    fontSize: 12,
+                                    fontSize: 18,
                                     height: 1.25,
                                   ),
                                   children: [
@@ -398,7 +398,7 @@ class DisplayDebugOverlay extends StatelessWidget {
             '$label: ',
             style: const TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 13,
+              fontSize: 18,
               color: Colors.white60,
               fontWeight: FontWeight.w600,
             ),
@@ -407,7 +407,7 @@ class DisplayDebugOverlay extends StatelessWidget {
             value,
             style: TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 13,
+              fontSize: 18,
               fontWeight: FontWeight.w800,
               color: color ?? Colors.white,
             ),

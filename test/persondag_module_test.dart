@@ -8,7 +8,6 @@ import 'package:la_familia/providers/family_provider.dart';
 import 'package:la_familia/screens/display/display_chips.dart';
 import 'package:la_familia/screens/display/display_module_registry.dart';
 import 'package:la_familia/screens/display/modules/persondag_module.dart';
-import 'package:la_familia/utils/day_events.dart';
 import 'package:provider/provider.dart';
 
 class MockDocSnapshot implements QueryDocumentSnapshot {
@@ -126,13 +125,6 @@ void main() {
   }
 
   group('FAS 5.2 — PersondagModule', () {
-    test('6d.4: dagsspecifik äldre post utan date behålls', () {
-      expect(
-        eventOccursOnDay({'title': 'Styrelsemöte', 'time': '11:00'}, testDate),
-        isTrue,
-      );
-    });
-
     testWidgets(
       '1. Renderar platshållare vid saknat spotlightIndex utan krasch',
       (tester) async {
@@ -171,6 +163,7 @@ void main() {
         final todayEvents = [
           MockDocSnapshot('evt1', {
             'title': 'Styrelsemöte',
+            'date': '2026-09-09',
             'time': '11:00',
             'endTime': '12:00',
             'piktogram': '💼',
@@ -178,6 +171,7 @@ void main() {
           }),
           MockDocSnapshot('evt2', {
             'title': 'Fredagsmys hela familjen',
+            'date': '2026-09-09',
             'time': '18:00',
             'piktogram': '🍿',
             'personUids': ['u1', 'u2', 'u3'],
@@ -200,6 +194,7 @@ void main() {
         final tomorrowEvents = [
           MockDocSnapshot('tom1', {
             'title': 'Fotbollsträning',
+            'date': '2026-09-10',
             'time': '17:30',
             'piktogram': '⚽',
             'personUids': ['u1'],

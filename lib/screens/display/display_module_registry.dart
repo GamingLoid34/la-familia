@@ -284,7 +284,7 @@ class PlaceholderModule extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 14,
+              fontSize: 18,
               fontWeight: FontWeight.w700,
               color: Colors.white70,
             ),

@@ -99,6 +99,11 @@ Följ alltid denna standardiserade bygg- och deployritual vid releaser:
    curl.exe -s -o NUL -w "%{http_code}" https://la-familia-5d9f5.web.app/app-release.apk
    ```
 
+7. **Commit och tagg som sista steg:**
+   - Varje deployad build ska committas och taggas med `git tag build-N` efter efterkontrollerna.
+   - En deployad build utan commit är en avvikelse och ska redovisas i slutrapporten.
+   - Committen ska innehålla den källkod och version som faktiskt deployades; en checkpoint med pågående arbete ersätter inte en release-commit.
+
 > ℹ️ **Förklaring av APK-filstorlek (MiB vs MB):**
 > När Flutter CLI bygger APK rapporteras t.ex. `✓ Built build\app\outputs\flutter-apk\app-release.apk (77.6MB)`.
 > Flutter anger här storleken i binära mebibyte (MiB, $1024 \times 1024$ bytes):

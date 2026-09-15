@@ -72,7 +72,7 @@ Widget _buildChipBadge(
       text,
       style: TextStyle(
         fontFamily: 'Nunito',
-        fontSize: isLarge ? 15 : 12,
+        fontSize: 18,
         fontWeight: FontWeight.w800,
         color: isOngoing ? ongoingColor : defaultTextColor,
       ),
@@ -87,7 +87,7 @@ double _measureBadgeWidth(
 }) {
   final badgeStyle = TextStyle(
     fontFamily: 'Nunito',
-    fontSize: isLarge ? 15.0 : 12.0,
+    fontSize: 18,
     fontWeight: FontWeight.w800,
   );
   final painter = TextPainter(
@@ -106,7 +106,7 @@ double _measureBadgeWidth(
 /// Adaptiv densitet (FAS 5.5 & 5.6):
 ///   a) "piktogram · etikett · tid" i full storlek får plats -> visa allt.
 ///   b) Annars -> släpp etiketten: "piktogram · tid" i full storlek (>= 18 px).
-///   c) Bara om (b) inte får plats -> FittedBox som sista utväg.
+///   c) Om (b) inte får plats behålls textstorleken och raden kan rullas vågrätt.
 class DisplayRamPlate extends StatelessWidget {
   final String? text;
   final String? piktogram;
@@ -226,9 +226,8 @@ class DisplayRamPlate extends StatelessWidget {
       content = Row(
         children: [
           Expanded(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -263,14 +262,13 @@ class DisplayRamPlate extends StatelessWidget {
       );
     } else {
       // (b / c) Släpp etiketten: "piktogram · tid" i full storlek (>= 18 px)
-      // och FittedBox som sista utväg om kolumnen är smalare än (b).
+      // och vågrät rullning om kolumnen är smalare än (b).
       final mainText = hasTime ? parsed.time : parsed.label;
       content = Row(
         children: [
           Expanded(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -333,7 +331,7 @@ class DisplayRamPlate extends StatelessWidget {
 ///   - Rad 1: piktogram + kompakt tid i full storlek (>= 18 px) (+ eventuell badge).
 ///   - Rad 2: titel på en rad med ellips (maxLines: 1, overflow: ellipsis).
 ///   - Minskat padding: EdgeInsets.fromLTRB(5, 3.5, 5, 3.5).
-///   - Det enda mätbeslutet är om TIDRADEN ryms i full storlek; annars FittedBox på enbart tidraden.
+///   - Om TIDRADEN inte ryms kan den rullas vågrätt med bibehållen textstorlek.
 class DisplayActivityCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final Color memberColor;
@@ -421,7 +419,7 @@ class DisplayActivityCard extends StatelessWidget {
     final hasBadge = badgeText != null && badgeText!.isNotEmpty;
 
     // Det enda mätbeslutet i aktivitetskort är om TIDRADEN ryms i full storlek;
-    // annars FittedBox på enbart tidraden. Titeln släpps ALDRIG.
+    // annars vågrät rullning på enbart tidraden. Titeln släpps ALDRIG.
     final leftBorderW = isLarge
         ? (isOngoing ? 6.0 : 5.0)
         : (isOngoing ? 4.5 : 3.5);
@@ -441,7 +439,7 @@ class DisplayActivityCard extends StatelessWidget {
       final pPainter = TextPainter(
         text: TextSpan(
           text: pik,
-          style: TextStyle(fontSize: isLarge ? 24.0 : 17.0),
+          style: TextStyle(fontSize: isLarge ? 24.0 : 18),
         ),
         textDirection: TextDirection.ltr,
         maxLines: 1,
@@ -467,7 +465,7 @@ class DisplayActivityCard extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (pik.isNotEmpty)
-          Text(pik, style: TextStyle(fontSize: isLarge ? 24.0 : 17.0)),
+          Text(pik, style: TextStyle(fontSize: isLarge ? 24.0 : 18)),
         if (pik.isNotEmpty && hasTime)
           SizedBox(width: isLarge ? 8 : 5),
         if (hasTime)
@@ -486,9 +484,8 @@ class DisplayActivityCard extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: timeAndPikContent,
                 )
-              : FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
                   child: timeAndPikContent,
                 ),
         ),

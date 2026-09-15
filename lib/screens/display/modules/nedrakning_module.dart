@@ -168,7 +168,7 @@ class NedrakningModule extends StatelessWidget {
                           'Inga aktiva nedräkningar',
                           style: TextStyle(
                             fontFamily: 'Nunito',
-                            fontSize: 15,
+                            fontSize: 18,
                             color: displayPalette.textMuted,
                           ),
                         ),
@@ -211,7 +211,7 @@ class NedrakningModule extends StatelessWidget {
                                     item.title,
                                     style: TextStyle(
                                       fontFamily: 'Nunito',
-                                      fontSize: 16,
+                                      fontSize: 18,
                                       fontWeight: FontWeight.w700,
                                       color: displayPalette.textPrimary,
                                     ),
@@ -235,7 +235,7 @@ class NedrakningModule extends StatelessWidget {
                                     dayStr,
                                     style: TextStyle(
                                       fontFamily: 'Nunito',
-                                      fontSize: 14,
+                                      fontSize: 18,
                                       fontWeight: FontWeight.w800,
                                       color: displayPalette.isDark
                                           ? palette.light

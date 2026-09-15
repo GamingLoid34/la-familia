@@ -8,7 +8,8 @@ import '../../../app_theme.dart';
 import '../../../models/user_model.dart';
 import '../../../providers/family_provider.dart';
 import '../../../utils/chore_utils.dart';
-import '../../../utils/day_events.dart';
+import '../../../utils/recurrence.dart';
+import '../../../utils/day_events.dart' show formatCountdownMinutes;
 import '../../../utils/member_presence.dart';
 import '../../../utils/person_match.dart';
 import '../../../utils/schedule_display.dart';
@@ -201,7 +202,7 @@ class _PersondagModuleState extends State<PersondagModule> {
         label,
         style: TextStyle(
           fontFamily: 'Nunito',
-          fontSize: 14,
+          fontSize: 18,
           fontWeight: FontWeight.w800,
           color: text,
         ),
@@ -378,7 +379,7 @@ class _PersondagModuleState extends State<PersondagModule> {
                   'Tillgängliga personer: ${members.asMap().entries.map((e) => '${e.key + 1}: ${e.value.name.split(' ').first}').join(', ')}',
                   style: TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 16,
+                    fontSize: 18,
                     fontWeight: FontWeight.w600,
                     color: palette.textMuted,
                   ),
@@ -621,7 +622,7 @@ class _PersondagModuleState extends State<PersondagModule> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 15,
+                        fontSize: 18,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF888899),
                       ),
@@ -649,7 +650,7 @@ class _PersondagModuleState extends State<PersondagModule> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 15,
+                        fontSize: 18,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF6B7280),
                       ),
@@ -740,7 +741,7 @@ class _PersondagModuleState extends State<PersondagModule> {
                     nudgeInfo.lunch!,
                     style: const TextStyle(
                       fontFamily: 'Nunito',
-                      fontSize: 16,
+                      fontSize: 18,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF888899),
                     ),
@@ -1457,7 +1458,7 @@ class _PersondagModuleState extends State<PersondagModule> {
                 nameLine,
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: FontWeight.w600,
                   color: palette.textMuted,
                 ),
@@ -1503,7 +1504,7 @@ class _PersondagModuleState extends State<PersondagModule> {
             'Sysslor: ',
             style: TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: FontWeight.w800,
               color: palette.textPrimary,
             ),
@@ -1513,7 +1514,7 @@ class _PersondagModuleState extends State<PersondagModule> {
               choresContent,
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 16,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
                 color: palette.isDark ? palette.textPrimary : const Color(0xFF2C3E50),
               ),
@@ -1547,7 +1548,7 @@ class _PersondagModuleState extends State<PersondagModule> {
               tomorrowText,
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 15,
+                fontSize: 18,
                 fontWeight: FontWeight.w700,
                 color: palette.textMuted,
               ),
@@ -1574,4 +1575,3 @@ class _PersondagItem {
     required this.widget,
   });
 }
-

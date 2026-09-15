@@ -229,7 +229,7 @@ class SkolmatModule extends StatelessWidget {
             school.name,
             style: TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: FontWeight.w700,
               color: displayPalette.textPrimary,
             ),
@@ -272,7 +272,7 @@ class SkolmatModule extends StatelessWidget {
                       dayCap,
                       style: TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 13,
+                        fontSize: 18,
                         fontWeight: isToday ? FontWeight.w800 : FontWeight.w600,
                         color: isToday
                             ? (displayPalette.isDark
@@ -290,7 +290,7 @@ class SkolmatModule extends StatelessWidget {
                           cleanLunch,
                           style: TextStyle(
                             fontFamily: 'Nunito',
-                            fontSize: 13,
+                            fontSize: 18,
                             fontWeight:
                                 isToday ? FontWeight.w700 : FontWeight.w500,
                             color: displayPalette.textPrimary,
@@ -301,7 +301,7 @@ class SkolmatModule extends StatelessWidget {
                             '🌱 $cleanVeg',
                             style: TextStyle(
                               fontFamily: 'Nunito',
-                              fontSize: 12,
+                              fontSize: 18,
                               fontWeight: FontWeight.w500,
                               color: displayPalette.textMuted,
                             ),

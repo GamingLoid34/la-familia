@@ -92,6 +92,7 @@ void main() {
       'piktogram': '⚽',
       'date': '2026-08-01', // Återkommande med startdatum i dåtid
       'isRecurring': true,
+      'recurrence': {'type': 'daily', 'startDate': '2026-08-01'},
       'personUid': emilio.uid,
       'personName': emilio.name,
       'persons': ['Emilio Svensson'],

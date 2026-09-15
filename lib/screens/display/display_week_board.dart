@@ -265,7 +265,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                                       '⚠ Uppdateras inte',
                                       style: TextStyle(
                                         fontFamily: 'Nunito',
-                                        fontSize: 14,
+                                        fontSize: 18,
                                         fontWeight: FontWeight.w700,
                                         color: Colors.amber.shade900,
                                       ),
@@ -408,7 +408,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                   'IDAG',
                   style: TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 12,
+                    fontSize: 18,
                     fontWeight: FontWeight.w900,
                     color: onColor,
                     letterSpacing: 1.0,
@@ -446,7 +446,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 11.5,
+                  fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: onColor.withValues(alpha: 0.92),
                   height: 1.1,
@@ -459,7 +459,7 @@ class _DisplayWeekBoardState extends State<DisplayWeekBoard> {
               '${forecast.emoji} ${forecast.maxTemp?.round() ?? ""}°${forecast.minTemp != null ? "/${forecast.minTemp?.round()}°" : ""}',
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: DisplayTheme.weatherFontSize - 2,
+                fontSize: DisplayTheme.weatherFontSize,
                 fontWeight: FontWeight.w700,
                 color: onColor,
                 height: 1.1,

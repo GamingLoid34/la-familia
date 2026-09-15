@@ -109,7 +109,7 @@ class DisplayTheme {
 
   static const TextStyle headerIndicatorStyle = TextStyle(
     fontFamily: 'Nunito',
-    fontSize: 16.0,
+    fontSize: 18,
     fontWeight: FontWeight.w700,
   );
 
@@ -159,7 +159,7 @@ class DisplaySyncStamp extends StatelessWidget {
                 syncLabel,
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 12,
+                  fontSize: 18,
                   fontWeight: FontWeight.w700,
                   color: Colors.amber.shade900,
                   letterSpacing: 0.6,
@@ -173,7 +173,7 @@ class DisplaySyncStamp extends StatelessWidget {
           syncLabel,
           style: TextStyle(
             fontFamily: 'Nunito',
-            fontSize: 12,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: Colors.grey.shade400,
             letterSpacing: 0.6,
