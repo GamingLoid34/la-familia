@@ -444,13 +444,13 @@ class _AvgangarModuleState extends State<AvgangarModule> {
         children: [
           Row(
             children: [
-              const Text('🚆', style: TextStyle(fontSize: 18)),
+              const Text('🚆', style: TextStyle(fontSize: 16)),
               const SizedBox(width: 6),
               Text(
                 'Avgångar',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 18,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: palette.textMuted,
                 ),
@@ -459,7 +459,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                 const SizedBox(width: 6),
                 const Text(
                   '⚠',
-                  style: TextStyle(color: Colors.amber, fontSize: 18),
+                  style: TextStyle(color: Colors.amber, fontSize: 13),
                 ),
               ],
               const Spacer(),
@@ -467,7 +467,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                 'data från Trafiklab.se',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 18,
+                  fontSize: 10,
                   color: palette.textMuted,
                 ),
               ),
@@ -541,7 +541,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             fontFamily: 'Nunito',
-            fontSize: 18,
+            fontSize: 13,
             fontWeight: FontWeight.w700,
             color: Color(0xFFE53935),
           ),
@@ -565,7 +565,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
             '$icon $baseTargetText',
             style: TextStyle(
               fontFamily: 'Nunito',
-              fontSize: 18,
+              fontSize: 13,
               fontWeight: FontWeight.w700,
               color: palette.textPrimary,
             ),
@@ -589,7 +589,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                 'byte i Mjölby',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 18,
+                  fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: palette.textMuted,
                 ),
@@ -604,7 +604,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 18,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: isGoNow ? const Color(0xFFD97706) : palette.textPrimary,
               ),
@@ -662,7 +662,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                 const SizedBox(width: 6),
                 const Text(
                   '⚠',
-                  style: TextStyle(color: Colors.amber, fontSize: 18),
+                  style: TextStyle(color: Colors.amber, fontSize: 16),
                 ),
               ],
               const Spacer(),
@@ -670,7 +670,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                 'data från Trafiklab.se',
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 18,
+                  fontSize: 11,
                   color: Color(0xFF888888),
                 ),
               ),
@@ -836,7 +836,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
               d.line,
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 18,
+                fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: d.mode == 'train'
                     ? (palette.isDark ? const Color(0xFF90CAF9) : const Color(0xFF2A6F97))
@@ -884,7 +884,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                       'byte i Mjölby',
                       style: TextStyle(
                         fontFamily: 'Nunito',
-                        fontSize: 18,
+                        fontSize: 10,
                         fontWeight: FontWeight.w600,
                         color: palette.textMuted,
                       ),
@@ -902,7 +902,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
               'Inställd (${d.scheduled})',
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 18,
+                fontSize: 13,
                 fontWeight: FontWeight.w800,
                 color: Colors.red.shade700,
                 decoration: TextDecoration.lineThrough,
@@ -916,7 +916,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                   '$gaLabel (${d.scheduled}',
                   style: TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 18,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: palette.textPrimary,
                   ),
@@ -925,7 +925,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
                   ', +${d.delayedMin} min sen)',
                   style: TextStyle(
                     fontFamily: 'Nunito',
-                    fontSize: 18,
+                    fontSize: 13,
                     fontWeight: FontWeight.w800,
                     color: Colors.amber.shade900,
                   ),
@@ -937,7 +937,7 @@ class _AvgangarModuleState extends State<AvgangarModule> {
               '$gaLabel (${d.scheduled})',
               style: TextStyle(
                 fontFamily: 'Nunito',
-                fontSize: 18,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: palette.textPrimary,
               ),

@@ -72,7 +72,7 @@ Widget _buildChipBadge(
       text,
       style: TextStyle(
         fontFamily: 'Nunito',
-        fontSize: 18,
+        fontSize: isLarge ? 18 : 12,
         fontWeight: FontWeight.w800,
         color: isOngoing ? ongoingColor : defaultTextColor,
       ),
@@ -87,7 +87,7 @@ double _measureBadgeWidth(
 }) {
   final badgeStyle = TextStyle(
     fontFamily: 'Nunito',
-    fontSize: 18,
+    fontSize: isLarge ? 18.0 : 12.0,
     fontWeight: FontWeight.w800,
   );
   final painter = TextPainter(
@@ -103,10 +103,11 @@ double _measureBadgeWidth(
 /// Ramhändelse för storskärmen (FAS 1.2, 2.2, 4, 4.3, 5.5 & 5.6):
 /// Enrads platta, personens färg alpha 0.10, mörkgrå text (#333333).
 /// Vid pågående post: accentram (#E65100, i lågstimuli dämpad #C2654A, 1.5px) + "PÅGÅR"-badge.
-/// Adaptiv densitet (FAS 5.5 & 5.6):
-///   a) "piktogram · etikett · tid" i full storlek får plats -> visa allt.
-///   b) Annars -> släpp etiketten: "piktogram · tid" i full storlek (>= 18 px).
-///   c) Om (b) inte får plats behålls textstorleken och raden kan rullas vågrätt.
+///
+/// Adaptiv densitet (FAS 5.5 & 5.6, Korrigering 6d.5):
+///   a) "piktogram · etikett · tid" i full storlek får plats -> visa allt (ingen omslutning).
+///   b) Annars -> släpp etiketten: "piktogram · tid" i full storlek (>= 18 px) får plats (ingen omslutning).
+///   c) Om (b) inte får plats -> FittedBox(scaleDown) som beslutat undantag från 5.6.
 class DisplayRamPlate extends StatelessWidget {
   final String? text;
   final String? piktogram;
@@ -222,30 +223,27 @@ class DisplayRamPlate extends StatelessWidget {
 
     Widget content;
     if (fitsA) {
-      // (a) Visa allt
+      // (a) Visa allt — ingen omslutning (innehållet är mätt att rymmas)
       content = Row(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (hasPik)
-                    Text(
-                      '${parsed.piktogram} · ',
-                      style: ramStyle.copyWith(color: textColor),
-                    ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (hasPik)
                   Text(
-                    parsed.label,
+                    '${parsed.piktogram} · ',
                     style: ramStyle.copyWith(color: textColor),
                   ),
-                  Text(
-                    ' · ${parsed.time}',
-                    style: ramStyle.copyWith(color: textColor),
-                  ),
-                ],
-              ),
+                Text(
+                  parsed.label,
+                  style: ramStyle.copyWith(color: textColor),
+                ),
+                Text(
+                  ' · ${parsed.time}',
+                  style: ramStyle.copyWith(color: textColor),
+                ),
+              ],
             ),
           ),
           if (badge != null && badge.isNotEmpty) ...[
@@ -262,36 +260,48 @@ class DisplayRamPlate extends StatelessWidget {
       );
     } else {
       // (b / c) Släpp etiketten: "piktogram · tid" i full storlek (>= 18 px)
-      // och vågrät rullning om kolumnen är smalare än (b).
+      // Mät om (b) ryms i full storlek. Om inte -> gren c med FittedBox(scaleDown).
       final mainText = hasTime ? parsed.time : parsed.label;
+      final bText = hasPik ? '${parsed.piktogram} · $mainText' : mainText;
+      final fitsB = _doesTextFit(
+        text: bText,
+        style: ramStyle.copyWith(fontWeight: FontWeight.w800),
+        maxWidth: maxTextWidth,
+      );
+
+      final rowContent = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasPik) ...[
+            Text(
+              parsed.piktogram,
+              style: ramStyle.copyWith(color: textColor),
+            ),
+            Text(
+              ' · ',
+              style: ramStyle.copyWith(color: textColor),
+            ),
+          ],
+          Text(
+            mainText,
+            style: ramStyle.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      );
+
       content = Row(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (hasPik) ...[
-                    Text(
-                      parsed.piktogram,
-                      style: ramStyle.copyWith(color: textColor),
-                    ),
-                    Text(
-                      ' · ',
-                      style: ramStyle.copyWith(color: textColor),
-                    ),
-                  ],
-                  Text(
-                    mainText,
-                    style: ramStyle.copyWith(
-                      color: textColor,
-                      fontWeight: FontWeight.w800,
-                    ),
+            child: fitsB
+                ? rowContent
+                : FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: rowContent,
                   ),
-                ],
-              ),
-            ),
           ),
           if (badge != null && badge.isNotEmpty) ...[
             const SizedBox(width: 4),
@@ -331,7 +341,7 @@ class DisplayRamPlate extends StatelessWidget {
 ///   - Rad 1: piktogram + kompakt tid i full storlek (>= 18 px) (+ eventuell badge).
 ///   - Rad 2: titel på en rad med ellips (maxLines: 1, overflow: ellipsis).
 ///   - Minskat padding: EdgeInsets.fromLTRB(5, 3.5, 5, 3.5).
-///   - Om TIDRADEN inte ryms kan den rullas vågrätt med bibehållen textstorlek.
+///   - Det enda mätbeslutet är om TIDRADEN ryms i full storlek; annars FittedBox(scaleDown) på enbart tidraden.
 class DisplayActivityCard extends StatelessWidget {
   final Map<String, dynamic> data;
   final Color memberColor;
@@ -484,8 +494,9 @@ class DisplayActivityCard extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: timeAndPikContent,
                 )
-              : SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
+              : FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
                   child: timeAndPikContent,
                 ),
         ),

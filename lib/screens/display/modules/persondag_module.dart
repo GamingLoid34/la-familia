@@ -1228,18 +1228,15 @@ class _PersondagModuleState extends State<PersondagModule> {
           // Höger (~42 %)
           Expanded(
             flex: 42,
-            child: SingleChildScrollView(
-              physics: const ClampingScrollPhysics(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (int i = 0; i < rightCards.length; i++) ...[
-                    if (i > 0) const SizedBox(height: 14),
-                    rightCards[i],
-                  ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int i = 0; i < rightCards.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 14),
+                  rightCards[i],
                 ],
-              ),
+              ],
             ),
           ),
         ],

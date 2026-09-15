@@ -188,7 +188,7 @@ class _IdagNuModuleState extends State<IdagNuModule> {
         label,
         style: TextStyle(
           fontFamily: 'Nunito',
-          fontSize: 18,
+          fontSize: 13,
           fontWeight: FontWeight.w800,
           color: text,
         ),

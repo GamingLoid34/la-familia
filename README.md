@@ -104,6 +104,42 @@ Följ alltid denna standardiserade bygg- och deployritual vid releaser:
    - En deployad build utan commit är en avvikelse och ska redovisas i slutrapporten.
    - Committen ska innehålla den källkod och version som faktiskt deployades; en checkpoint med pågående arbete ersätter inte en release-commit.
 
+### Storskärmen (display-lagret) — layout- och typografiregler
+
+**Ingen SingleChildScrollView, ListView eller annan scroll på väggen.**
+Väggen (storskärmen) har ingen pekskärm eller fjärrkontroll för att scrolla,
+så innehåll som inte får plats får aldrig tystas bort bakom en scrollbar.
+`DisplayRamPlate` (gren a/b) och tidraden i `DisplayActivityCard` läggs
+därför utan någon scrollomslutning — innehållet är mätt att rymmas.
+Det enda tillåtna undantaget är `FittedBox(fit: BoxFit.scaleDown)` i
+`DisplayRamPlate` gren c och i `DisplayActivityCard`s tidrad, när texten i
+full storlek inte ryms (beslutat undantag från FAS 5.6, Korrigering 6d.5).
+
+**Typografiregel:** innehållstext (namn, tider, ämnen, rätter,
+händelsetitlar, rubriker, tomtillstånd som "Inga …") ska vara **≥ 18 px**.
+Ett antal avsiktliga undantag — kompakta etiketter, badges och pills där
+utrymmet inte tillåter 18 px — är dokumenterade nedan och ska inte höjas:
+
+| Text/element | Storlek | Kategori |
+|---|---:|---|
+| Attribution "data från Trafiklab.se" (kompakt kort) | 10 px | Undantag |
+| Attribution "data från Trafiklab.se" (bred rubrikrad) | 11 px | Undantag |
+| Synkstämpel "Synk HH:MM · La Familia" | 12 px | Undantag |
+| Chip-badge (PÅGÅR m.fl., `_buildChipBadge`, mätstilen) | 12 px w800 | Undantag |
+| Chip-badge i persondagsschemat (`isLarge`) | 18 px | Innehåll (plats finns) |
+| Avgångskortets linjepill | 12 px | Undantag |
+| Avgångskortets bytesbricka ("byte i Mjölby") | 10 px | Undantag |
+| Avgångskortets tid/status (försenad, inställd, GA-tid) | 13 px | Undantag |
+| Footerkickers ("Avgångar" m.fl., samma i alla footerkort) | 14 px | Undantag |
+| Nedräkningsetikett minuter (idag_nu-chip) | 13 px | Undantag |
+| Varningsikon ⚠ bredvid footerkicker | 13 px | Undantag |
+| Varningsikon ⚠ bredvid bred rubrikrad | 16 px | Undantag |
+| Tågemoji 🚆 bredvid footerkicker | 16 px | Undantag |
+| Lunchrätter, skolmat, "Inga …"-tomtillstånd | 18 px | Innehåll |
+| Hero-text och nedräkningstitlar (idag_nu) | 18 px | Innehåll |
+| Middagsveckan, persondag (namn, sysslor, imorgon-text) | 18 px | Innehåll |
+| Rubriker (IDAG, "Avgångar & Kollektivtrafik", hållplatsnamn) | 18 px | Innehåll |
+
 > ℹ️ **Förklaring av APK-filstorlek (MiB vs MB):**
 > När Flutter CLI bygger APK rapporteras t.ex. `✓ Built build\app\outputs\flutter-apk\app-release.apk (77.6MB)`.
 > Flutter anger här storleken i binära mebibyte (MiB, $1024 \times 1024$ bytes):

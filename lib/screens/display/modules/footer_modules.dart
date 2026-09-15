@@ -56,7 +56,7 @@ class DisplayFooterCard extends StatelessWidget {
                 title,
                 style: TextStyle(
                   fontFamily: 'Nunito',
-                  fontSize: 18,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: palette.textMuted,
                 ),
