@@ -17,6 +17,7 @@ import '../utils/day_events.dart';
 import '../utils/layout.dart';
 import '../utils/person_match.dart';
 import '../utils/schedule_time_utils.dart';
+import '../utils/transport_labels.dart';
 import 'activity_detail_sheet.dart';
 import 'meal_choice_sheet.dart';
 import 'today_chores_sheet.dart';
@@ -1328,12 +1329,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     }
 
     // Transportchip-text
-    String? transportText;
-    if (transport == 'sjalv') {
-      transportText = isNext ? '🚶‍♀️ Ta dig dit själv' : '🚶‍♀️ Själv';
-    } else if (transport == 'hamtas') {
-      transportText = isNext ? '🤝 De hämtar mig' : '🤝 Hämtas';
-    }
+    final transportText = transportChipText(transport, isNext);
 
     return Positioned(
       top: layout.top,

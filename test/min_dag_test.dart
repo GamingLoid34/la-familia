@@ -3,6 +3,7 @@ import 'package:la_familia/data/hospital_menu.dart';
 import 'package:la_familia/models/user_model.dart';
 import 'package:la_familia/utils/date_utils.dart';
 import 'package:la_familia/utils/person_match.dart';
+import 'package:la_familia/utils/transport_labels.dart';
 
 void main() {
   group('Min dag utilities and filtering', () {
@@ -197,20 +198,17 @@ void main() {
     });
 
     test('Transport chip formatting for normal vs next block', () {
-      String? getTransportText(String? transport, bool isNext) {
-        if (transport == 'sjalv') {
-          return isNext ? '🚶‍♀️ Ta dig dit själv' : '🚶‍♀️ Själv';
-        } else if (transport == 'hamtas') {
-          return isNext ? '🤝 De hämtar dig' : '🤝 Hämtas';
-        }
-        return null;
-      }
-
-      expect(getTransportText('sjalv', false), equals('🚶‍♀️ Själv'));
-      expect(getTransportText('sjalv', true), equals('🚶‍♀️ Ta dig dit själv'));
-      expect(getTransportText('hamtas', false), equals('🤝 Hämtas'));
-      expect(getTransportText('hamtas', true), equals('🤝 De hämtar dig'));
-      expect(getTransportText(null, false), isNull);
+      // Anropar den delade formateraren i lib/utils/transport_labels.dart —
+      // inte en lokal kopia. Chippen talar TILL användaren ("De hämtar dig");
+      // valknappen i transport-sheeten talar FÖR användaren ("De hämtar mig")
+      // och är medvetet inte samma sträng.
+      expect(transportChipText('sjalv', false), equals('🚶‍♀️ Själv'));
+      expect(transportChipText('sjalv', true), equals('🚶‍♀️ Ta dig dit själv'));
+      expect(transportChipText('hamtas', false), equals('🤝 Hämtas'));
+      expect(transportChipText('hamtas', true), equals('🤝 De hämtar dig'));
+      expect(transportChipText(null, false), isNull);
+      expect(transportChipText('', true), isNull);
+      expect(transportChipText('okänt_värde', true), isNull);
     });
 
     test('Hospital menu dataset matches exact specification (stickprov 3, 9, 16, r1, d3)', () {
