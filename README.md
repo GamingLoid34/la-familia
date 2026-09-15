@@ -10,6 +10,16 @@ Svensk familjeapp för aktiviteter, sysslor, scheman och vardagsstatus — byggd
 
 Plan och roadmap: [PROJECT_PLAN_V3.md](PROJECT_PLAN_V3.md).
 
+## Gren (branch) — produktionsspåret
+
+**`master`** är produktionsspåret och GitHubs default branch. All utveckling
+sker på `master` (eller kortlivade feature-grenar som fast-forward/mergas in
+i `master`) framåt. Historiskt låg produktionskoden en period på
+`cursor/planering-sysslor-enhet-fc9b`; den grenen fast-forwardades in i
+`master` 2026-09-15 (`c38cb35` → `15550a2`) eftersom `master` inte hade några
+egna commits som saknades i feature-grenen. Bygg- och deploytaggar
+(`build-N`) sätts på commits på `master`.
+
 ## Utveckling
 
 ```bash
