@@ -17,6 +17,7 @@ import '../utils/day_events.dart';
 import '../utils/layout.dart';
 import '../utils/person_match.dart';
 import '../utils/schedule_time_utils.dart';
+import '../utils/timeline_layout.dart';
 import '../utils/transport_labels.dart';
 import 'activity_detail_sheet.dart';
 import 'meal_choice_sheet.dart';
@@ -1594,6 +1595,10 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     );
   }
 
+  /// Beräknar geometri (top/height) och klustring (colIndex/totalCols) för
+  /// varje post via den delade, testbara [computeTimelineLayout] — se
+  /// lib/utils/timeline_layout.dart. Denna metod översätter bara till/från
+  /// widgetens egna [_MinDagTimelineItem]/[_EventLayoutInfo]-typer.
   List<_EventLayoutInfo> _computeLayout(
     List<_MinDagTimelineItem> items,
     int startHour,
@@ -1601,82 +1606,32 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     int? nextUpcomingIndex, {
     required bool isViewingToday,
   }) {
-    final list = <_EventLayoutInfo>[];
+    final slots = items
+        .map((item) => TimelineSlotInput(start: item.start, end: item.end))
+        .toList();
 
-    for (var i = 0; i < items.length; i++) {
-      final item = items[i];
-      final startMin = (item.start.hour - startHour) * 60 + item.start.minute;
-      final endMin = (item.end.hour - startHour) * 60 + item.end.minute;
-      final durationMin = max(30, endMin - startMin);
+    final layouts = computeTimelineLayout(
+      slots,
+      startHour: startHour,
+      now: now,
+      nextUpcomingIndex: nextUpcomingIndex,
+      isViewingToday: isViewingToday,
+      hourHeight: hourHeight,
+    );
 
-      final top = (startMin / 60.0) * hourHeight;
-      final height = max(55.0, (durationMin / 60.0) * hourHeight - 4.0);
-
-      final isOngoing = isViewingToday &&
-          !now.isBefore(item.start) &&
-          now.isBefore(item.end);
-      final isPassed = isViewingToday && !now.isBefore(item.end);
-      final isNext = isViewingToday && i == nextUpcomingIndex;
-
-      list.add(_EventLayoutInfo(
-        item: item,
-        top: top,
-        height: height,
-        isPassed: isPassed,
-        isOngoing: isOngoing,
-        isNext: isNext,
-      ));
-    }
-
-    // Klusterberäkning för överlappande händelser (max 3 kolumner)
-    var clusterStart = 0;
-    while (clusterStart < list.length) {
-      var clusterEnd = clusterStart + 1;
-      var clusterMaxBottom = list[clusterStart].top + list[clusterStart].height;
-
-      while (clusterEnd < list.length &&
-          list[clusterEnd].top < clusterMaxBottom) {
-        clusterMaxBottom =
-            max(clusterMaxBottom, list[clusterEnd].top + list[clusterEnd].height);
-        clusterEnd++;
-      }
-
-      final colEnds = <double>[];
-      for (var i = clusterStart; i < clusterEnd; i++) {
-        final ev = list[i];
-        int assignedCol = -1;
-        for (var c = 0; c < colEnds.length && c < 3; c++) {
-          if (colEnds[c] <= ev.top) {
-            assignedCol = c;
-            colEnds[c] = ev.top + ev.height;
-            break;
-          }
-        }
-        if (assignedCol == -1) {
-          if (colEnds.length < 3) {
-            assignedCol = colEnds.length;
-            colEnds.add(ev.top + ev.height);
-          } else {
-            var minCol = 0;
-            for (var c = 1; c < 3; c++) {
-              if (colEnds[c] < colEnds[minCol]) minCol = c;
-            }
-            assignedCol = minCol;
-            colEnds[minCol] = max(colEnds[minCol], ev.top + ev.height);
-          }
-        }
-        ev.colIndex = assignedCol;
-      }
-
-      final numCols = min(3, max(1, colEnds.length));
-      for (var i = clusterStart; i < clusterEnd; i++) {
-        list[i].totalCols = numCols;
-      }
-
-      clusterStart = clusterEnd;
-    }
-
-    return list;
+    return List.generate(items.length, (i) {
+      final l = layouts[i];
+      return _EventLayoutInfo(
+        item: items[i],
+        top: l.top,
+        height: l.height,
+        isPassed: l.isPassed,
+        isOngoing: l.isOngoing,
+        isNext: l.isNext,
+      )
+        ..colIndex = l.colIndex
+        ..totalCols = l.totalCols;
+    });
   }
 }
 
