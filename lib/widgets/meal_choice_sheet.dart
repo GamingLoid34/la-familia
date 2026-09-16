@@ -84,8 +84,11 @@ class _MealChoiceSheetState extends State<MealChoiceSheet> {
         'date': dateStr,
         widget.meal: {
           'dishId': _selectedDishId,
-          if (_selectedRakostId != null) 'rakostId': _selectedRakostId,
-          if (_selectedDessertId != null) 'dessertId': _selectedDessertId,
+          // FieldValue.delete() fungerar nästlat i en set(..., merge: true) —
+          // annars ligger ett tidigare val kvar i Firestore när man avmarkerar
+          // (merge rör bara nycklar som faktiskt skickas med).
+          'rakostId': _selectedRakostId ?? FieldValue.delete(),
+          'dessertId': _selectedDessertId ?? FieldValue.delete(),
         },
         'updatedAt': FieldValue.serverTimestamp(),
       };
