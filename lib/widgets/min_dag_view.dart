@@ -1078,7 +1078,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
       title = 'Inget inplanerat 🎈';
       sub = 'Det finns inga schemalagda aktiviteter denna dag.';
     } else {
-      title = 'Inget låg på schemat denna dag';
+      title = 'Inget stod på schemat denna dag';
       sub = 'Inga aktiviteter sparades för detta datum.';
     }
 

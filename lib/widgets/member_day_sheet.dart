@@ -433,7 +433,7 @@ class _MemberDayPage extends StatelessWidget {
                       ? 'Inga aktiviteter med $firstName idag.'
                       : (isFuture
                           ? 'Inget planerat 🎈'
-                          : 'Inget låg på schemat den här dagen'),
+                          : 'Inget stod på schemat den här dagen'),
                   style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
                 ),
               )
