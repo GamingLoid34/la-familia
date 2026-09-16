@@ -18,6 +18,49 @@ const admin = require("firebase-admin");
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 
+// Android (Fas 12) laddar upp filen till Storage i stället för att skicka
+// ~11 MB base64 i callable-payloaden. Sökvägen måste matcha exakt detta
+// mönster OCH familyId-segmentet måste matcha anroparens familj — se
+// storage.rules (match /menu_uploads/{familyId}/{fileName}).
+const STORAGE_PATH_RE =
+  /^menu_uploads\/([A-Za-z0-9_-]+)\/[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp|pdf)$/i;
+const MAX_STORAGE_FILE_BYTES = 8 * 1024 * 1024;
+
+const MIME_BY_EXTENSION = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  pdf: "application/pdf",
+};
+
+/**
+ * Avgör filens verkliga typ från de första byten (magic numbers) — skyddar
+ * mot att en klient döper om en fil för att kringgå mimeType-kontrollen.
+ * Returnerar en av allowedMimeTypes, eller null om innehållet inte känns igen.
+ */
+function sniffMimeType(buffer) {
+  if (buffer.length >= 3 &&
+      buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (buffer.length >= 8 &&
+      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e &&
+      buffer[3] === 0x47 && buffer[4] === 0x0d && buffer[5] === 0x0a &&
+      buffer[6] === 0x1a && buffer[7] === 0x0a) {
+    return "image/png";
+  }
+  if (buffer.length >= 12 &&
+      buffer.toString("ascii", 0, 4) === "RIFF" &&
+      buffer.toString("ascii", 8, 12) === "WEBP") {
+    return "image/webp";
+  }
+  if (buffer.length >= 5 && buffer.toString("ascii", 0, 5) === "%PDF-") {
+    return "application/pdf";
+  }
+  return null;
+}
+
 const PARSE_MENU_SYSTEM =
   "Du läser ett dokument eller en bild av en skolmatsedel / veckomatsedel för en skola.\n" +
   "Svara ENDAST med giltig JSON, ingen annan text:\n" +
@@ -182,13 +225,22 @@ exports.parseMenuDocument = onCall({
   }
 
   const data = request.data || {};
-  const { schoolId, familyId, fileBase64, mimeType, fileName } = data;
+  const { schoolId, familyId, fileBase64, mimeType, fileName, storagePath } = data;
 
   if (!schoolId || typeof schoolId !== "string" || !schoolId.trim()) {
     throw new HttpsError("invalid-argument", "schoolId saknas eller är ogiltigt.");
   }
   if (!familyId || typeof familyId !== "string" || !familyId.trim()) {
     throw new HttpsError("invalid-argument", "familyId saknas eller är ogiltigt.");
+  }
+
+  const hasBase64 = typeof fileBase64 === "string" && fileBase64.length > 0;
+  const hasStoragePath = typeof storagePath === "string" && storagePath.length > 0;
+  if (hasBase64 === hasStoragePath) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Ange antingen fileBase64 eller storagePath, inte båda och inte inget.",
+    );
   }
 
   // 1. Behörighetskontroll: Anroparen måste vara förälder/admin i familjen
@@ -206,20 +258,119 @@ exports.parseMenuDocument = onCall({
     throw new HttpsError("permission-denied", "Användaren tillhör inte den angivna familjen.");
   }
 
-  // 2. Validering av filtyp och storlek
   const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-  if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
-    throw new HttpsError(
-      "invalid-argument",
-      "Ogiltig filtyp. Tillåtna format är JPEG, PNG, WebP eller PDF.",
-    );
+
+  // Storage-fil som ska raderas i finally längst ned, oavsett utfall.
+  let storageFileToDelete = null;
+  let resolvedBase64;
+  let resolvedMimeType;
+
+  if (hasStoragePath) {
+    // 2a. Android-vägen (Fas 12): läs filen från Storage i stället för att
+    // ta emot ~11 MB base64 i payloaden.
+    const match = STORAGE_PATH_RE.exec(storagePath);
+    if (!match) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Ogiltig storagePath. Förväntat mönster: menu_uploads/{familyId}/{filnamn}.(jpg|jpeg|png|webp|pdf)",
+      );
+    }
+    const pathFamilyId = match[1];
+    const extension = match[2].toLowerCase();
+    if (pathFamilyId !== familyId) {
+      throw new HttpsError("permission-denied", "storagePath tillhör inte den angivna familjen.");
+    }
+
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+    storageFileToDelete = file;
+
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "Filen hittades inte i Storage.");
+    }
+
+    const [metadata] = await file.getMetadata();
+    const sizeBytes = Number(metadata.size || 0);
+    if (sizeBytes > MAX_STORAGE_FILE_BYTES) {
+      throw new HttpsError("invalid-argument", "Dokumentet är för stort (max 8 MB).");
+    }
+
+    const [buffer] = await file.download();
+    const sniffed = sniffMimeType(buffer);
+    const expectedMime = MIME_BY_EXTENSION[extension];
+    if (!sniffed || !allowedMimeTypes.includes(sniffed) || sniffed !== expectedMime) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Filens innehåll matchar inte filändelsen. Tillåtna format är JPEG, PNG, WebP eller PDF.",
+      );
+    }
+
+    resolvedBase64 = buffer.toString("base64");
+    resolvedMimeType = sniffed;
+  } else {
+    // 2b. Befintlig Flutter-väg: base64 direkt i payloaden — oförändrad.
+    if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Ogiltig filtyp. Tillåtna format är JPEG, PNG, WebP eller PDF.",
+      );
+    }
+
+    // Max 8 MB rådata (~11.2 MB base64)
+    const MAX_BASE64_LENGTH = Math.ceil((8 * 1024 * 1024 * 4) / 3);
+    if (fileBase64.length > MAX_BASE64_LENGTH) {
+      throw new HttpsError("invalid-argument", "Dokumentet är för stort (max 8 MB).");
+    }
+
+    resolvedBase64 = fileBase64;
+    resolvedMimeType = mimeType;
   }
 
-  // Max 8 MB rådata (~11.2 MB base64)
-  const MAX_BASE64_LENGTH = Math.ceil((8 * 1024 * 1024 * 4) / 3);
-  if (!fileBase64 || typeof fileBase64 !== "string" || fileBase64.length > MAX_BASE64_LENGTH) {
-    throw new HttpsError("invalid-argument", "Dokumentet är för stort (max 8 MB).");
+  try {
+    return await runMenuParse({
+      resolvedBase64,
+      resolvedMimeType,
+      schoolId,
+      familyId,
+      fileName,
+      startTime,
+      db,
+      uid: request.auth.uid,
+      apiKey,
+    });
+  } finally {
+    if (storageFileToDelete) {
+      try {
+        await storageFileToDelete.delete();
+      } catch (err) {
+        console.error(
+          `[parseMenuDocument] kunde inte radera ${storagePath}:`,
+          err.message || err,
+        );
+      }
+    }
   }
+});
+
+/**
+ * Resten av flödet (AI-anrop, tolkning, Firestore-skrivning) — oförändrat
+ * i sak, bara utbrutet så både base64- och storagePath-vägen delar det
+ * EXAKT samma sätt.
+ */
+async function runMenuParse({
+  resolvedBase64,
+  resolvedMimeType,
+  schoolId,
+  familyId,
+  fileName,
+  startTime,
+  db,
+  uid,
+  apiKey,
+}) {
+  const fileBase64 = resolvedBase64;
+  const mimeType = resolvedMimeType;
 
   // 3. Skapa meddelande till Anthropic API
   const todayKey = stockholmDateKey();
@@ -422,7 +573,7 @@ exports.parseMenuDocument = onCall({
       days,
       weekLabel,
       source: "manual",
-      uploadedBy: request.auth.uid,
+      uploadedBy: uid,
       uploadedAt: admin.firestore.FieldValue.serverTimestamp(),
       originalFileName: fileName || null,
       confidence: "high",
@@ -454,7 +605,7 @@ exports.parseMenuDocument = onCall({
         : "Vissa datum eller rätter behöver bekräftas av en förälder."
     ),
   };
-});
+}
 
 // Exportera hjälpfunktioner för enhetstester
 exports._test = {
@@ -466,4 +617,8 @@ exports._test = {
   cleanMenuDays,
   stockholmDateKey,
   PARSE_MENU_SYSTEM,
+  sniffMimeType,
+  STORAGE_PATH_RE,
+  MAX_STORAGE_FILE_BYTES,
+  MIME_BY_EXTENSION,
 };

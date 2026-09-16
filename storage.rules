@@ -46,6 +46,16 @@ service firebase.storage {
       allow delete: if isAuth() && iAmParent();
     }
 
+    // ── Matsedeluppladdningar (NY — Android-porten, Fas 12) ──
+    // Klienten laddar upp bild/PDF hit i stället för att skicka ~11 MB
+    // base64 i callable-payloaden; parseMenuDocument (storagePath-vägen)
+    // läser filen och raderar den själv efteråt. Ingen läser den härifrån.
+    match /menu_uploads/{familyId}/{fileName} {
+      allow write: if isAuth() && myFamilyId() == familyId && iAmParent()
+        && request.resource.size < 8 * 1024 * 1024;
+      allow read: if false;
+    }
+
     // Allt annat nekat — inklusive f.d. My Mirai documents/-sökvägen.
     match /{allPaths=**} {
       allow read, write: if false;
