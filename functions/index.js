@@ -9,6 +9,9 @@ const calendarFeeds = require("./calendar_feeds");
 exports.subscribeCalendarFeed = calendarFeeds.subscribeCalendarFeed;
 exports.syncCalendarFeeds = calendarFeeds.syncCalendarFeeds;
 
+const icsTextImport = require("./ics_text_import");
+exports.importIcsText = icsTextImport.importIcsText;
+
 const scheduleScan = require("./schedule_scan");
 exports.parseScheduleImage = scheduleScan.parseScheduleImage;
 exports.saveScheduleImport = scheduleScan.saveScheduleImport;
