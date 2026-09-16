@@ -1,5 +1,10 @@
 // Sjukhusmeny — Patientmeny VOS Måltid 9.0 260417
 // Byt vid ny säsongsmeny.
+//
+// Samma innehåll finns speglat i Firestore-dokumentet config/hospital_menu
+// (seedat av functions/scripts/seed_hospital_menu.js) för Android-appens
+// Fas 7 — Flutter-klienten fortsätter läsa listan här nedan tills
+// mobilklienten avvecklas. Vid säsongsbyte: uppdatera BÅDA ställena.
 
 enum HospitalMenuCategory {
   varmratt,
