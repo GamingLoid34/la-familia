@@ -629,8 +629,9 @@ class _DashboardPageState extends State<DashboardPage>
     UserModel? user,
     Color dayColor,
   ) {
+    final today = DateTime.now();
     final uncompleted = chores
-        .where((d) => (d.data() as Map<String, dynamic>)['isDone'] != true)
+        .where((d) => !choreDoneOnDay(d.data() as Map<String, dynamic>, today))
         .toList();
 
     if (uncompleted.isEmpty) return const SizedBox.shrink();
