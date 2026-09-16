@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
-import '../services/notification_service.dart';
 import '../utils/chore_utils.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
@@ -291,7 +290,6 @@ class _SysslorPageState extends State<SysslorPage>
                                     ),
                                   );
                                   if (del == true) {
-                                    await NotificationService.cancel(doc.id);
                                     await doc.reference.delete();
                                   }
                                 }
