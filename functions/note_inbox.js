@@ -38,6 +38,10 @@ const INTERPRET_SYSTEM =
   "Skapa INTE en ny aktivitet när det redan finns en aktivitet med samma titel och datum i " +
   "underlaget — föreslå add_exception eller add_checklist_item på den befintliga i stället.\n" +
   "Förberedelser till en ÅTERKOMMANDE aktivitet blir create_task, aldrig add_checklist_item.\n" +
+  "add_checklist_item och add_exception får BARA användas när aktiviteten redan finns i " +
+  "underlaget ovan. Finns den inte: föreslå create_event för aktiviteten och lägg " +
+  "förberedelserna som create_task. En packlistrad på en aktivitet som inte finns går " +
+  "inte att spara.\n" +
   "Är dagen eller personen oklar: ta med förslaget men sätt blockedReason till en kort " +
   "mening om vad som saknas, och ställ en fråga i question.\n" +
   "Hitta aldrig på datum, tider eller personer som inte går att härleda ur texten.\n" +
