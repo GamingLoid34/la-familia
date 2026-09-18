@@ -142,6 +142,104 @@ service cloud.firestore {
     }
 
 
+    // Assistent steg 3: inkorgens anteckningar. Privata läses bara av sin ägare.
+    match /notes/{noteId} {
+      // Eget namn: `adultInFamily` finns redan i tasks-blocket, och Firestore tillåter inte
+      // att samma funktionsnamn definieras i två match-satser i samma fil.
+      function noteAdultInFamily(familyId) {
+        return isAuth() && iAmParent() && familyId == myFamilyId();
+      }
+
+      function noteDateOrNull(value) {
+        return value == null || (value is string
+          && value.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'));
+      }
+
+      function noteStringOrNull(value) {
+        return value == null || (value is string && value.size() > 0 && value.size() <= 200);
+      }
+
+      // Klienten äger bara 'saved'. Servern äger tolkningens status och resultat, annars
+      // skulle en klient kunna påstå att en tolkning lyckats utan att någon skett.
+      function clientStatus(value) {
+        return value == 'saved';
+      }
+
+      /**
+       * Vid en uppdatering får status antingen bli 'saved' (klienten begär en ny tolkning)
+       * eller stå kvar orörd. Att kräva 'saved' på varje skrivning gjorde det omöjligt att
+       * mjukradera eller sätta giltighet på en anteckning som servern hade satt till
+       * 'failed' eller 'needs_review'.
+       */
+      function statusUnchangedOrSaved() {
+        return request.resource.data.status == resource.data.status
+          || clientStatus(request.resource.data.status);
+      }
+
+      // Fält som bara servern (admin-SDK, går förbi reglerna) får skriva.
+      function serverOnlyUnchanged() {
+        return request.resource.data.get('interpretation', null) == resource.data.get('interpretation', null)
+          && request.resource.data.get('linkedIds', []) == resource.data.get('linkedIds', [])
+          && request.resource.data.get('supersedes', null) == resource.data.get('supersedes', null)
+          && request.resource.data.get('claimedRequestId', null) == resource.data.get('claimedRequestId', null)
+          && request.resource.data.get('confirmedAt', null) == resource.data.get('confirmedAt', null);
+      }
+
+      function validNote(data) {
+        return data.keys().hasAll(['familyId', 'ownerUid', 'visibility', 'text',
+            'contentHash', 'status', 'requestId', 'createdByUid', 'createdAt'])
+          // Serverns egna fält måste stå med. Vid en update är request.resource.data hela det
+          // sammanslagna dokumentet, så ett fält utanför listan skulle låsa ute klienten från
+          // sina egna anteckningar så fort servern rört dem en gång.
+          && data.keys().hasOnly(['familyId', 'ownerUid', 'visibility', 'text',
+            'contentHash', 'status', 'requestId', 'interpretation', 'linkedIds',
+            'validFrom', 'validTo', 'supersedes', 'deletedAt', 'createdByUid', 'createdAt',
+            'claimedRequestId', 'interpretationError', 'interpretingSince', 'confirmedAt'])
+          && data.familyId is string && data.familyId.size() > 0
+          && data.ownerUid is string && data.ownerUid.size() > 0
+          && data.createdByUid is string
+          && (data.visibility == 'private' || data.visibility == 'family')
+          // Originaltexten. Taket skyddar mot en inklistrad bok; ett veckobrev är en bråkdel.
+          && data.text is string && data.text.size() > 0 && data.text.size() <= 10000
+          && data.text.matches('.*[^\\s].*')
+          && noteStringOrNull(data.contentHash)
+          && noteStringOrNull(data.requestId)
+          && noteDateOrNull(data.get('validFrom', null))
+          && noteDateOrNull(data.get('validTo', null))
+          && data.get('linkedIds', []) is list;
+      }
+
+      // En privat anteckning läses bara av sin ägare. Att en gemensam kalenderpost kommer ur
+      // den ger ingen rätt att läsa originalet.
+      allow read: if noteAdultInFamily(resource.data.familyId)
+        && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid);
+
+      allow create: if noteAdultInFamily(request.resource.data.familyId)
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && clientStatus(request.resource.data.status)
+        && request.resource.data.get('interpretation', null) == null
+        && request.resource.data.get('linkedIds', []) == []
+        && validNote(request.resource.data);
+
+      // Klienten får begära en ny tolkning, mjukradera och sätta giltighet. Den får aldrig
+      // ändra originaltexten, ägaren, familjen eller serverns egna fält.
+      allow update: if noteAdultInFamily(resource.data.familyId)
+        && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid)
+        && request.resource.data.familyId == resource.data.familyId
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.text == resource.data.text
+        && request.resource.data.contentHash == resource.data.contentHash
+        && statusUnchangedOrSaved()
+        && serverOnlyUnchanged()
+        && validNote(request.resource.data);
+
+      // Ingen hård radering. Mjukradering via deletedAt bevarar historiken och tar
+      // anteckningen ur allt aktivt underlag.
+      allow delete: if false;
+    }
+
     // 3. KÄRNDATA
 
     match /planner_events/{docId} {
