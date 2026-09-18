@@ -109,6 +109,14 @@ test("trasig JSON kastar i stallet for att ge halvfardiga forslag", () => {
   assert.throws(() => parseInterpretation("inte json alls"));
 });
 
+test("ett svar som kapats mitt i kastar i stallet for att ge halva forslag", () => {
+  // Precis sa ett svar ser ut nar det slar i token-taket: giltig borjan, avhugget slut.
+  // Bestallarens veckobrev pa 882 tecken behovde 3206 token; taket lag pa 4000 och
+  // tankeblocket at upp resten.
+  const kapat = "{\"actions\":[{\"type\":\"create_event\",\"title\":\"Idrottens dag\",\"payl";
+  assert.throws(() => parseInterpretation(kapat));
+});
+
 // --- Validering: oklart datum eller person blockerar ---
 
 test("en aktivitet utan datum blockeras med en fraga", () => {

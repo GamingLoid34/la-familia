@@ -273,7 +273,11 @@ async function buildContext(db, familyId, todayKey) {
 async function callAnthropic(apiKey, userContent) {
   const body = JSON.stringify({
     model: ANTHROPIC_MODEL,
-    max_tokens: 4000,
+    // 4000 räckte inte. Modellen tänker först, och på ett riktigt veckobrev åt
+    // tankeblocket hela budgeten: svaret kapades mitt i en sträng och gick inte att tolka.
+    // Beställarens brev på 882 tecken behövde 3206 token. 8000 ger god marginal och är
+    // samma tak som schemaskanningen redan använder.
+    max_tokens: 8000,
     system: INTERPRET_SYSTEM,
     messages: [{role: "user", content: userContent}],
   });
