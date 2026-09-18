@@ -3,9 +3,12 @@
  * Bekräftelse av tolkade förslag (assistentens steg 3).
  *
  * Planens hårda krav, och hur de uppfylls här:
- * - **Idempotens.** Nyckeln är `(noteId, revision, actionId)`. Utförda åtgärder registreras i
- *   samma transaktion som ändringen, så en upprepad bekräftelse ger samma resultat utan
- *   dubbletter.
+ * - **Idempotens.** Nyckeln är `(noteId, actionId)` — medvetet **utan** revision.
+ *   Åtgärds-id är härlett ur innehållet och är därför stabilt över omtolkningar. Hade
+ *   revisionen ingått skulle samma sakförslag skapa en andra kalenderpost så fort någon
+ *   tolkat om anteckningen, vilket är precis vad planen förbjuder: "Omtolkning visar en diff
+ *   och skapar inga dubbletter vid upprepad bekräftelse av samma åtgärd."
+ *   Revisionen sparas ändå på länken, som spårbarhet till vilken tolkning som godkändes.
  * - **Samtidig redigering.** Varje åtgärd bär ett jämförelseunderlag. Servern läser målet i
  *   transaktionen och jämför fältvärden, inte ett versionsnummer. Flutter skriver inget
  *   versionsfält, så en sådan kontroll hade varit blind för halva familjen.
@@ -121,6 +124,30 @@ function buildWrite(action, note, noteId, members, db) {
 }
 
 /**
+ * Letar upp aktiviteten ett förslag pekar på, via titel och datum.
+ *
+ * AI:n ser bara titel och datum i sitt underlag, inte dokument-id. Matchningen måste därför
+ * ske här, och den ska vara exakt: hellre inget träff än fel aktivitet.
+ *
+ * @param {FirebaseFirestore.Firestore} db
+ * @param {string} familyId
+ * @param {string} title
+ * @param {string} date
+ * @return {Promise<Object|null>} dokumentet, eller null när det inte gick att peka ut ett enda
+ */
+async function findEventByTitleAndDate(db, familyId, title, date) {
+  const snap = await db.collection("planner_events")
+      .where("familyId", "==", familyId)
+      .where("date", "==", date)
+      .limit(20)
+      .get();
+  const needle = String(title || "").trim().toLowerCase();
+  const hits = snap.docs.filter((d) => ((d.data() || {}).title || "").trim().toLowerCase() === needle);
+  // Flera träffar betyder att vi inte vet vilken som avses. Då gör vi ingenting.
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
  * Bekräftar valda förslag ur en anteckning.
  *
  * Indata: `{noteId, revision, actionIds: [...]}`.
@@ -204,9 +231,9 @@ exports.confirmNoteActions = onCall({
       skipped.push({actionId, reason: action.blockedReason});
       continue;
     }
-    // Idempotens: (noteId, revision, actionId). Redan utförd i den här revisionen betyder
-    // att en tidigare bekräftelse gick igenom, så vi gör ingenting och rapporterar det.
-    const done = alreadyLinked.find((l) => l && l.actionId === actionId && l.revision === revision);
+    // Idempotens på (noteId, actionId), utan revision: samma sakförslag får bara utföras en
+    // gång, även om det föreslagits på nytt i en senare tolkning.
+    const done = alreadyLinked.find((l) => l && l.actionId === actionId);
     if (done) {
       applied.push({actionId, targetId: done.targetId, alreadyDone: true});
       continue;
@@ -217,8 +244,31 @@ exports.confirmNoteActions = onCall({
       continue;
     }
 
-    const write = buildWrite(action, note, noteId, members, db);
-    if (!write) {
+    // De två typer som rör en befintlig aktivitet behöver först peka ut vilken.
+    let targetDoc = null;
+    if (action.type === "add_checklist_item" || action.type === "add_exception") {
+      targetDoc = await findEventByTitleAndDate(
+          db, familyId, action.payload.eventTitle, action.payload.date,
+      );
+      if (!targetDoc) {
+        skipped.push({actionId, reason: "Hittade ingen aktivitet som stämmer. Lägg till den för hand."});
+        continue;
+      }
+      if (action.type === "add_checklist_item") {
+        const data = targetDoc.data() || {};
+        // Planen: checklistrader bara på engångsaktiviteter. En återkommande aktivitet
+        // delar sin lista mellan alla veckor, så raden skulle dyka upp överallt.
+        if (data.recurrence || data.isRecurring === true) {
+          skipped.push({actionId, reason: "Aktiviteten är återkommande. Spara som uppgift i stället."});
+          continue;
+        }
+      }
+    }
+
+    const write = targetDoc ?
+      null :
+      buildWrite(action, note, noteId, members, db);
+    if (!write && !targetDoc) {
       skipped.push({actionId, reason: "Åtgärden stöds inte än."});
       continue;
     }
@@ -234,22 +284,66 @@ exports.confirmNoteActions = onCall({
           throw new HttpsError("failed-precondition", "Förslagen uppdaterades under tiden.");
         }
         const links = Array.isArray(freshNote.linkedIds) ? freshNote.linkedIds : [];
-        if (links.find((l) => l && l.actionId === actionId && l.revision === revision)) {
+        if (links.find((l) => l && l.actionId === actionId)) {
           return; // En parallell bekräftelse hann före. Inget mer att göra.
         }
-        tx.set(write.ref, write.data, {merge: write.merge === true});
-        tx.update(noteRef, {
-          linkedIds: admin.firestore.FieldValue.arrayUnion({
-            actionId,
-            revision,
-            type: write.kind,
-            targetId: write.ref.id,
-            createdAt: new Date(),
-          }),
-        });
+        let kind;
+        let targetId;
+        let rowId = null;
+
+        if (targetDoc) {
+          // Läs om aktiviteten i transaktionen: någon kan ha hunnit ändra den sedan
+          // förslaget byggdes. Jämförelsen sker på fältvärden, inte på ett versionsnummer,
+          // eftersom Flutter inte skriver något sådant.
+          const eventRef = targetDoc.ref;
+          const eventSnap = await tx.get(eventRef);
+          const eventData = eventSnap.data();
+          if (!eventData) throw new HttpsError("failed-precondition", "Aktiviteten finns inte längre.");
+          if ((eventData.title || "").trim().toLowerCase() !==
+              String(action.payload.eventTitle || "").trim().toLowerCase()) {
+            throw new HttpsError("failed-precondition", "Aktiviteten har ändrats. Läs igenom förslaget igen.");
+          }
+
+          if (action.type === "add_checklist_item") {
+            const rows = Array.isArray(eventData.checklist) ? eventData.checklist : [];
+            const text = String(action.payload.item || "").trim();
+            const exists = rows.some((r) => {
+              const rowText = r && typeof r === "object" ? (r.item || r.text) : r;
+              return String(rowText || "").trim().toLowerCase() === text.toLowerCase();
+            });
+            // Klarstatus på övriga rader rörs aldrig: hela listan skrivs om, men varje
+            // befintlig rad behåller sitt eget objekt.
+            if (!exists) {
+              tx.update(eventRef, {checklist: rows.concat([{item: text, isDone: false}])});
+            }
+            kind = "checklist_item";
+            targetId = eventRef.id;
+            rowId = text;
+          } else {
+            const date = action.payload.date;
+            const exceptions = ((eventData.recurrence || {}).exceptions) || [];
+            if (!exceptions.includes(date)) {
+              tx.update(eventRef, {
+                "recurrence.exceptions": admin.firestore.FieldValue.arrayUnion(date),
+              });
+            }
+            kind = "exception";
+            targetId = eventRef.id;
+          }
+        } else {
+          tx.set(write.ref, write.data, {merge: write.merge === true});
+          kind = write.kind;
+          targetId = write.ref.id;
+        }
+
+        const link = {actionId, revision, type: kind, targetId, createdAt: new Date()};
+        if (rowId) link.rowId = rowId;
+        if (action.payload && action.payload.date) link.occurrenceDate = action.payload.date;
+        tx.update(noteRef, {linkedIds: admin.firestore.FieldValue.arrayUnion(link)});
       });
-      applied.push({actionId, targetId: write.ref.id});
-      newLinks.push({actionId, targetId: write.ref.id, type: write.kind});
+      const resultId = targetDoc ? targetDoc.ref.id : write.ref.id;
+      applied.push({actionId, targetId: resultId});
+      newLinks.push({actionId, targetId: resultId, type: action.type});
     } catch (err) {
       const message = err instanceof HttpsError ? err.message : "Kunde inte spara förslaget.";
       skipped.push({actionId, reason: message});

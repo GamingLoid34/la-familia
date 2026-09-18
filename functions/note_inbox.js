@@ -341,19 +341,29 @@ exports.onNoteWritten = onDocumentWritten({
   if (!familyId) return;
 
   // Ta begäran i anspråk atomiskt. Misslyckas det arbetar någon annan redan på den.
+  let claimedRevision = 0;
   const claimed = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const data = snap.data();
     if (!data || data.deletedAt) return false;
+    claimedRevision = (data.interpretation && data.interpretation.revision) || 0;
     if (data.status !== "saved" || data.requestId !== requestId) return false;
     if (data.claimedRequestId === requestId) return false;
-    tx.update(ref, {status: "interpreting", claimedRequestId: requestId});
+    // Tidsstämpeln gör att en körning som dör mitt i kan släppas. Utan den fastnade
+    // anteckningen i "interpreting" för alltid, utan väg ut i gränssnittet.
+    tx.update(ref, {
+      status: "interpreting",
+      claimedRequestId: requestId,
+      interpretingSince: admin.firestore.FieldValue.serverTimestamp(),
+    });
     return true;
   });
   if (!claimed) return;
 
   const todayKey = stockholmDateKey();
-  const nextRevision = ((after.interpretation && after.interpretation.revision) || 0) + 1;
+  // Revisionen räknas ur dokumentet som det såg ut vid anspråket, inte ur triggerns
+  // ögonblicksbild. Det tar bort hela klassen av fel där två körningar räknar från samma tal.
+  const nextRevision = (claimedRevision || 0) + 1;
 
   /**
    * Skriver resultatet, men bara om anspråket fortfarande gäller.
