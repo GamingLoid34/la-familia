@@ -201,7 +201,10 @@ service cloud.firestore {
           && (data.visibility == 'private' || data.visibility == 'family')
           // Originaltexten. Taket skyddar mot en inklistrad bok; ett veckobrev är en bråkdel.
           && data.text is string && data.text.size() > 0 && data.text.size() <= 10000
-          && data.text.matches('.*[^\\s].*')
+          // `.` matchar inte radbrytning i Firestores reguljära uttryck, så `.*[^\\s].*`
+          // avvisade varje text med mer än en rad. Ett veckobrev har alltid radbrytningar,
+          // vilket gjorde inkorgen oanvändbar för sitt enda syfte. `[\\s\\S]` matchar allt.
+          && data.text.matches('[\\s\\S]*[^\\s][\\s\\S]*')
           && noteStringOrNull(data.contentHash)
           && noteStringOrNull(data.requestId)
           && noteDateOrNull(data.get('validFrom', null))
