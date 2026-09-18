@@ -42,8 +42,15 @@ const INTERPRET_SYSTEM =
   "underlaget ovan. Finns den inte: föreslå create_event för aktiviteten och lägg " +
   "förberedelserna som create_task. En packlistrad på en aktivitet som inte finns går " +
   "inte att spara.\n" +
-  "Är dagen eller personen oklar: ta med förslaget men sätt blockedReason till en kort " +
-  "mening om vad som saknas, och ställ en fråga i question.\n" +
+  "Står det 'Anteckningen gäller' ovan: använd de personerna i alla förslag, och fråga " +
+  "aldrig vem det gäller. Det är redan besvarat.\n" +
+  "Blockera BARA när dagen eller personen saknas. Allt annat som saknas är i sin ordning.\n" +
+  "En aktivitet UTAN klockslag är ett komplett förslag: sätt time till null och blockera " +
+  "inte. Föräldern behöver veta ATT barnet ska bada på torsdag för att skicka med " +
+  "badkläder, inte exakt när. Samma sak för plats, längd och andra detaljer.\n" +
+  "En uppgift utan sista datum är också komplett: sätt dueDate till null och blockera inte.\n" +
+  "Blockerar du ändå: ta med förslaget, sätt blockedReason till en kort mening om vad som " +
+  "saknas, och ställ en fråga i question.\n" +
   "Hitta aldrig på datum, tider eller personer som inte går att härleda ur texten.\n" +
   "Ren information utan något att göra blir ett enda info-förslag.\n" +
   "Svara som EN kompakt JSON-rad utan radbrytningar eller extra blanksteg.\n";
@@ -413,9 +420,22 @@ exports.onNoteWritten = onDocumentWritten({
 
     await consumeNoteQuota(db, familyId, todayKey);
     const context = await buildContext(db, familyId, todayKey);
+    // Vem anteckningen gäller, valt när den klistrades in. Ett veckobrev kommer alltid från
+    // ett visst barns klass, men texten säger sällan vems. Utan det här blockerades varje
+    // förslag med "vilket barn gäller det?", och inkorgen blev en lista över frågor.
+    const aboutUids = Array.isArray(after.aboutUids) ? after.aboutUids : [];
+    const aboutNames = context.members
+        .filter((m) => aboutUids.includes(m.uid))
+        .map((m) => m.name)
+        .filter(Boolean);
+
     const userContent =
       `Idag är ${todayKey}.\n` +
       `Familjens medlemmar: ${JSON.stringify(context.members.map((m) => m.name))}\n` +
+      (aboutNames.length ?
+        `Anteckningen gäller: ${JSON.stringify(aboutNames)}. ` +
+          "Använd dessa personer i alla förslag utan att fråga vem det gäller.\n" :
+        "") +
       `Kommande aktiviteter: ${JSON.stringify(context.events)}\n\n` +
       `Anteckningen:\n${after.text}`;
 

@@ -131,6 +131,13 @@ test("en komplett aktivitet blockeras inte", () => {
   assert.equal(validationProblem("create_event", {date: "2026-09-24", persons: ["Liam"]}), null);
 });
 
+test("en aktivitet utan klockslag ar ett komplett forslag", () => {
+  // Bestallaren: "Jag som foralder behover inte veta nar de ska bada, bara att de ska bada
+  // for att skicka med badklader." Dag och person racker; tiden ar en detalj.
+  assert.equal(validationProblem("create_event", {date: "2026-09-24", time: null, persons: ["Liam"]}), null);
+  assert.equal(validationProblem("create_event", {date: "2026-09-24", persons: ["Liam"]}), null);
+});
+
 test("en uppgift far sakna deadline", () => {
   assert.equal(validationProblem("create_task", {}), null);
   assert.equal(validationProblem("create_task", {dueDate: "i host"}), "Vilket datum ska det vara klart?");
