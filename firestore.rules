@@ -82,6 +82,66 @@ service cloud.firestore {
       }
     }
 
+    // Assistent steg 2: fria uppgifter är gemensamma för familjens vuxna.
+    match /tasks/{taskId} {
+      function adultInFamily(familyId) {
+        return isAuth() && iAmParent() && familyId == myFamilyId();
+      }
+
+      function dateOrNull(value) {
+        return value == null || (value is string
+          && value.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'));
+      }
+
+      function stringOrNull(value) {
+        return value == null || (value is string && value.size() > 0 && value.size() <= 200);
+      }
+
+      function validAssignee(data) {
+        return data.assigneeUid == null || (data.assigneeUid is string
+          && get(/databases/$(database)/documents/users/$(data.assigneeUid)).data.familyId == data.familyId
+          && get(/databases/$(database)/documents/users/$(data.assigneeUid)).data.role in ['parent', 'admin']);
+      }
+
+      function validTask(data) {
+        return data.keys().hasAll(['familyId', 'title', 'dueDate', 'dueTime', 'hasTime',
+            'showFromDate', 'assigneeUid', 'aboutUids', 'status', 'sourceNoteId',
+            'createdByUid', 'doneAt'])
+          && data.keys().hasOnly(['familyId', 'title', 'dueDate', 'dueTime', 'hasTime',
+            'showFromDate', 'assigneeUid', 'aboutUids', 'status', 'sourceNoteId',
+            'eventId', 'occurrenceDate', 'createdByUid', 'doneAt'])
+          && data.familyId is string && data.familyId.size() > 0
+          && data.createdByUid is string
+          && data.title is string && data.title.size() > 0 && data.title.size() <= 500
+          && data.title.matches('.*[^\\s].*')
+          && dateOrNull(data.dueDate) && dateOrNull(data.showFromDate)
+          && data.hasTime is bool
+          && ((data.hasTime == false && data.dueTime == null)
+            || (data.hasTime == true && data.dueDate != null && data.dueTime is string
+              && data.dueTime.matches('([01][0-9]|2[0-3]):[0-5][0-9]')))
+          && validAssignee(data)
+          && data.aboutUids is list && data.aboutUids.size() <= 20
+          && stringOrNull(data.sourceNoteId)
+          && stringOrNull(data.get('eventId', null))
+          && dateOrNull(data.get('occurrenceDate', null))
+          && ((data.get('eventId', null) == null && data.get('occurrenceDate', null) == null)
+            || (data.get('eventId', null) != null && data.get('occurrenceDate', null) != null))
+          && ((data.status == 'open' && data.doneAt == null)
+            || (data.status == 'done' && data.doneAt is timestamp));
+      }
+
+      allow read: if adultInFamily(resource.data.familyId);
+      allow create: if adultInFamily(request.resource.data.familyId)
+        && request.resource.data.createdByUid == request.auth.uid
+        && validTask(request.resource.data);
+      allow update: if adultInFamily(resource.data.familyId)
+        && request.resource.data.familyId == resource.data.familyId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && validTask(request.resource.data);
+      allow delete: if adultInFamily(resource.data.familyId);
+    }
+
+
     // 3. KÄRNDATA
 
     match /planner_events/{docId} {

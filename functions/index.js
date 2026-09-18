@@ -41,6 +41,13 @@ exports.displaySchoolMenu = displaySchoolMenu.displaySchoolMenu;
 const parseMenuDocument = require("./parse_menu_document");
 exports.parseMenuDocument = parseMenuDocument.parseMenuDocument;
 
+// Assistentens inkorg (steg 3): triggern tolkar en anteckning, callablen bekraftar forslagen.
+const noteInbox = require("./note_inbox");
+exports.onNoteWritten = noteInbox.onNoteWritten;
+
+const noteConfirm = require("./note_confirm");
+exports.confirmNoteActions = noteConfirm.confirmNoteActions;
+
 // ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
 // Skickar push till familjemedlemmar. Respekterar:
 //  - pushFamilyEvents === false (toggle i Inställningar)
