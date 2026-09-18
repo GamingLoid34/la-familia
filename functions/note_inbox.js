@@ -315,7 +315,22 @@ async function callAnthropic(apiKey, userContent) {
   const json = await response.json();
   const block = Array.isArray(json.content) ? json.content.find((c) => c.type === "text") : null;
   if (!block || typeof block.text !== "string") {
+    // Loggar svarets form, aldrig prompten eller anteckningens text. Utan det här gick det
+    // inte att se skillnad på ett avbrutet svar, ett fel från API:t och ett tomt svar.
+    const shape = {
+      stopReason: json.stop_reason || null,
+      types: Array.isArray(json.content) ? json.content.map((c) => c && c.type) : null,
+      errorType: json.error ? json.error.type : null,
+      errorMessage: json.error ? String(json.error.message || "").slice(0, 200) : null,
+    };
+    console.error(`interpretNote: inget textblock. ${JSON.stringify(shape)}`);
     throw new Error("Tomt svar från AI.");
+  }
+  // Ett svar som kapats av token-gränsen är trunkerad JSON och går inte att tolka. Bättre att
+  // säga det rakt ut än att låta JSON.parse kasta ett obegripligt fel.
+  if (json.stop_reason === "max_tokens") {
+    console.error("interpretNote: svaret kapades av token-gränsen.");
+    throw new Error("Texten var för lång för att tolkas i ett svep.");
   }
   return block.text;
 }
