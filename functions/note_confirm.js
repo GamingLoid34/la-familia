@@ -68,12 +68,59 @@ function uidsForNames(members, names) {
  * @param {FirebaseFirestore.Firestore} db
  * @return {Object|null}
  */
+/**
+ * Namnen för en lista uid:n, i samma ordning.
+ *
+ * @param {Array} members familjemedlemmar
+ * @param {Array} uids uid:n
+ * @return {Array} namn
+ */
+function namesForUids(members, uids) {
+  const out = [];
+  for (const uid of uids) {
+    const hit = members.find((m) => m.uid === uid);
+    if (hit && hit.name && !out.includes(hit.name)) out.push(hit.name);
+  }
+  return out;
+}
+
+/**
+ * Vilka personer gäller posten?
+ *
+ * Användarens val vid inklistringen är **facit**. Tolkningen får komplettera, aldrig ersätta.
+ *
+ * Skälet: när ett veckobrev klistras in väljer man vilket barn det gäller, eftersom brevet
+ * sällan nämner barnets namn i varje mening. Tidigare byggdes mottagarlistan enbart ur
+ * `payload.about`/`payload.persons` — alltså namn som tolkningen hittat i texten. Stod det
+ * bara "Läxa till fredag" blev listan tom, och posten hamnade på Hem utan barn
+ * (rapporterat 2026-09-20: "engelska läxa och prov i idrott ... men inte vilket barn").
+ *
+ * @param {Array} members familjemedlemmar
+ * @param {Array} valda uid:n användaren valde i inkorgen (`note.aboutUids`)
+ * @param {Array} tolkade namn tolkningen hittade i texten
+ * @return {Array} uid:n, användarens val först
+ */
+function personUidsFor(members, valda, tolkade) {
+  const out = [];
+  if (Array.isArray(valda)) {
+    for (const uid of valda) {
+      if (typeof uid === "string" && uid && !out.includes(uid)) out.push(uid);
+    }
+  }
+  for (const uid of uidsForNames(members, tolkade)) {
+    if (!out.includes(uid)) out.push(uid);
+  }
+  return out;
+}
+
 function buildWrite(action, note, noteId, members, db) {
   const payload = action.payload || {};
   const familyId = note.familyId;
+  // Barnen som valdes när brevet klistrades in.
+  const valdaUids = Array.isArray(note.aboutUids) ? note.aboutUids : [];
 
   if (action.type === "create_event") {
-    const persons = uidsForNames(members, payload.persons);
+    const persons = personUidsFor(members, valdaUids, payload.persons);
     return {
       kind: "event",
       ref: db.collection("planner_events").doc(),
@@ -83,7 +130,9 @@ function buildWrite(action, note, noteId, members, db) {
         date: payload.date,
         time: payload.time || "",
         endTime: payload.endTime || "",
-        persons: Array.isArray(payload.persons) ? payload.persons : [],
+        // Namnlistan speglar samma personer som personUids. Aldre klienter och
+        // PersonMatchUtils.eventIncludesPerson laser den nar personUids saknas.
+        persons: namesForUids(members, persons),
         personUids: persons,
         piktogram: "📅",
         checklist: [],
@@ -110,7 +159,7 @@ function buildWrite(action, note, noteId, members, db) {
         hasTime,
         showFromDate: payload.showFromDate || null,
         assigneeUid: null,
-        aboutUids: uidsForNames(members, payload.about),
+        aboutUids: personUidsFor(members, valdaUids, payload.about),
         status: "open",
         sourceNoteId: noteId,
         createdByUid: note.ownerUid,
