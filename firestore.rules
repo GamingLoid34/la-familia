@@ -194,7 +194,10 @@ service cloud.firestore {
           && data.keys().hasOnly(['familyId', 'ownerUid', 'visibility', 'text',
             'contentHash', 'status', 'requestId', 'interpretation', 'linkedIds',
             'validFrom', 'validTo', 'supersedes', 'deletedAt', 'createdByUid', 'createdAt',
+            'aboutUids',
             'claimedRequestId', 'interpretationError', 'interpretingSince', 'confirmedAt'])
+          && data.get('aboutUids', []) is list
+          && data.get('aboutUids', []).size() <= 20
           && data.familyId is string && data.familyId.size() > 0
           && data.ownerUid is string && data.ownerUid.size() > 0
           && data.createdByUid is string
@@ -252,9 +255,11 @@ service cloud.firestore {
       allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
         iAmParent()
         || resource.data.createdByUid == request.auth.uid
-        // Vem som helst i familjen får reagera och bocka packlista.
+        // Vem som helst i familjen får reagera, bocka packlista och bocka av en
+        // lektionsförberedelse. lessonPrep bär bara text och avbockade datum, så det
+        // är samma slags kvittens som checklist.
         || request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['reactions', 'checklist'].toSet())
+             .hasOnly(['reactions', 'checklist', 'lessonPrep'].toSet())
       );
       allow delete: if isAuth() && resource.data.familyId == myFamilyId()
           && (iAmParent() || resource.data.createdByUid == request.auth.uid);
