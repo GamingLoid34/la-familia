@@ -8,6 +8,7 @@ import '../app_theme.dart';
 import '../data/piktogram.dart';
 import '../models/user_model.dart';
 import '../services/notification_service.dart';
+import '../utils/activity_start_time.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
 import '../utils/person_match.dart';
@@ -65,7 +66,9 @@ class _AddEventSheetState extends State<AddEventSheet> {
   String _cat = 'Alla';
   String _q = '';
   final _title = TextEditingController();
-  TimeOfDay _start = TimeOfDay.now();
+  // Starttid eller "ingen tid" (activity_start_time.dart). En tidlös aktivitet
+  // förblir tidlös tills någon själv väljer ett klockslag.
+  ActivityStartTime _start = ActivityStartTime.timed(TimeOfDay.now());
   TimeOfDay? _end;
   final List<String> _persons = [];
   final List<String> _checklist = [];
@@ -94,10 +97,10 @@ class _AddEventSheetState extends State<AddEventSheet> {
     if (timePrefill != null && timePrefill.isNotEmpty) {
       final parts = timePrefill.split(':');
       if (parts.length >= 2) {
-        _start = TimeOfDay(
-          hour: int.tryParse(parts[0]) ?? _start.hour,
-          minute: int.tryParse(parts[1]) ?? _start.minute,
-        );
+        _start = ActivityStartTime.timed(TimeOfDay(
+          hour: int.tryParse(parts[0]) ?? _start.start.hour,
+          minute: int.tryParse(parts[1]) ?? _start.start.minute,
+        ));
       }
     }
 
@@ -133,13 +136,7 @@ class _AddEventSheetState extends State<AddEventSheet> {
             (rec['exceptions'] as List? ?? []).cast<String>().toList();
       }
       
-      final timeStr = d['time'] as String? ?? '';
-      if (timeStr.isNotEmpty) {
-        final parts = timeStr.split(':');
-        if (parts.length >= 2) {
-          _start = TimeOfDay(hour: int.tryParse(parts[0]) ?? 0, minute: int.tryParse(parts[1]) ?? 0);
-        }
-      }
+      _start = ActivityStartTime.fromDoc(d, fallback: _start.start);
       final endStr = d['endTime'] as String? ?? '';
       if (endStr.isNotEmpty) {
         final parts = endStr.split(':');
@@ -216,7 +213,6 @@ class _AddEventSheetState extends State<AddEventSheet> {
         'piktogram': _pik,
         'type': 'activity',
         'date': dateKey(d),
-        'time': '${_start.hour.toString().padLeft(2, '0')}:${_start.minute.toString().padLeft(2, '0')}',
         'persons': _persons,
         'personUids': uidsForNames(widget.familyMembers, _persons),
         'checklist': _checklist.map((i) {
@@ -240,11 +236,16 @@ class _AddEventSheetState extends State<AddEventSheet> {
         data['createdByUid'] = user.uid;
       }
 
-      if (_end != null) {
-        data['endTime'] =
-            '${_end!.hour.toString().padLeft(2, '0')}:${_end!.minute.toString().padLeft(2, '0')}';
-      } else if (widget.eventToEdit != null) {
-        data['endTime'] = FieldValue.delete();
+      // time, endTime och timeMode: utan tid sparas time "" och ingen sluttid;
+      // med klockslag tas timeMode bort (activity_start_time.dart).
+      final tid = activityTimeFields(
+        start: _start,
+        end: _end,
+        editing: widget.eventToEdit != null,
+      );
+      data.addAll(tid.fields);
+      for (final f in tid.removals) {
+        data[f] = FieldValue.delete();
       }
 
       // Upprepning: spara/uppdatera recurrence-blocket.
@@ -479,33 +480,36 @@ class _AddEventSheetState extends State<AddEventSheet> {
         const SizedBox(height: 12),
         OutlinedButton.icon(
           icon: const Icon(Icons.access_time),
-          label: Text('Starttid: ${_start.format(context)}'),
+          label: Text(_start.label((t) => t.format(context))),
           onPressed: () async {
-            final t = await showTimePicker(context: context, initialTime: _start);
-            if (t != null) setState(() => _start = t);
+            final t = await showTimePicker(context: context, initialTime: _start.start);
+            if (t != null) setState(() => _start = _start.picked(t));
           },
         ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           icon: const Icon(Icons.schedule_rounded),
           label: Text(
-            _end == null
-                ? 'Sluttid (valfritt)'
-                : 'Slut: ${_end!.format(context)}',
+            _start.untimed
+                ? 'Sluttid (välj starttid först)'
+                : _end == null
+                    ? 'Sluttid (valfritt)'
+                    : 'Slut: ${_end!.format(context)}',
           ),
-          onPressed: () async {
+          // Utan starttid sparas ingen sluttid, så den går inte att välja.
+          onPressed: _start.untimed ? null : () async {
             final t = await showTimePicker(
               context: context,
               initialTime: _end ??
                   TimeOfDay(
-                    hour: (_start.hour + 1) % 24,
-                    minute: _start.minute,
+                    hour: (_start.start.hour + 1) % 24,
+                    minute: _start.start.minute,
                   ),
             );
             if (t != null) setState(() => _end = t);
           },
         ),
-        if (_end != null)
+        if (_end != null && !_start.untimed)
           TextButton(
             onPressed: () => setState(() => _end = null),
             child: const Text('Ta bort sluttid'),
