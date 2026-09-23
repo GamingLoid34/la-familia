@@ -18,41 +18,64 @@ service cloud.firestore {
       return myDoc().role == 'parent' || myDoc().role == 'admin';
     }
 
-    // Onboarding: egen doc får få familyId/role första gången (tomt familyId).
-    function selfJoiningFamily(userId) {
-      return request.auth.uid == userId
-        && (!('familyId' in resource.data)
-            || resource.data.familyId == null
-            || resource.data.familyId == '');
+    function hasFamily(data) {
+      return ('familyId' in data) && data.familyId is string && data.familyId.size() > 0;
+    }
+
+    function validRole(data) {
+      return data.role in ['admin', 'parent', 'child', 'youth'];
+    }
+
+    function createdMyFamily(familyId) {
+      return familyId is string && familyId.size() > 0
+        && exists(/databases/$(database)/documents/families/$(familyId))
+        && get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid;
+    }
+
+    function startsOwnFamily(data) {
+      return hasFamily(data) && data.role == 'admin' && createdMyFamily(data.familyId);
     }
 
     // 1. ANVÄNDARE (users)
     match /users/{userId} {
+      // Both clients query member colors after creating a family but BEFORE joining it.
+      // The immutable creator may read that family's members during this bootstrap.
       allow read: if isAuth() && (request.auth.uid == userId
+          || (hasFamily(resource.data)
+            && (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || !hasFamily(myDoc()))
+            && createdMyFamily(resource.data.familyId))
           || resource.data.familyId == myFamilyId());
-      // Egen doc skapas vid onboarding (skapa familj) och av SecondaryApp-flödet.
-      allow create: if isAuth() && request.auth.uid == userId;
+      allow create: if isAuth() && (
+        (request.auth.uid == userId && (
+          ((!('familyId' in request.resource.data) || request.resource.data.familyId == null
+              || request.resource.data.familyId == '') && request.resource.data.role == 'parent')
+          || startsOwnFamily(request.resource.data)
+        ))
+        // Flutter authenticates the child in SecondaryApp, but the parent writes
+        // the profile through the DEFAULT Firestore instance.
+        || (request.auth.uid != userId && iAmParent()
+          && hasFamily(request.resource.data) && request.resource.data.familyId == myFamilyId()
+          && validRole(request.resource.data))
+      );
       allow update: if isAuth() && (
-        // Jag själv: allt UTOM role och familyId — undantag: första familjekopplingen.
-        (request.auth.uid == userId
-          && (!request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['role', 'familyId'].toSet())
-              || selfJoiningFamily(userId)))
-        ||
-        // Förälder: får ändra familjemedlemmar (namn, färg, roll, viewMode...) — aldrig familyId.
-        (iAmParent() && resource.data.familyId == myFamilyId()
-          && !request.resource.data.diff(resource.data).affectedKeys()
-               .hasAny(['familyId'].toSet()))
+        (request.auth.uid == userId && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'familyId'])
+          || (!hasFamily(resource.data) && startsOwnFamily(request.resource.data))
+        ))
+        || (request.auth.uid != userId && iAmParent()
+          && resource.data.familyId == myFamilyId()
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['familyId'])
+          && validRole(request.resource.data))
       );
       allow delete: if isAuth() && iAmParent() && resource.data.familyId == myFamilyId();
     }
 
     // 2. FAMILJER (families)
     match /families/{familyId} {
-      // Endast medlemmar läser. Kodsökning vid join går via callable (admin-SDK).
       allow read: if isAuth() && familyId == myFamilyId();
-      allow create: if isAuth();
-      allow update: if isAuth() && familyId == myFamilyId() && iAmParent();
+      allow create: if isAuth() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuth() && familyId == myFamilyId() && iAmParent()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy']);
 
       // Display-konfiguration (scener, schema, moduler)
       match /display_config/{docId} {
