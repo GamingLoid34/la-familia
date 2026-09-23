@@ -465,48 +465,7 @@ function assigneeForDayJs(chore, dayKey) {
 }
 
 // ─── SKAPA ANVÄNDARE (Callable Function) ─────────────────────────────────────
-exports.createUser = onCall(async (request) => {
-    if (!request.auth) {
-        throw new HttpsError(
-            "unauthenticated",
-            "Du måste vara inloggad för att skapa en användare."
-        );
-    }
-
-    const { email, password, name, role, familyId, color } = request.data;
-
-    if (!email || !password || !name || !familyId) {
-        throw new HttpsError(
-            "invalid-argument",
-            "Saknar nödvändig data för att skapa kontot."
-        );
-    }
-
-    try {
-        const userRecord = await admin.auth().createUser({
-            email: email,
-            password: password,
-            displayName: name,
-        });
-
-        await admin.firestore().collection("users").doc(userRecord.uid).set({
-            uid: userRecord.uid,
-            email: email,
-            name: name,
-            familyId: familyId,
-            role: role || "child",
-            color: color || "ff2196f3",
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            energy: 3,
-            viewMode: (role === "parent" || role === "admin") ? "parent" : "child",
-        });
-
-        return { uid: userRecord.uid, success: true };
-    } catch (error) {
-        console.error("Kunde inte skapa användare:", error);
-        throw new HttpsError("internal", error.message);
-    }
-});
+exports.createUser = require("./create_user").createUser;
 
 // ─── AI VECKOPLANERING (Callable — Anthropic-proxy, endast föräldrar) ─────────
 const ASK_PLANNER_SYSTEM = "Du är en svensk familjeplanerare. Familjen har barn i " +

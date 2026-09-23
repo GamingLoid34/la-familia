@@ -50,7 +50,8 @@
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "*.local",
+        "repomix-output.xml"
       ]
     }
   ]

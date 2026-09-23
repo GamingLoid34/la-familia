@@ -58,3 +58,8 @@ android/*.keystore
 *.jks
 *.keystore
 *.apk
+
+# Repomix-sammanställningar: genererade och stora, aldrig committa.
+# OBS: rotens repomix-output.xml är redan spårad och påverkas inte förrän den tas ur indexet.
+repomix-output.xml
+functions/repomix-output.xml
