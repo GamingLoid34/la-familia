@@ -9,7 +9,10 @@ import 'package:la_familia/providers/family_provider.dart';
 import 'package:la_familia/screens/inbox_page.dart';
 import 'package:la_familia/screens/tasks_page.dart';
 import 'package:la_familia/theme/app_colors.dart';
+import 'package:la_familia/widgets/add_event_sheet.dart';
 import 'package:la_familia/widgets/mer_sections.dart';
+import 'package:la_familia/widgets/tomorrow_overview_section.dart';
+import 'package:la_familia/screens/aterkommande_page.dart';
 import 'package:la_familia/widgets/vardag_header.dart';
 import 'package:provider/provider.dart';
 
@@ -121,6 +124,72 @@ void main() {
     await snap(tester, 'uppgifter', _withProvider(const TasksPage()));
     await snap(tester, 'uppgifter_stortext', _withProvider(const TasksPage()),
         textScale: 1.6);
+  });
+
+  testWidgets('Aktivitetsformulär', (tester) async {
+    await snap(
+        tester,
+        'formular_ny',
+        _withProvider(Scaffold(
+          backgroundColor: Colors.black54,
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: AddEventSheet(
+              selectedDay: DateTime(2026, 9, 25),
+              familyMembers: _members,
+              familyId: 'f1',
+              initialTitle: 'Fotboll',
+              initialTime: '17:00',
+              initialPersonUids: const ['c1'],
+            ),
+          ),
+        )));
+  });
+
+  testWidgets('Inför i morgon', (tester) async {
+    final p = FamilyProvider.fixed(
+      currentUser: _u('p1', 'Anna Test', 'parent').copyWith(familyId: ''),
+      members: _members,
+      tasks: [
+        const TaskModel(
+            id: 't1', familyId: 'f1', title: 'Boka tandläkare',
+            dueDate: '2026-09-24', assigneeUid: 'p1'),
+        const TaskModel(
+            id: 't2', familyId: 'f1', title: 'Köp present till kalaset',
+            dueDate: '2026-09-26', dueTime: '17:00', hasTime: true),
+      ],
+      notes: [
+        NoteModel(
+          id: 'n1', familyId: 'f1', ownerUid: 'p1',
+          text: 'Veckobrev v39', status: NoteModel.statusNeedsReview,
+          createdAt: DateTime(2026, 9, 24, 8),
+        ),
+        NoteModel(
+          id: 'n2', familyId: 'f1', ownerUid: 'p1',
+          text: 'Info om fotografering', status: NoteModel.statusConfirmed,
+          validFrom: '2026-09-25', validTo: '2026-09-27',
+          interpretation: const NoteInterpretation(revision: 1, actions: [
+            NoteAction(id: 'i', type: 'info', title: 'Skolfotografering fredag'),
+          ]),
+        ),
+      ],
+    );
+    await snap(
+        tester,
+        'infor_i_morgon',
+        ChangeNotifierProvider<FamilyProvider>.value(
+          value: p,
+          child: screenApp(Scaffold(
+            backgroundColor: AppTheme.colors().pageBackground,
+            body: ListView(children: [
+              TomorrowOverviewSection(now: DateTime(2026, 9, 25, 19, 0)),
+            ]),
+          )),
+        ));
+  });
+
+  testWidgets('Återkommande (tom)', (tester) async {
+    await snap(tester, 'aterkommande_tom', _withProvider(const AterkommandePage()));
   });
 
   testWidgets('Inkorg', (tester) async {

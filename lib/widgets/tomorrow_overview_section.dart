@@ -79,6 +79,14 @@ class _TomorrowOverviewSectionState extends State<TomorrowOverviewSection> {
     return date[0].toUpperCase() + date.substring(1);
   }
 
+  static final _isoDate = RegExp(r'\b(\d{4})-(\d{2})-(\d{2})\b');
+
+  /// Byter råa datum (2026-09-24) i motorns skäl mot "tor 24 sep".
+  String _readableReason(String reason) => reason.replaceAllMapped(_isoDate, (m) {
+        final d = DateTime(int.parse(m[1]!), int.parse(m[2]!), int.parse(m[3]!));
+        return DateFormat('EEE d MMM', 'sv').format(d).replaceAll('.', '');
+      });
+
   QueryDocumentSnapshot? _eventDoc(FamilyProvider p, String? id) {
     if (id == null) return null;
     for (final d in [...p.tomorrowEvents, ...p.recurringEvents, ...p.todayEvents]) {
@@ -346,7 +354,10 @@ class _TomorrowOverviewSectionState extends State<TomorrowOverviewSection> {
                   if (i > 0) Divider(height: 1, color: c.divider),
                   _Row(
                     item: shown[i],
-                    dayLabel: _dayLabel(shown[i].date),
+                    reason: _readableReason(shown[i].reason),
+                    // Uppgifternas skäl säger redan när ("Senast i morgon",
+                    // "Skulle varit klar tor 24 sep"); övriga rader får dagen.
+                    dayLabel: shown[i].task != null ? '' : _dayLabel(shown[i].date),
                     onTap: shown[i].isClickable ? () => _onTap(shown[i], p) : null,
                     trailing: _trailing(shown[i], p),
                   ),
@@ -392,12 +403,14 @@ class _TomorrowOverviewSectionState extends State<TomorrowOverviewSection> {
 
 class _Row extends StatelessWidget {
   final TomorrowOverviewItem item;
+  final String reason;
   final String dayLabel;
   final VoidCallback? onTap;
   final List<Widget> trailing;
 
   const _Row({
     required this.item,
+    required this.reason,
     required this.dayLabel,
     required this.onTap,
     required this.trailing,
@@ -406,9 +419,9 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppTheme.colors();
-    final reason = [
+    final line = [
       if (dayLabel.isNotEmpty) dayLabel,
-      if (item.reason.isNotEmpty) item.reason,
+      if (reason.isNotEmpty) reason,
     ].join(' · ');
     return InkWell(
       onTap: onTap,
@@ -428,8 +441,8 @@ class _Row extends StatelessWidget {
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: c.onCardPrimary)),
-              if (reason.isNotEmpty)
-                Text(reason,
+              if (line.isNotEmpty)
+                Text(line,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: c.onCardSecondary)),

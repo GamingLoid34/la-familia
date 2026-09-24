@@ -11,6 +11,8 @@ import '../utils/person_match.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../services/notification_service.dart';
+import '../utils/chore_actions.dart';
+import '../utils/permissions.dart';
 
 class AddChoreSheet extends StatefulWidget {
   final List<UserModel> familyMembers;
@@ -333,6 +335,23 @@ class _AddChoreSheetState extends State<AddChoreSheet> {
               style: AppTheme.sectionTitleStyle
             )),
             if (_step == 1) TextButton(onPressed: () => setState(() => _step = 0), child: const Text('← Byt')),
+            if (widget.choreToEdit != null &&
+                canEditDoc(context.read<FamilyProvider>().currentUser,
+                    widget.choreToEdit!.data() as Map<String, dynamic>))
+              TextButton(
+                onPressed: () async {
+                  final nav = Navigator.of(context);
+                  final deleted = await deleteChore(
+                    context,
+                    ref: widget.choreToEdit!.reference,
+                    data: widget.choreToEdit!.data() as Map<String, dynamic>,
+                    occurrenceDay: widget.preselectedDay,
+                  );
+                  if (deleted) nav.pop();
+                },
+                style: TextButton.styleFrom(foregroundColor: const Color(0xFFB3261E)),
+                child: const Text('Ta bort syssla'),
+              ),
           ])),
         Expanded(child: _step == 0 ? _buildPicker(dayColor) : _buildForm(dayColor)),
       ]),

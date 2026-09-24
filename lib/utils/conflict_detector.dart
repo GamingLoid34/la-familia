@@ -162,8 +162,10 @@ List<ScheduleConflict> detectPickupConflicts({
   int dayCount = 7,
 }) {
   final adults = members.where((m) => m.isParent).toList();
+  // Bara de som behöver hämtas: varken vuxna eller ungdomar (Androids
+  // `needsPickup = !isParent && !isYouth`).
   final children =
-      members.where((m) => !m.isParent).toList();
+      members.where((m) => !m.isParent && m.role != 'youth').toList();
   if (adults.isEmpty || children.isEmpty) return const [];
 
   final out = <ScheduleConflict>[];

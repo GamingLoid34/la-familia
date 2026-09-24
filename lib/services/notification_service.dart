@@ -10,6 +10,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../utils/date_utils.dart';
+import '../utils/school_notifications.dart';
 import '../utils/recurrence.dart';
 
 /// Lokala påminnelser för aktiviteter och sysslor (Android/iOS — inte web).
@@ -143,6 +144,13 @@ class NotificationService {
     required Map<String, dynamic> data,
   }) async {
     if (kIsWeb) return;
+    // Vanliga skollektioner ger inga lektionsnotiser (Androids regel) — en
+    // lektion med förberedelse eller packlista gör det. Tidigare schemalagda
+    // notiser för ett tystat block tas bort.
+    if (shouldSkipLessonNotification(data)) {
+      await cancelActivityReminders(docId, data);
+      return;
+    }
     final title = data['title'] as String? ?? '';
     final piktogram = (data['piktogram'] as String? ?? '').trim();
     final timeStr = (data['time'] as String?)?.trim() ?? '';
