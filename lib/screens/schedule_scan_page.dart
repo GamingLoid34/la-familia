@@ -14,6 +14,7 @@ import '../providers/family_provider.dart';
 import '../services/notification_service.dart';
 import '../services/schedule_scan_service.dart';
 import '../utils/date_utils.dart';
+import '../utils/import_borttagning.dart';
 import '../utils/quick_add_parser.dart';
 import '../widgets/member_avatar.dart';
 
@@ -21,7 +22,11 @@ enum _ScanStep { pick, scanning, review }
 
 /// Skanna och importera ett utskrivet veckoschema (rehab, skola, sport).
 class ScheduleScanPage extends StatefulWidget {
-  const ScheduleScanPage({super.key});
+  /// Anropas när en import ångrats efter att sidan stängts, så att en öppen
+  /// importlista kan läsas om.
+  final VoidCallback? onImportAngrad;
+
+  const ScheduleScanPage({super.key, this.onImportAngrad});
 
   @override
   State<ScheduleScanPage> createState() => _ScheduleScanPageState();
@@ -95,6 +100,22 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
     }
 
     return members.isNotEmpty ? members.first : null;
+  }
+
+  /// Kastar den inlästa bilden och börjar om, så en felaktig inläsning kan
+  /// slängas innan något sparas. Medlemmarna ligger kvar i providern.
+  void _reset() {
+    setState(() {
+      _step = _ScanStep.pick;
+      _imageBytes = null;
+      _mediaType = 'image/jpeg';
+      _errorMsg = null;
+      _titleCtrl.clear();
+      _selectedMember = null;
+      _selectedSchemaKind = 'Skola';
+      _events = [];
+      _saving = false;
+    });
   }
 
   /// Beräknar måndagen i innevarande vecka som YYYY-MM-DD.
@@ -348,12 +369,23 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
       if (!mounted) return;
 
       final firstName = person.name.split(' ').first;
-      ScaffoldMessenger.of(context).showSnackBar(
+      // Messengern lever kvar när sidan stängs, så "Ångra" fungerar efteråt.
+      final messenger = ScaffoldMessenger.of(context);
+      final onAngrad = widget.onImportAngrad;
+      final importId = result.importId;
+      messenger.showSnackBar(
         SnackBar(
           content: Text(
               '${result.eventCount} händelser importerade till $firstName ✅'),
           backgroundColor: const Color(0xFF6BAE75),
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 8),
+          action: importId.isEmpty
+              ? null
+              : SnackBarAction(
+                  label: 'Ångra',
+                  textColor: Colors.white,
+                  onPressed: () => _angraImport(messenger, importId, onAngrad),
+                ),
         ),
       );
 
@@ -370,6 +402,31 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
           ),
         );
       }
+    }
+  }
+
+  /// Tar bort exakt det som den här importomgången skapade: importdokumentet
+  /// och händelserna som pekar på det. Lokala påminnelser avbokas.
+  static Future<void> _angraImport(
+    ScaffoldMessengerState messenger,
+    String importId,
+    VoidCallback? onAngrad,
+  ) async {
+    try {
+      final antal = await taBortKalenderimport(importId);
+      messenger.showSnackBar(SnackBar(
+        content: Text(antal == null
+            ? 'Importen var redan borttagen.'
+            : 'Importen är ångrad. $antal händelser borttagna.'),
+      ));
+      onAngrad?.call();
+    } catch (e, stack) {
+      developer.log('Kunde inte ångra schemaimport',
+          error: e, stackTrace: stack);
+      messenger.showSnackBar(SnackBar(
+        content: Text('Kunde inte ångra: $e'),
+        backgroundColor: Colors.red,
+      ));
     }
   }
 
@@ -835,34 +892,56 @@ class _ScheduleScanPageState extends State<ScheduleScanPage> {
           ),
           child: SafeArea(
             top: false,
-            child: SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: (selectedCount == 0 ||
-                        _selectedMember == null ||
-                        _saving)
-                    ? null
-                    : _saveImport,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: dayColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: (selectedCount == 0 ||
+                            _selectedMember == null ||
+                            _saving)
+                        ? null
+                        : _saveImport,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: dayColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.5),
+                          )
+                        : Text(
+                            'Importera $selectedCount händelser',
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                  ),
                 ),
-                child: _saving
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5),
-                      )
-                    : Text(
-                        'Importera $selectedCount händelser',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-              ),
+                // Kasta den inlästa bilden och börja om, så en felaktig
+                // inläsning inte måste importeras och rensas efteråt.
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: _saving ? null : _reset,
+                    child: const Text('Läs in en annan bild'),
+                  ),
+                ),
+                // Var borttagningen finns är inte uppenbart: ett skannat
+                // schema hamnar i samma lista som prenumererade kalendrar.
+                Text(
+                  'Blev det fel? En importerad omgång tar du bort under '
+                  'Mer → Importer.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
             ),
           ),
         ),

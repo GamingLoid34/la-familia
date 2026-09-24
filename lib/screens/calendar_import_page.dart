@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -12,7 +12,9 @@ import '../app_theme.dart';
 import '../models/user_model.dart';
 import '../services/calendar_feed_service.dart';
 import '../services/family_service.dart';
-import '../utils/date_utils.dart';
+import '../services/notification_service.dart';
+import '../utils/ics_summary.dart';
+import '../utils/import_borttagning.dart';
 import '../utils/person_match.dart';
 import '../utils/schedule_time_utils.dart';
 import 'schedule_scan_page.dart';
@@ -62,6 +64,16 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
           for (final d in impsSnap.docs) {
             calendarImports.add({...d.data(), 'id': d.id});
           }
+          // Senaste importen först, så en nyss skannad omgång är lätt att
+          // hitta och ta bort.
+          calendarImports.sort((a, b) {
+            final ta = a['lastSync'];
+            final tb = b['lastSync'];
+            if (ta is Timestamp && tb is Timestamp) return tb.compareTo(ta);
+            if (ta is Timestamp) return -1;
+            if (tb is Timestamp) return 1;
+            return 0;
+          });
         } catch (e, stack) {
           developer.log('Misslyckades hämta kalendrar', error: e, stackTrace: stack);
         }
@@ -174,7 +186,7 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
             await Navigator.push<void>(
               context,
               MaterialPageRoute<void>(
-                builder: (_) => const ScheduleScanPage(),
+                builder: (_) => ScheduleScanPage(onImportAngrad: _loadData),
               ),
             );
             await _loadData();
@@ -498,15 +510,22 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text('Alternativ 2 — Ladda upp .ics-fil:',
+                  const Text('Alternativ 2 — Ladda upp .ics-filer:',
                       style:
                           TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Du kan välja flera på en gång, till exempel en fil per vecka. '
+                    'Varje fil blir en egen import som går att ta bort för sig.',
+                    style: TextStyle(
+                        fontSize: 11, color: Colors.grey.shade600, height: 1.3),
+                  ),
                   const SizedBox(height: 6),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.upload_file_rounded, size: 18),
-                      label: const Text('Välj .ics-fil'),
+                      label: Text(loading ? 'Importerar…' : 'Välj .ics-filer'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.getDayAccentColor(),
                         foregroundColor: Colors.white,
@@ -516,9 +535,6 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                       onPressed: loading
                           ? null
                           : () async {
-                              final name = nameCtrl.text.trim().isEmpty
-                                  ? 'Importerad kalender'
-                                  : nameCtrl.text.trim();
                               final member = selectedMember ??
                                   memberMatchingText(
                                           _familyMembers, nameCtrl.text)
@@ -541,37 +557,25 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
                                     await FilePicker.platform.pickFiles(
                                   type: FileType.custom,
                                   allowedExtensions: ['ics'],
+                                  allowMultiple: true,
                                   withData: true,
                                 );
                                 if (result == null || result.files.isEmpty) {
                                   setS(() => loading = false);
                                   return;
                                 }
-                                final bytes = result.files.first.bytes;
-                                if (bytes == null) {
-                                  setS(() {
-                                    loading = false;
-                                    errorMsg = 'Kunde inte läsa filen.';
-                                  });
-                                  return;
-                                }
-                                final content = utf8.decode(
-                                  bytes,
-                                  allowMalformed: true,
-                                );
-                                final count = await _parseAndSaveIcs(
-                                  content,
-                                  name,
-                                  '',
-                                  member,
-                                  planningImportKind,
+                                final resultat = await _importeraIcsFiler(
+                                  result.files,
+                                  prefix: icsNamnPrefix(nameCtrl.text, member),
+                                  member: member,
+                                  kind: planningImportKind,
                                 );
                                 if (ctx.mounted) Navigator.pop(ctx);
-                                _showImportResult(count, name);
+                                _visaFilsammanfattning(resultat);
                                 await _loadData();
                               } catch (e, stack) {
                                 developer.log(
-                                    'Fel vid uppladdning av lokal ICS fil',
+                                    'Fel vid uppladdning av lokala ICS-filer',
                                     error: e,
                                     stackTrace: stack);
                                 setS(() {
@@ -631,8 +635,8 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Ta bort kalenderimport?'),
         content: Text(
-          'Alla händelser från "$label" som importerats till planeringen tas bort. '
-          'Detta går inte att ångra.',
+          '"$label": Alla händelser som kom från den här importen tas bort. '
+          'Manuella händelser påverkas inte.',
         ),
         actions: [
           TextButton(
@@ -653,45 +657,9 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
 
   Future<void> _deleteCalendarImport(String docId, String displayName) async {
     try {
-      final impRef =
-          FirebaseFirestore.instance.collection('calendar_imports').doc(docId);
-      final impDoc = await impRef.get();
-      if (!impDoc.exists) {
-        if (mounted) {
-          setState(() => _calendarImports.removeWhere((m) => m['id'] == docId));
-        }
-        return;
-      }
-      final data = impDoc.data()!;
-      final familyId = data['familyId'] as String? ?? '';
-      final calendarName = data['name'] as String? ?? '';
-
-      final eventsSnap = await FirebaseFirestore.instance
-          .collection('planner_events')
-          .where('familyId', isEqualTo: familyId)
-          .get();
-
-      var batch = FirebaseFirestore.instance.batch();
-      var ops = 0;
-      for (final d in eventsSnap.docs) {
-        final m = d.data();
-        if (m['source'] != 'calendar') continue;
-        final byId = m['calendarImportId'] == docId;
-        final legacy = m['calendarImportId'] == null &&
-            m['calendarName'] == calendarName;
-        if (!byId && !legacy) continue;
-        batch.delete(d.reference);
-        ops++;
-        if (ops >= 450) {
-          await batch.commit();
-          batch = FirebaseFirestore.instance.batch();
-          ops = 0;
-        }
-      }
-      if (ops > 0) await batch.commit();
-
-      await impRef.delete();
-
+      // Gemensam med "Ångra" efter skanning: tar bort exakt importens
+      // händelser och avbokar deras lokala påminnelser.
+      await taBortKalenderimport(docId);
       if (mounted) {
         setState(() => _calendarImports.removeWhere((m) => m['id'] == docId));
         ScaffoldMessenger.of(context).showSnackBar(
@@ -861,10 +829,12 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
       var batch = FirebaseFirestore.instance.batch();
       var ops = 0;
       var deletedEvents = 0;
+      final borttagna = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
       for (final d in eventsSnap.docs) {
         final m = d.data();
         if (m['source'] != 'calendar') continue;
         batch.delete(d.reference);
+        borttagna.add(d);
         deletedEvents++;
         ops++;
         if (ops >= 450) {
@@ -874,6 +844,7 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
         }
       }
       if (ops > 0) await batch.commit();
+      await avbokaPaminnelser(borttagna);
 
       final importsSnap = await FirebaseFirestore.instance
           .collection('calendar_imports')
@@ -920,245 +891,79 @@ class _CalendarImportPageState extends State<CalendarImportPage> {
     }
   }
 
-  Future<int> _parseAndSaveIcs(
-    String icsContent,
-    String name,
-    String url,
-    String? assignedMember,
-    String planningImportKind,
-  ) async {
-    final kind =
-        planningImportKind == 'activity' ? 'activity' : 'schedule';
-    final raw =
-        icsContent.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
-    final lines = <String>[];
-    for (final line in raw) {
-      if ((line.startsWith(' ') || line.startsWith('\t')) &&
-          lines.isNotEmpty) {
-        lines[lines.length - 1] += line.substring(1);
-      } else {
-        lines.add(line);
+  /// Max storlek per fil — samma gräns som `importIcsText` på servern.
+  static const int _maxIcsBytes = 5 * 1024 * 1024;
+
+  /// Importerar valda .ics-filer en i taget via callable `importIcsText`,
+  /// samma väg som Android — en enda parser, på servern. Varje fil blir en
+  /// egen import, så en felaktig vecka går att ta bort för sig. Filerna körs
+  /// i följd: en misslyckad fil ska inte kunna dra med sig de andra.
+  Future<List<IcsFilResultat>> _importeraIcsFiler(
+    List<PlatformFile> filer, {
+    required String prefix,
+    required String? member,
+    required String kind,
+  }) async {
+    final memberUid =
+        member == null ? null : uidForName(_familyMembers, member);
+    final callable = FirebaseFunctions.instance.httpsCallable('importIcsText');
+    final resultat = <IcsFilResultat>[];
+
+    for (final fil in filer) {
+      final bytes = fil.bytes;
+      if (bytes == null) {
+        resultat.add(IcsFilResultat.misslyckad(
+            filnamn: fil.name, fel: 'kunde inte läsas'));
+        continue;
+      }
+      if (bytes.length > _maxIcsBytes) {
+        resultat.add(
+            IcsFilResultat.misslyckad(filnamn: fil.name, fel: 'för stor'));
+        continue;
+      }
+      final text = utf8.decode(bytes, allowMalformed: true);
+      final namn =
+          icsImportNamn(icsText: text, prefix: prefix, filnamn: fil.name);
+      try {
+        final svar = await callable.call<Map<String, dynamic>>({
+          'icsText': text,
+          'calendarName': namn,
+          'kind': kind == 'activity' ? 'activity' : 'schedule',
+          if (memberUid != null && memberUid.isNotEmpty) 'memberUid': memberUid,
+        });
+        final antal = (svar.data['count'] as num?)?.toInt() ?? 0;
+        resultat.add(
+            IcsFilResultat.lyckad(filnamn: fil.name, namn: namn, antal: antal));
+      } on FirebaseFunctionsException catch (e) {
+        developer.log('importIcsText misslyckades för ${fil.name}', error: e);
+        resultat.add(IcsFilResultat.misslyckad(
+            filnamn: fil.name, fel: e.message ?? 'fel'));
+      } catch (e, stack) {
+        developer.log('importIcsText misslyckades för ${fil.name}',
+            error: e, stackTrace: stack);
+        resultat.add(IcsFilResultat.misslyckad(filnamn: fil.name, fel: '$e'));
       }
     }
 
-    final events = <Map<String, String>>[];
-    Map<String, String>? current;
-    for (final line in lines) {
-      final t = line.trim();
-      if (t == 'BEGIN:VEVENT') {
-        current = {};
-      } else if (t == 'END:VEVENT' && current != null) {
-        events.add(current);
-        current = null;
-      } else if (current != null) {
-        final idx = line.indexOf(':');
-        if (idx > 0) {
-          final keyRaw = line.substring(0, idx);
-          final val = line.substring(idx + 1).trim();
-          final key = keyRaw.split(';')[0].toUpperCase();
-          current[key] = val;
-        }
-      }
+    final familyId = _currentUser?.familyId;
+    if (resultat.any((r) => (r.antal ?? 0) > 0) &&
+        familyId != null &&
+        familyId.isNotEmpty) {
+      unawaited(NotificationService.rescheduleAllForFamily(familyId));
     }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final familyId = _currentUser?.familyId ?? '';
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-
-    final importRef =
-        FirebaseFirestore.instance.collection('calendar_imports').doc();
-    final batch = FirebaseFirestore.instance.batch();
-    int count = 0;
-
-    for (final ev in events) {
-      final title = _decodeIcsText(ev['SUMMARY'] ?? '');
-      if (title.isEmpty) continue;
-      final dtStart = _parseDtstart(ev['DTSTART']);
-      if (dtStart == null) continue;
-      if (dtStart.isBefore(today)) continue;
-      if (count >= 200) break;
-
-      final startHm = dtStart.hour == 0 && dtStart.minute == 0
-          ? ''
-          : '${dtStart.hour.toString().padLeft(2, '0')}:${dtStart.minute.toString().padLeft(2, '0')}';
-      final endHm = _icsEndTimeHm(ev, dtStart);
-
-      final ref = FirebaseFirestore.instance.collection('planner_events').doc();
-      final fields = <String, dynamic>{
-        'title': title,
-        'piktogram': kind == 'activity' ? '📋' : '📚',
-        'type': 'activity',
-        'date': dateKey(dtStart),
-        'time': startHm,
-        'persons': assignedMember != null ? [assignedMember] : <String>[],
-        'personUids': assignedMember != null
-            ? uidsForNames(_familyMembers, [assignedMember])
-            : <String>[],
-        'checklist': <dynamic>[],
-        'source': 'calendar',
-        'planningImportKind': kind,
-        'calendarName': name,
-        'calendarImportId': importRef.id,
-        'createdBy': uid,
-        'createdByUid': uid,
-        'isPending': false,
-        'familyId': familyId,
-      };
-      if (endHm != null && endHm.isNotEmpty) {
-        fields['endTime'] = endHm;
-      }
-
-      final desc = _sanitizeIcsBody(ev['DESCRIPTION'] ?? '');
-      if (desc.isNotEmpty) {
-        fields['calendarDescription'] = desc.length > _maxIcsDescriptionChars
-            ? '${desc.substring(0, _maxIcsDescriptionChars)}…'
-            : desc;
-      }
-
-      final loc = _sanitizeIcsBody(ev['LOCATION'] ?? '');
-      if (loc.isNotEmpty) {
-        fields['location'] = loc.length > 2000
-            ? '${loc.substring(0, 2000)}…'
-            : loc;
-      }
-
-      final calUrl = _decodeIcsText(ev['URL'] ?? '').trim();
-      if (calUrl.isNotEmpty) {
-        fields['calendarUrl'] = calUrl.length > 2000
-            ? calUrl.substring(0, 2000)
-            : calUrl;
-      }
-
-      final extras = _icsExtendedProps(ev);
-      if (extras.isNotEmpty) {
-        fields['calendarExtendedProps'] = extras;
-      }
-
-      batch.set(ref, fields);
-      count++;
-    }
-
-    if (count > 0) {
-      batch.set(importRef, {
-        'name': name,
-        'url': url,
-        'feedUrl': '',
-        'familyId': familyId,
-        'lastSync': FieldValue.serverTimestamp(),
-        'eventCount': count,
-        'source': url.isEmpty ? 'file' : 'url',
-        'autoSync': false,
-        'planningImportKind': kind,
-        'targetType': kind,
-        'assignedMember': ?assignedMember,
-        'person': ?assignedMember,
-        'personUid': assignedMember == null
-            ? null
-            : uidForName(_familyMembers, assignedMember),
-        'createdByUid': uid,
-      });
-      await batch.commit();
-    }
-
-    return count;
+    return resultat;
   }
 
-  static const int _maxIcsDescriptionChars = 15000;
-
-  /// För DESCRIPTION/LOCATION: avkoda ICS, enkel HTML → radbrytningar, rensa taggar.
-  String _sanitizeIcsBody(String raw) {
-    if (raw.isEmpty) return '';
-    var t = _decodeIcsText(raw);
-    t = t.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
-    t = t.replaceAll(RegExp(r'</p>', caseSensitive: false), '\n\n');
-    t = t.replaceAll(RegExp(r'<[^>]*>'), '');
-    t = t
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&quot;', '"');
-    t = t.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
-    return t;
-  }
-
-  /// Egna ICS-fält (t.ex. Sportadmin) som X-…
-  Map<String, String> _icsExtendedProps(Map<String, String> ev) {
-    final out = <String, String>{};
-    for (final e in ev.entries) {
-      final k = e.key;
-      if (!k.startsWith('X-')) continue;
-      final v = _sanitizeIcsBody(e.value);
-      if (v.isEmpty) continue;
-      out[k] = v.length > 2000 ? '${v.substring(0, 2000)}…' : v;
-    }
-    return out;
-  }
-
-  String _decodeIcsText(String text) => text
-      .replaceAll('\\n', '\n')
-      .replaceAll('\\,', ',')
-      .replaceAll('\\;', ';')
-      .replaceAll('\\\\', '\\');
-
-  DateTime? _parseDtstart(String? value) {
-    if (value == null || value.isEmpty) return null;
-    try {
-      final clean = value.replaceAll('Z', '').trim();
-      if (clean.length < 8) return null;
-      final y = int.parse(clean.substring(0, 4));
-      final m = int.parse(clean.substring(4, 6));
-      final d = int.parse(clean.substring(6, 8));
-      int h = 0, min = 0;
-      if (clean.length >= 15 && clean[8] == 'T') {
-        h = int.parse(clean.substring(9, 11));
-        min = int.parse(clean.substring(11, 13));
-      }
-      return DateTime(y, m, d, h, min);
-    } catch (e, stack) {
-      developer.log('Fel vid tolkning av ICS-datum', error: e, stackTrace: stack);
-      return null;
-    }
-  }
-
-  /// Sluttid som `HH:mm` från DTEND eller DURATION, om det finns och ligger efter start.
-  String? _icsEndTimeHm(Map<String, String> ev, DateTime dtStart) {
-    final dur = _parseIcsDuration(ev['DURATION']);
-    if (dur != null && dur > Duration.zero) {
-      final end = dtStart.add(dur);
-      if (!end.isAfter(dtStart)) return null;
-      return _formatHm(end);
-    }
-    final dtEnd = _parseDtstart(ev['DTEND']);
-    if (dtEnd == null || !dtEnd.isAfter(dtStart)) return null;
-    return _formatHm(dtEnd);
-  }
-
-  String _formatHm(DateTime d) =>
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-
-  Duration? _parseIcsDuration(String? raw) {
-    if (raw == null || raw.isEmpty) return null;
-    var s = raw.trim().toUpperCase();
-    if (!s.startsWith('P')) return null;
-    int days = 0;
-    final dm = RegExp(r'(\d+)D').firstMatch(s);
-    if (dm != null) days = int.parse(dm.group(1)!);
-    final wm = RegExp(r'(\d+)W').firstMatch(s);
-    if (wm != null) days += int.parse(wm.group(1)!) * 7;
-    var tp = '';
-    final tIdx = s.indexOf('T');
-    if (tIdx >= 0) tp = s.substring(tIdx + 1);
-    var hours = 0, minutes = 0, seconds = 0;
-    final hm = RegExp(r'(\d+)H').firstMatch(tp);
-    if (hm != null) hours = int.parse(hm.group(1)!);
-    final mm = RegExp(r'(\d+)M').firstMatch(tp);
-    if (mm != null) minutes = int.parse(mm.group(1)!);
-    final sm = RegExp(r'(\d+)S').firstMatch(tp);
-    if (sm != null) seconds = int.parse(sm.group(1)!);
-    if (days == 0 && hours == 0 && minutes == 0 && seconds == 0) return null;
-    return Duration(days: days, hours: hours, minutes: minutes, seconds: seconds);
+  void _visaFilsammanfattning(List<IcsFilResultat> resultat) {
+    if (!mounted) return;
+    final allaLyckades = resultat.every((r) => r.lyckades);
+    final nagot = resultat.any((r) => (r.antal ?? 0) > 0);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(icsImportSammanfattning(resultat)),
+      backgroundColor:
+          (allaLyckades && nagot) ? const Color(0xFF6BAE75) : Colors.orange,
+      duration: Duration(seconds: resultat.length > 1 ? 8 : 4),
+    ));
   }
 }
 
@@ -1231,7 +1036,19 @@ class _ImportCard extends StatelessWidget {
                 fontSize: 12, color: Colors.grey.shade600, height: 1.35),
           ),
           if (calendarImports.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
+            // En lista för allt — skannade scheman hamnar här tillsammans med
+            // prenumerationer och filer, och tas bort härifrån.
+            Text(
+              'IMPORTERADE SCHEMAN OCH KALENDRAR',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 8),
             for (final imp in calendarImports)
               Container(
                 margin: const EdgeInsets.only(bottom: 10),
@@ -1311,8 +1128,8 @@ class _ImportCard extends StatelessWidget {
                       padding: const EdgeInsets.only(left: 24, right: 8),
                       child: Text(
                         '${_formatLastSync(imp['lastSync'])} · '
-                        '${imp['eventCount'] ?? 0} händelser'
-                        '${imp['importKind'] == 'photo' ? ' · skannat foto' : (imp['autoSync'] == true ? '' : (imp['source'] == 'file' ? ' · engångsfil' : ''))}',
+                        '${imp['eventCount'] ?? 0} händelser · '
+                        '${importKallEtikett(imp)}',
                         style: TextStyle(
                             fontSize: 12, color: Colors.grey.shade600),
                       ),
