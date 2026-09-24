@@ -10,7 +10,7 @@ import '../data/hospital_menu.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../screens/min_dag_page.dart';
-import '../screens/verktyg_page.dart';
+import '../screens/settings_page.dart';
 import '../utils/chore_utils.dart';
 import '../utils/date_utils.dart';
 import '../utils/day_events.dart';
@@ -847,12 +847,17 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
                   ),
                   const SizedBox(width: 4),
                 ],
+                // Fokus-/barnläget: vägen till Mer (verktyg, inställningar,
+                // VIS-LÄGE för att lämna fokusläget, och Logga ut).
                 IconButton(
                   icon: const Text('🧰', style: TextStyle(fontSize: 18)),
-                  tooltip: 'Verktyg',
+                  tooltip: 'Mer',
                   onPressed: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const VerktygPage()),
+                    MaterialPageRoute(
+                      builder: (ctx) =>
+                          SettingsPage(onClose: () => Navigator.pop(ctx)),
+                    ),
                   ),
                 ),
                 IconButton(

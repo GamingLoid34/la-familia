@@ -63,6 +63,10 @@ dependencies:
   home_widget: ^0.9.3
   speech_to_text: ^7.4.0
   web: ^1.1.0
+  # Inkorgens dubblettnyckel (SHA-256, samma som Android) och requestId (UUID v4).
+  # Samma versioner som redan låg i pubspec.lock som transitiva beroenden.
+  crypto: ^3.0.7
+  uuid: ^4.5.3
 
 dev_dependencies:
   flutter_test:

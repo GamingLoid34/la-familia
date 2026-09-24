@@ -1,3 +1,4 @@
+import '../navigation/app_navigation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -16,7 +17,6 @@ import '../utils/event_actions.dart';
 import '../utils/layout.dart';
 import '../utils/permissions.dart';
 import '../utils/person_match.dart';
-import '../screens/staddag_page.dart';
 import '../utils/recurrence.dart';
 import 'activity_detail_sheet.dart';
 import 'member_avatar.dart';
@@ -521,10 +521,8 @@ class _MemberDayPage extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const StaddagPage()),
-            );
+            // Städdag hör till Sysslor — byt flik i stället för en kopia här.
+            AppNavigation.openStaddag(context);
           },
           child: Container(
             padding: const EdgeInsets.all(12),

@@ -24,6 +24,8 @@ import 'screens/login_page.dart';
 import 'screens/onboarding_page.dart';
 import 'screens/splash_screen.dart';
 import 'app_theme.dart';
+import 'navigation/app_navigation.dart';
+import 'theme/app_colors.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
 import 'services/push_service.dart';
@@ -73,6 +75,7 @@ void main() async {
   try {
     final prefs = await SharedPreferences.getInstance();
     AppTheme.lowStimuli = prefs.getBool('lowStimuli') ?? false;
+    AppTheme.colorMode = ColorMode.fromStorage(prefs.getString('colorMode'));
   } catch (e) {
     developer.log('Kunde inte läsa lowStimuli: $e');
   }
@@ -265,6 +268,9 @@ class _MainPageState extends State<MainPage> {
   @override
   void initState() {
     super.initState();
+    AppNavigation.tabsAvailable = true;
+    AppNavigation.tab.value = _selectedIndex;
+    AppNavigation.tab.addListener(_onNavigationTab);
     _pageController = PageController(initialPage: _selectedIndex);
     _pages = [
       const DashboardPage(),
@@ -326,25 +332,36 @@ class _MainPageState extends State<MainPage> {
 
   @override
   void dispose() {
+    AppNavigation.tab.removeListener(_onNavigationTab);
+    AppNavigation.tabsAvailable = false;
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// En genväg någon annanstans i appen har bytt flik.
+  void _onNavigationTab() {
+    final index = AppNavigation.tab.value;
+    if (index != _selectedIndex && mounted) _onItemTapped(index);
   }
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    AppNavigation.tab.value = index;
+    if (_pageController.hasClients) {
+      _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    int weekday = DateTime.now().weekday;
-    Color activeColor = AppTheme.getDayAccentColor(weekday);
+    context.watch<FamilyProvider>(); // lågstimuli/färgläge ritar om flikfältet
+    final colors = AppTheme.colors();
 
     final size = WindowSize.of(context);
     final contentWidth = size.isExpanded
@@ -352,7 +369,7 @@ class _MainPageState extends State<MainPage> {
         : double.infinity;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
+      backgroundColor: colors.pageBackground,
       extendBody: false,
       body: Center(
         child: ConstrainedBox(
@@ -365,6 +382,7 @@ class _MainPageState extends State<MainPage> {
                   setState(() {
                     _selectedIndex = index;
                   });
+                  AppNavigation.tab.value = index;
                 },
                 children: _pages,
               ),
@@ -385,27 +403,30 @@ class _MainPageState extends State<MainPage> {
           ),
           child: SafeArea(
             top: false,
-            child: _buildBottomNav(activeColor),
+            child: _buildBottomNav(colors),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildBottomNav(Color activeColor) {
-    // Solid vit med hög alpha — BackdropFilter/blur togs bort (Fas 2½).
+  /// Flikfältet som i Android-appen Vardag: kortytan som bakgrund, vald flik
+  /// i accentfärgen mörkad 25 %, ingen skugga i lågstimuli.
+  Widget _buildBottomNav(AppColors colors) {
     return Container(
       margin: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: colors.cardBorder),
+        boxShadow: AppTheme.lowStimuli
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
@@ -424,16 +445,20 @@ class _MainPageState extends State<MainPage> {
               label: 'Sysslor',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.settings_rounded),
-              label: 'Inställningar',
+              icon: Icon(Icons.menu_rounded),
+              label: 'Mer',
             ),
           ],
           currentIndex: _selectedIndex,
-          backgroundColor: Colors.white.withValues(alpha: 0.94),
-          selectedItemColor: activeColor,
-          unselectedItemColor: Colors.grey.shade500,
+          backgroundColor: colors.cardSurface,
+          selectedItemColor: colors.navSelected,
+          unselectedItemColor: colors.onCardSecondary,
           selectedIconTheme: const IconThemeData(size: 28),
           unselectedIconTheme: const IconThemeData(size: 24),
+          selectedLabelStyle:
+              const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+          unselectedLabelStyle:
+              const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
           type: BottomNavigationBarType.fixed,
           showUnselectedLabels: true,
           onTap: _onItemTapped,

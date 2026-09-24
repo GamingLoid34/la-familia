@@ -1,11 +1,17 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/family_note.dart';
+import '../models/note_model.dart';
+import '../models/task_model.dart';
 import '../models/user_model.dart';
 import '../screens/display/display_clock.dart';
+import '../services/note_service.dart';
+import '../services/task_service.dart';
 import '../services/widget_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/recurrence.dart';
@@ -61,6 +67,20 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _mealsSub;
   StreamSubscription? _familyDocSub;
 
+  // Uppgifter och Inkorg — bara för förälder/admin. Barn och ungdomar ställer
+  // aldrig frågan (reglerna skulle neka den i sin helhet).
+  StreamSubscription? _tasksSub;
+  StreamSubscription? _inboxSub;
+  /// `familyId|uid` som uppgifter/anteckningar prenumererar på. Byts bara när
+  /// familj, användare eller vuxenroll ändras — inte vid varje användarsnapshot.
+  String? _adultDataKey;
+  List<TaskModel> _tasks = const [];
+  List<NoteModel> _notes = const [];
+  bool _tasksLoaded = false;
+  bool _notesLoaded = false;
+  Object? _tasksError;
+  Object? _notesError;
+
   /// Familj som datumprenumerationerna gäller.
   String? _activeFamilyId;
   /// dateKey som dagens/morgondagens queries är låsta till.
@@ -111,6 +131,91 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   List<FamilyNote> get todayNotes => _todayNotes;
+
+  /// Familjens fria uppgifter (tom för barn/ungdom).
+  List<TaskModel> get tasks => _tasks;
+  bool get tasksLoaded => _tasksLoaded;
+  Object? get tasksError => _tasksError;
+
+  /// Inkorgens anteckningar som användaren får läsa, inklusive mjukraderade
+  /// (filtrera på [NoteModel.isDeleted]). Tom för barn/ungdom.
+  List<NoteModel> get inboxNotes => _notes;
+  bool get notesLoaded => _notesLoaded;
+  Object? get notesError => _notesError;
+
+  /// "Bara mina uppgifter på Hem" (lokal inställning, 'baraMinaUppgifter').
+  /// Påverkar bara vilka uppgifter som visas — aldrig familjens aktiviteter
+  /// eller konflikter.
+  bool _onlyMyTasks = false;
+  bool get onlyMyTasks => _onlyMyTasks;
+  void setOnlyMyTasks(bool v) {
+    _onlyMyTasks = v;
+    notifyListeners();
+  }
+
+  /// Starta om uppgifts-/anteckningsprenumerationerna (t.ex. "Försök igen").
+  void retryAdultData() {
+    _adultDataKey = null;
+    _syncAdultData();
+  }
+
+  void _cancelAdultData() {
+    _tasksSub?.cancel();
+    _inboxSub?.cancel();
+    _tasksSub = null;
+    _inboxSub = null;
+    _adultDataKey = null;
+    _tasks = const [];
+    _notes = const [];
+    _tasksLoaded = false;
+    _notesLoaded = false;
+    _tasksError = null;
+    _notesError = null;
+  }
+
+  void _syncAdultData() {
+    final me = _currentUser;
+    final fid = me?.familyId ?? '';
+    // Storskärmen (?display=1) visar varken uppgifter eller Inkorg.
+    final displayMode =
+        kIsWeb && Uri.base.queryParameters['display'] == '1';
+    if (me == null || fid.isEmpty || !me.isParent || displayMode) {
+      if (_adultDataKey != null || _tasksSub != null || _inboxSub != null) {
+        _cancelAdultData();
+      }
+      return;
+    }
+    final key = '$fid|${me.uid}';
+    if (key == _adultDataKey) return;
+    _cancelAdultData();
+    _adultDataKey = key;
+    _tasksSub = TaskService.observe(fid).listen((list) {
+      if (_adultDataKey != key) return; // sent svar för en tidigare användare
+      _tasks = list;
+      _tasksLoaded = true;
+      _tasksError = null;
+      notifyListeners();
+    }, onError: (Object e, StackTrace st) {
+      if (_adultDataKey != key) return;
+      developer.log('FamilyProvider: fel i tasks', error: e, stackTrace: st);
+      _tasksError = e;
+      _tasksLoaded = true;
+      notifyListeners();
+    });
+    _inboxSub = NoteService.observe(fid, me.uid).listen((list) {
+      if (_adultDataKey != key) return;
+      _notes = list;
+      _notesLoaded = true;
+      _notesError = null;
+      notifyListeners();
+    }, onError: (Object e, StackTrace st) {
+      if (_adultDataKey != key) return;
+      developer.log('FamilyProvider: fel i notes', error: e, stackTrace: st);
+      _notesError = e;
+      _notesLoaded = true;
+      notifyListeners();
+    });
+  }
 
   /// Återkommande händelser i familjen.
   List<QueryDocumentSnapshot> get recurringEvents => _recurringEvents;
@@ -169,8 +274,32 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Provider med fast innehåll utan Firebase — för widgettester och
+  /// skärmdumpar av vyerna.
+  @visibleForTesting
+  FamilyProvider.fixed({
+    UserModel? currentUser,
+    List<UserModel> members = const [],
+    List<TaskModel> tasks = const [],
+    List<NoteModel> notes = const [],
+    List<QueryDocumentSnapshot> chores = const [],
+  }) {
+    _currentUser = currentUser;
+    _familyMembers = members;
+    _tasks = tasks;
+    _notes = notes;
+    _chores = chores;
+    _tasksLoaded = true;
+    _notesLoaded = true;
+    _isLoading = false;
+  }
+
   FamilyProvider() {
     WidgetsBinding.instance.addObserver(this);
+    SharedPreferences.getInstance().then((prefs) {
+      _onlyMyTasks = prefs.getBool('baraMinaUppgifter') ?? false;
+      notifyListeners();
+    }).catchError((Object _) {});
     FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user == null) {
         _clearAll();
@@ -192,6 +321,8 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_tomorrowSub != null) count++;
     if (_mealsSub != null) count++;
     if (_notesSub != null) count++;
+    if (_tasksSub != null) count++;
+    if (_inboxSub != null) count++;
     return count;
   }
 
@@ -255,6 +386,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     _mealsSub?.cancel();
     _todayMeals = [];
     _familyDocSub?.cancel();
+    _cancelAdultData();
     _midnightTimer?.cancel();
     _activeFamilyId = null;
     _subscribedDateKey = null;
@@ -280,6 +412,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         _currentUser = null;
       }
+      _syncAdultData();
       _isLoading = false;
       notifyListeners();
     }, onError: (e, stack) => _handleStreamError('users', e, stack));
@@ -287,6 +420,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _subscribeToFamilyData(String? familyId) {
     if (familyId == null || familyId.isEmpty) {
+      _cancelAdultData();
       _familySub?.cancel();
       _familyDocSub?.cancel();
       _choresSub?.cancel();
@@ -486,6 +620,8 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     _routinesSub?.cancel();
     _mealsSub?.cancel();
     _familyDocSub?.cancel();
+    _tasksSub?.cancel();
+    _inboxSub?.cancel();
     _widgetDebounce?.cancel();
     _notifyTimer?.cancel();
     super.dispose();

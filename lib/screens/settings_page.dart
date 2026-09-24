@@ -22,11 +22,18 @@ import '../widgets/home_location_sheet.dart';
 import 'invite_page.dart';
 import 'manage_members_page.dart';
 import 'settings/storskarm_settings_page.dart';
-import 'verktyg_page.dart';
+import 'manage_routines_page.dart';
+import '../theme/app_colors.dart';
+import '../widgets/mer_sections.dart';
+import '../widgets/vardag_header.dart';
 import '../widgets/member_avatar.dart';
 
+/// Fliken **Mer** (Android-appen Vardags `MerScreen`): verktygssektionerna
+/// överst och därunder INSTÄLLNINGAR. [onClose] visar en tillbakapil — används
+/// när Mer öppnas i helskärm från fokus-/barnlägets Min dag, som saknar flikfält.
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  final VoidCallback? onClose;
+  const SettingsPage({super.key, this.onClose});
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -56,6 +63,7 @@ class _SettingsPageState extends State<SettingsPage>
   bool _aiPlannerLoading = false;
   int _devClickCount = 0;
   bool _devMode = false;
+  bool _onlyMyTasks = false;
 
   // Notisdiagnostik
   bool _enablingWebPush = false;
@@ -88,6 +96,7 @@ class _SettingsPageState extends State<SettingsPage>
       _notifStart = prefs.getBool('notifStart') ?? false;
       _notifFamily = prefs.getBool('notifFamily') ?? true;
       _devMode = prefs.getBool('dev_mode_enabled') ?? false;
+      _onlyMyTasks = prefs.getBool('baraMinaUppgifter') ?? false;
     });
   }
 
@@ -246,6 +255,9 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   Future<void> _signOut() async {
+    // Mer kan ligga i helskärm ovanpå fokusläget — gå tillbaka till roten så
+    // att inloggningen inte hamnar under en kvarglömd sida.
+    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
     await FirebaseAuth.instance.signOut();
   }
 
@@ -258,7 +270,7 @@ class _SettingsPageState extends State<SettingsPage>
         : 430.0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
+      backgroundColor: AppTheme.colors().pageBackground,
       body: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: maxW),
@@ -276,18 +288,26 @@ class _SettingsPageState extends State<SettingsPage>
                     ),
                   )
                 else ...[
-                  SliverToBoxAdapter(child: _buildVerktygCard(dayColor)),
+                  SliverToBoxAdapter(
+                    child: MerSections(isParent: _currentUser?.isParent == true),
+                  ),
+                  const SliverToBoxAdapter(
+                    child: VardagSectionLabel('INSTÄLLNINGAR',
+                        padding: EdgeInsets.fromLTRB(20, 24, 20, 0)),
+                  ),
                   SliverToBoxAdapter(child: _buildProfileCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFamilyCard(dayColor)),
+                  SliverToBoxAdapter(child: _buildRoutinesCard(dayColor)),
                   SliverToBoxAdapter(child: _buildStorskarmCard(dayColor)),
                   SliverToBoxAdapter(child: _buildFoodPrefsCard(dayColor)),
                   SliverToBoxAdapter(child: _buildHomeLocationCard(dayColor)),
                   SliverToBoxAdapter(child: _buildNotificationsCard(dayColor)),
                   SliverToBoxAdapter(child: _buildViewModeCard(dayColor)),
-                  SliverToBoxAdapter(child: _buildSignOutButton()),
+                  SliverToBoxAdapter(child: _buildAppearanceCard(dayColor)),
                   SliverToBoxAdapter(child: _buildAboutCard()),
                   if (_devMode)
                     SliverToBoxAdapter(child: _buildDevSection(dayColor)),
+                  SliverToBoxAdapter(child: _buildSignOutButton()),
                 ],
                 SliverToBoxAdapter(
                     child: SizedBox(height: navSafeBottom(context).bottom + 20)),
@@ -300,46 +320,99 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   // ─── HEADER ─────────────────────────────────────────────────────────────────
-  Widget _buildHeader(BuildContext context, Color dayColor) {
-    final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
-    return Container(
-      decoration: AppTheme.headerDecoration(),
-      padding: AppTheme.paddingBelowStatusBar(context),
-      child: Text('Inställningar',
-          style: TextStyle(
-              fontSize: 28, fontWeight: FontWeight.bold, color: textColor)),
-    );
-  }
+  Widget _buildHeader(BuildContext context, Color dayColor) =>
+      VardagTitleHeader(title: 'Mer', onBack: widget.onClose);
 
-  // ─── VERKTYG CARD ───────────────────────────────────────────────────────────
-  Widget _buildVerktygCard(Color dayColor) {
+  // ─── RUTINER (förälder) ──────────────────────────────────────────────────────
+  Widget _buildRoutinesCard(Color dayColor) {
+    if (_currentUser == null || !_currentUser!.isParent) {
+      return const SizedBox.shrink();
+    }
     return _Card(
-      margin: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: ListTile(
         contentPadding: EdgeInsets.zero,
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: dayColor.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          alignment: Alignment.center,
-          child: const Text('🧰', style: TextStyle(fontSize: 22)),
-        ),
-        title: const Text(
-          'Verktyg 🧰',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        subtitle: const Text(
-          'Timer, inköp, matsedel, lathund & scheman',
-          style: TextStyle(fontSize: 12),
-        ),
+        leading: Icon(Icons.wb_sunny_rounded, color: dayColor, size: 24),
+        title: const Text('Rutiner',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        subtitle: Text('Morgon- och kvällsrutiner för familjen',
+            style: TextStyle(fontSize: 12, color: AppTheme.getSubTextColor())),
         trailing: Icon(Icons.chevron_right_rounded, color: dayColor),
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const VerktygPage()),
+          MaterialPageRoute(builder: (_) => const ManageRoutinesPage()),
         ),
+      ),
+    );
+  }
+
+  // ─── ANPASSNING ──────────────────────────────────────────────────────────────
+  Widget _buildAppearanceCard(Color dayColor) {
+    final accent = AppTheme.colors().accent;
+    return _Card(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('ANPASSNING', style: AppTheme.sectionLabelStyle),
+          if (_currentUser?.isParent == true)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Bara mina uppgifter på Hem',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              subtitle: const Text(
+                  'Döljer uppgifter som tilldelats någon annan. Otilldelade visas alltid.',
+                  style: TextStyle(fontSize: 12)),
+              value: _onlyMyTasks,
+              activeThumbColor: dayColor,
+              onChanged: (v) {
+                setState(() => _onlyMyTasks = v);
+                _savePreference('baraMinaUppgifter', v);
+                context.read<FamilyProvider>().setOnlyMyTasks(v);
+              },
+            ),
+          const SizedBox(height: 8),
+          const Text('Färg på sidorna',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<ColorMode>(
+              segments: [
+                for (final m in ColorMode.values)
+                  ButtonSegment<ColorMode>(
+                      value: m,
+                      label: Text(m.label, style: const TextStyle(fontSize: 12))),
+              ],
+              selected: {AppTheme.colorMode},
+              onSelectionChanged: AppTheme.lowStimuli
+                  ? null
+                  : (sel) async {
+                      if (sel.isEmpty) return;
+                      setState(() => AppTheme.colorMode = sel.first);
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString(
+                          'colorMode', sel.first.storageValue);
+                      if (mounted) context.read<FamilyProvider>().refreshUi();
+                    },
+              style: ButtonStyle(
+                backgroundColor: WidgetStateProperty.resolveWith((states) =>
+                    states.contains(WidgetState.selected) ? accent : null),
+                foregroundColor: WidgetStateProperty.resolveWith((states) =>
+                    states.contains(WidgetState.selected)
+                        ? Colors.white
+                        : AppTheme.getTextColor()),
+              ),
+            ),
+          ),
+          if (AppTheme.lowStimuli)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Stäng av lågstimuli för att använda veckodagsfärger',
+                  style: TextStyle(
+                      fontSize: 12, color: AppTheme.getSubTextColor())),
+            ),
+        ],
       ),
     );
   }

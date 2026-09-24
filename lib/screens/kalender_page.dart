@@ -1,3 +1,4 @@
+import '../navigation/app_navigation.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 
@@ -35,7 +36,6 @@ import '../widgets/week_list.dart';
 import '../widgets/weather_widgets.dart';
 import '../utils/event_actions.dart';
 import 'agenda_page.dart';
-import 'staddag_page.dart';
 
 enum KalenderLage { dag, vecka, manad }
 
@@ -1081,10 +1081,8 @@ class _KalenderPageState extends State<KalenderPage>
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const StaddagPage()),
-              );
+              // Städdag hör till Sysslor — byt flik i stället för en kopia här.
+              AppNavigation.openStaddag(context);
             },
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),

@@ -2,6 +2,8 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 
+import 'theme/app_colors.dart';
+
 /// Palett per veckodag — varje dag är en ädelsten eller metall.
 /// [light] är glansbandet som ger den "metalliska" lystern i gradienter.
 class DayPalette {
@@ -37,6 +39,18 @@ class AppTheme {
   /// och växlas i Inställningar. Dagsfärgerna behålls (igenkänningen är
   /// trygghet) men ytorna blir platta och lugna.
   static bool lowStimuli = false;
+
+  /// Färgläge ("Färg på sidorna": veckodagsfärg eller neutral), som i
+  /// Android-appen Vardag. Laddas från SharedPreferences ('colorMode').
+  static ColorMode colorMode = ColorMode.weekday;
+
+  /// Färgroller för dagens (eller [weekday]:s) sidor — samma beräkning som
+  /// Android-appens `AppColors.compute`.
+  static AppColors colors([int? weekday]) => AppColors.compute(
+        mode: colorMode,
+        lowStimuli: lowStimuli,
+        palette: dayPalette(weekday),
+      );
 
   // ─── Day Palettes — "varje dag en ädelsten/metall" ─────────────────────────
   // Mån smaragd · Tis safir · Ons silver · Tor koppar · Fre guld ·
@@ -79,16 +93,31 @@ class AppTheme {
         onColor: Colors.white),
   };
 
-  static DayPalette dayPalette([int? weekday]) =>
-      _dayPalettes[weekday ?? DateTime.now().weekday] ?? _dayPalettes[1]!;
+  /// Tvingad veckodag för färgerna (skärmdumpar/tester). Null = dagens datum.
+  static int? weekdayOverride;
 
-  /// Header-yta med dagens gradient och rundade nederhörn.
-  /// I lågstimuli-läge: platt basfärg utan glansband.
-  static BoxDecoration headerDecoration([int? weekday]) => BoxDecoration(
-        color: lowStimuli ? dayPalette(weekday).base : null,
-        gradient: lowStimuli ? null : dayPalette(weekday).gradient,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
-      );
+  static DayPalette dayPalette([int? weekday]) =>
+      _dayPalettes[weekday ?? weekdayOverride ?? DateTime.now().weekday] ??
+      _dayPalettes[1]!;
+
+  /// Header-yta i enfärgad rollfärg, som i Android-appen Vardag. När headern
+  /// har samma färg som sidan bildar de en yta utan rundade hörn; annars
+  /// (lågstimuli) rundas nederhörnen.
+  static BoxDecoration headerDecoration([int? weekday]) {
+    final c = colors(weekday);
+    return BoxDecoration(
+      color: c.header,
+      borderRadius: c.headerMergesWithPage
+          ? null
+          : const BorderRadius.vertical(bottom: Radius.circular(28)),
+    );
+  }
+
+  /// Text och ikoner i headern.
+  static Color headerTextColor([int? weekday]) {
+    final c = colors(weekday);
+    return c.headerMergesWithPage ? c.onPage : dayPalette(weekday).onColor;
+  }
 
   // ─── Member Colors ─────────────────────────────────────────────────────────
   /// Personliga medlemsfärger, dämpade för att harmoniera med NPF-dagsfärgerna
@@ -131,8 +160,10 @@ class AppTheme {
   /// Dagens basfärg (juvelton). Behållen signatur — hela appen pekar hit.
   static Color getNpfDayColor(int weekday) => dayPalette(weekday).base;
 
-  /// Textfärg ovanpå dagens färg/gradient.
-  static Color getNpfTextColor(int weekday) => dayPalette(weekday).onColor;
+  /// Textfärg i sidhuvudet (headern). Följer färgrollerna — se
+  /// [headerTextColor]. För text ovanpå en yta i dagens basfärg, använd
+  /// `dayPalette(weekday).onColor`.
+  static Color getNpfTextColor(int weekday) => headerTextColor(weekday);
 
   static Color getDayAccentColor([int? weekday]) =>
       getNpfDayColor(weekday ?? DateTime.now().weekday);
@@ -140,17 +171,8 @@ class AppTheme {
   // ─── App Background ────────────────────────────────────────────────────────
   /// Sidbakgrund med tydlig ton av dagens färg — korten är vita ovanpå,
   /// så färgen syns i "luften" mellan korten istället för i dem.
-  static BoxDecoration getBackground() {
-    if (lowStimuli) {
-      return const BoxDecoration(color: Color(0xFFF4F6F8));
-    }
-    return BoxDecoration(
-      color: Color.alphaBlend(
-        dayPalette().base.withValues(alpha: 0.10),
-        const Color(0xFFF6F6F4),
-      ),
-    );
-  }
+  static BoxDecoration getBackground() =>
+      BoxDecoration(color: colors().pageBackground);
 
   /// Luft under systemets statusfält (klocka, batteri) utan global SafeArea.
   static EdgeInsets paddingBelowStatusBar(
@@ -164,20 +186,22 @@ class AppTheme {
   }
 
   // ─── Colors ────────────────────────────────────────────────────────────────
-  static Color getCardColor() => Colors.white;
+  static Color getCardColor() => colors().cardSurface;
   static Color getTextColor() => const Color(0xFF1A1A2E);
-  static Color getSubTextColor() => Colors.grey.shade500;
+  /// Sekundär text på kort (#5F6368 klarar WCAG AA på tonade kort).
+  static Color getSubTextColor() => colors().onCardSecondary;
 
   // ─── Card Decoration ───────────────────────────────────────────────────────
-  /// [tinted] ger kortet en svag ton av dagens färg istället för rent vitt —
-  /// del av juvel-designen. Default är fortfarande vitt (övriga sidor).
+  /// Kortets yta följer färgrollen `cardSurface` (18 % dagsfärg mot vitt i
+  /// veckodagsläget, vitt i lågstimuli). [tinted] finns kvar för bakåtkompat
+  /// men påverkar inte längre färgen.
   static BoxDecoration cardDecoration({
     double radius = 24, // Lite rundare hörn för modernare look
     Color? color,
     bool tinted = false,
   }) =>
       BoxDecoration(
-        color: color ?? (tinted ? dayPalette().tint : Colors.white),
+        color: color ?? colors().cardSurface,
         borderRadius: BorderRadius.circular(radius),
         boxShadow: lowStimuli
             ? null
@@ -189,11 +213,7 @@ class AppTheme {
                   offset: const Offset(0, 6),
                 ),
               ],
-        border: Border.all(
-          color: lowStimuli
-              ? Colors.black.withValues(alpha: 0.06)
-              : dayPalette().base.withValues(alpha: 0.08),
-        ),
+        border: Border.all(color: colors().cardBorder),
       );
 
   // ─── Event Icons ───────────────────────────────────────────────────────────
@@ -231,11 +251,12 @@ class AppTheme {
         letterSpacing: -0.5,
       );
 
+  /// Sektionsrubrik direkt på sidbakgrunden (färgrollen `onPage`).
   static TextStyle get sectionLabelStyle => TextStyle(
         fontFamily: 'Nunito',
         fontSize: 12,
         fontWeight: FontWeight.w800,
-        color: dayPalette().deep,
+        color: colors().onPage,
         letterSpacing: 1.2,
       );
 

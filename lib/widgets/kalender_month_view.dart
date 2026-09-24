@@ -1,3 +1,4 @@
+import '../navigation/app_navigation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -11,7 +12,6 @@ import '../utils/date_utils.dart';
 import '../utils/person_match.dart';
 import '../utils/recurrence.dart';
 import '../utils/schedule_time_utils.dart';
-import '../screens/staddag_page.dart';
 import 'activity_detail_sheet.dart';
 import 'add_event_sheet.dart';
 
@@ -957,10 +957,8 @@ class _MonthDaySheetState extends State<_MonthDaySheet> {
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const StaddagPage()),
-            );
+            // Städdag hör till Sysslor — byt flik i stället för en kopia här.
+            AppNavigation.openStaddag(context);
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

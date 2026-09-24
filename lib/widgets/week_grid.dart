@@ -134,7 +134,7 @@ class _WeekGridState extends State<WeekGrid> {
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: isToday
-                            ? AppTheme.getNpfTextColor(day.weekday)
+                            ? AppTheme.dayPalette(day.weekday).onColor
                             : Colors.grey.shade600,
                       ),
                     ),

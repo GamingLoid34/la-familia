@@ -17,9 +17,9 @@ import '../widgets/min_dag_view.dart';
 import '../widgets/routine_card.dart';
 import '../widgets/today_chores_sheet.dart';
 import '../widgets/weather_widgets.dart';
-import 'meal_planner_page.dart';
+import '../navigation/app_navigation.dart';
 import 'min_dag_page.dart';
-import 'verktyg_page.dart';
+import 'inbox_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
@@ -723,8 +723,7 @@ class _DashboardPageState extends State<DashboardPage>
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const MealPlannerPage())),
+          onTap: () => AppNavigation.openInMer(context, MerRoute.meals),
           child: Container(
             padding:
                 const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -933,6 +932,24 @@ class _DashboardPageState extends State<DashboardPage>
                     color: textColor),
               ),
             ),
+            // Ny anteckning till Inkorgen — bara vuxna, bredvid vädret.
+            if (user?.isParent == true &&
+                (user?.familyId ?? '').isNotEmpty) ...[
+              Semantics(
+                label: 'Ny anteckning',
+                button: true,
+                child: IconButton(
+                  icon: const Text('📝', style: TextStyle(fontSize: 20)),
+                  tooltip: 'Ny anteckning',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 40, minHeight: 40),
+                  onPressed: () => openQuickNote(context),
+                ),
+              ),
+              const SizedBox(width: 2),
+            ],
             if (hasWeather) ...[
               WeatherHeaderBadge(
                 lat: provider.homeLat!,
@@ -942,17 +959,6 @@ class _DashboardPageState extends State<DashboardPage>
               ),
               const SizedBox(width: 6),
             ],
-            IconButton(
-              icon: const Text('🧰', style: TextStyle(fontSize: 18)),
-              tooltip: 'Verktyg',
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const VerktygPage()),
-              ),
-            ),
             const SizedBox(width: 4),
             if (user != null)
               FilledButton.tonalIcon(
