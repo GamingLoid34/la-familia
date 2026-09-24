@@ -103,7 +103,7 @@ class WidgetService {
       final palette = AppTheme.dayPalette();
       final accentHex =
           '#${palette.base.toARGB32().toRadixString(16).substring(2).toUpperCase()}';
-      final header = 'LA FAMILIA · ${_dayNames[now.weekday]}';
+      final header = 'VARDAG · ${_dayNames[now.weekday]}';
 
       // Skriv bara om något faktiskt ändrats (spar batteri/IO).
       final payload = '$header|$title|$time|$routineLine|$accentHex';

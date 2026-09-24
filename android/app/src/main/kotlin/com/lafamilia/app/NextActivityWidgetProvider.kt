@@ -22,7 +22,7 @@ class NextActivityWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray
     ) {
         val prefs = HomeWidgetPlugin.getData(context)
-        val header = prefs.getString("header", "LA FAMILIA") ?: "LA FAMILIA"
+        val header = prefs.getString("header", "VARDAG") ?: "VARDAG"
         val title = prefs.getString("title", "Öppna appen för att synka") ?: ""
         val time = prefs.getString("time", "") ?: ""
         val routine = prefs.getString("routine", "") ?: ""

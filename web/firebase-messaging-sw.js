@@ -1,4 +1,4 @@
-// Service worker för FCM web push (La Familia).
+// Service worker för FCM web push (Vardag).
 // Tar emot push när webbappen är stängd/i bakgrunden. Notification-meddelanden
 // visas automatiskt av SDK:n; klick fokuserar/öppnar appen.
 importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");

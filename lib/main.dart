@@ -154,7 +154,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'La Familia',
+      title: 'Vardag',
       debugShowCheckedModeBanner: false,
 
       // Språkstöd för svenska

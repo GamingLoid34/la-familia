@@ -450,11 +450,11 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Image.asset(
-                      'assets/images/logo.png',
+                      'assets/images/vardag_logo.png',
                       width: 160,
                       fit: BoxFit.contain,
                       errorBuilder: (_, _, _) => Text(
-                        'La Familia',
+                        'Vardag',
                         style: AppTheme.pageTitleStyle,
                       ),
                     ),

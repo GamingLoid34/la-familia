@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vardags v-symbol i enfärgat utförande (Android 13 temaikoner).
+
+  Samma form som förgrunden. Systemet färgar den efter användarens bakgrundsbild, så
+  fyllfärgen här spelar ingen roll.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.164306"
+        android:scaleY="0.164306"
+        android:translateX="-8.1898"
+        android:translateY="34.6119">
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M490.5,16.5 Q503,12 514,12.5 Q525,13 536.5,20 Q548,27 551.5,35 Q555,43 553.5,54 Q552,65 529.5,93 Q507,121 486,151.5 Q465,182 447,197 Q429,212 411,218 Q393,224 377.5,224 Q362,224 352,221.5 Q342,219 321.5,206 Q301,193 288,177.5 Q275,162 257.5,135 Q240,108 227,94 Q214,80 208,68 Q202,56 204.5,44 Q207,32 217,24 Q227,16 242.5,14.5 Q258,13 267.5,16.5 Q277,20 289.5,33 Q302,46 323,91 Q344,136 353,143.5 Q362,151 373.5,152 Q385,153 393,149.5 Q401,146 408.5,137 Q416,128 437,84 Q458,40 468,30.5 Q478,21 490.5,16.5 Z" />
+    </group>
+</vector>

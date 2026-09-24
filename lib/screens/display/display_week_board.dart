@@ -44,7 +44,7 @@ bool shouldSkipManualWeatherFetch({
 /// - Ökad kontrast och skarp typografi (klocka 72, medlemsnamn 24, chip-titel 21, chip-tid 20)
 /// - Material-ikoner i footern (restaurant_rounded, check_circle_rounded, push_pin_rounded)
 /// - Timer-driven väderuppdatering (var 30:e min + backoff vid fel)
-/// - Synkstämpel 'Synk HH:mm · La Familia' i footerns hörn
+/// - Synkstämpel 'Synk HH:mm · Vardag' i footerns hörn
 class DisplayWeekBoard extends StatefulWidget {
   final WeekBucketingResult data;
   final Set<String> foldedDocIds;

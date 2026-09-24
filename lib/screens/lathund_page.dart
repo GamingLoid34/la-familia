@@ -107,7 +107,7 @@ class _LathundPageState extends State<LathundPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Så funkar La Familia',
+                          'Så funkar Vardag',
                           style: TextStyle(
                             fontSize: 15,
                             color: Colors.grey,

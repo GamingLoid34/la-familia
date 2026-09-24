@@ -1,11 +1,11 @@
 {
-    "name": "La Familia",
-    "short_name": "La Familia",
+    "name": "Vardag",
+    "short_name": "Vardag",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "La Familia app.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#1E5155",
+    "description": "Vardag – familjens kalender, sysslor och vardagsplanering i en app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
@@ -31,5 +31,6 @@
             "type": "image/png",
             "purpose": "maskable"
         }
-    ]
+    ],
+    "lang": "sv"
 }

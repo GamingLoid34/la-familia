@@ -143,7 +143,7 @@ class DisplaySyncStamp extends StatelessWidget {
             ? DateFormat('HH:mm').format(lastSync)
             : null;
         final syncLabel =
-            timeStr != null ? 'Synk $timeStr · La Familia' : 'La Familia';
+            timeStr != null ? 'Synk $timeStr · Vardag' : 'Vardag';
 
         if (hasSyncErr) {
           return Row(

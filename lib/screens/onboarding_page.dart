@@ -264,11 +264,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Image.asset(
-                      'assets/images/logo.png',
+                      'assets/images/vardag_logo.png',
                       width: 150,
                       fit: BoxFit.contain,
                       errorBuilder: (_, _, _) =>
-                          Text('La Familia', style: AppTheme.pageTitleStyle),
+                          Text('Vardag', style: AppTheme.pageTitleStyle),
                     ),
                     const SizedBox(height: 20),
                     Text(

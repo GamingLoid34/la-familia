@@ -65,7 +65,7 @@ class _SplashScreenState extends State<SplashScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'assets/images/logo.png',
+                  'assets/images/vardag_logo.png',
                   width: 220,
                   fit: BoxFit.contain,
                 ),
