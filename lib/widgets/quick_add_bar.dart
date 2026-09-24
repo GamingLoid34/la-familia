@@ -125,6 +125,8 @@ class _QuickAddBarState extends State<QuickAddBar> {
             ? () {
                 _ctrl.clear();
                 showModalBottomSheet<void>(
+                  isDismissible: false,
+                  enableDrag: false,
                   context: context,
                   isScrollControlled: true,
                   backgroundColor: Colors.transparent,
@@ -216,6 +218,25 @@ class _QuickAddBarState extends State<QuickAddBar> {
     );
   }
 }
+
+/// Befintligt bekräftelseflöde för en tolkad syssla, middag eller inköp —
+/// används av aktivitetsformulärets "Skriv eller säg" när meningen inte
+/// gällde en aktivitet.
+Future<void> showQuickAddConfirm(
+  BuildContext context, {
+  required QuickAddDraft draft,
+  required String familyId,
+}) =>
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _QuickAddConfirmSheet(
+        draft: draft,
+        familyId: familyId,
+        onSaved: () {},
+      ),
+    );
 
 class _QuickAddConfirmSheet extends StatefulWidget {
   final QuickAddDraft draft;

@@ -1,9 +1,17 @@
+import 'dart:async';
 import 'dart:developer' as developer;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../providers/family_provider.dart';
+import '../utils/checklist_updates.dart';
+import '../utils/event_actions.dart';
 import '../utils/layout.dart';
+import '../utils/lesson_prep.dart';
+import '../utils/permissions.dart';
+import 'vardag_header.dart';
 import '../utils/schedule_time_utils.dart';
 import '../app_theme.dart';
 import 'event_reactions_row.dart';
@@ -44,10 +52,22 @@ Map<String, String> _extendedPropsMap(Map<String, dynamic> data) {
   return out;
 }
 
+/// Gemensam aktivitetsdetalj från Hem, Kalender och Min dag.
+///
+/// Läser aktiviteten live, så att en avbockning någon annan gjort syns direkt
+/// och så att den egna avbockningen aldrig skriver tillbaka en gammal lista.
+/// [occurrenceDate] är den förekomst användaren tittar på — för en
+/// återkommande aktivitet används den vid "Bara denna gång" och för
+/// lektionsförberedelsen, aldrig seriens startdag eller veckans måndag.
 class ActivityDetailSheet extends StatefulWidget {
   final QueryDocumentSnapshot docSnapshot;
+  final DateTime? occurrenceDate;
 
-  const ActivityDetailSheet({super.key, required this.docSnapshot});
+  const ActivityDetailSheet({
+    super.key,
+    required this.docSnapshot,
+    this.occurrenceDate,
+  });
 
   @override
   State<ActivityDetailSheet> createState() => _ActivityDetailSheetState();
@@ -55,17 +75,50 @@ class ActivityDetailSheet extends StatefulWidget {
 
 class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
   late Map<String, dynamic> _data;
-  late List<Map<String, dynamic>> _checklist;
+  late final DocumentReference<Map<String, dynamic>> _ref;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
+  bool _gone = false;
+  final Set<int> _savingRows = {};
+  bool _savingPrep = false;
+
+  List<dynamic> get _rows => checklistRowsOf(_data['checklist']);
+
+  DateTime get _day =>
+      widget.occurrenceDate ?? _parseDate(_data['date']) ?? DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _data = widget.docSnapshot.data() as Map<String, dynamic>;
-    _checklist = List<Map<String, dynamic>>.from(
-        (_data['checklist'] as List? ?? []).cast<Map<String, dynamic>>());
+    _data = Map<String, dynamic>.from(widget.docSnapshot.data() as Map);
+    _ref = FirebaseFirestore.instance
+        .collection('planner_events')
+        .doc(widget.docSnapshot.id);
+    _sub = _ref.snapshots().listen((snap) {
+      if (!mounted) return;
+      if (!snap.exists) {
+        setState(() => _gone = true);
+        return;
+      }
+      setState(() {
+        _gone = false;
+        _data = snap.data()!;
+      });
+    }, onError: (Object e, StackTrace st) {
+      developer.log('ActivityDetailSheet: kunde inte läsa live',
+          error: e, stackTrace: st);
+    });
   }
 
-  bool get _allDone => _checklist.isNotEmpty && _checklist.every((i) => i['isDone'] == true);
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  bool get _allDone {
+    final rows = _rows;
+    return rows.isNotEmpty && rows.every(checklistIsDone);
+  }
 
   Future<void> _openExternalUrl(String raw) async {
     var u = Uri.tryParse(raw.trim());
@@ -77,11 +130,66 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
     }
   }
 
+  /// Bockar en rad i en transaktion mot den färska listan — andra rader och
+  /// andras avbockningar rörs inte.
   Future<void> _toggleItem(int index) async {
-    final newList = List<Map<String, dynamic>>.from(_checklist);
-    newList[index] = {...newList[index], 'isDone': !(newList[index]['isDone'] == true)};
-    setState(() => _checklist = newList);
-    await widget.docSnapshot.reference.update({'checklist': newList});
+    if (_savingRows.contains(index)) return;
+    final rows = _rows;
+    if (index >= rows.length) return;
+    final text = checklistTextOf(rows[index]) ?? '';
+    setState(() => _savingRows.add(index));
+    try {
+      await setChecklistItemDone(_ref, index, text,
+          done: !checklistIsDone(rows[index]));
+    } on ChecklistChangedException catch (e) {
+      if (mounted) showVardagSnack(context, e.message, isError: true);
+    } catch (e) {
+      if (mounted) {
+        showVardagSnack(context, 'Kunde inte spara: $e', isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _savingRows.remove(index));
+    }
+  }
+
+  Future<void> _togglePrep() async {
+    if (_savingPrep) return;
+    setState(() => _savingPrep = true);
+    try {
+      await LessonPrep.setDone(_ref, _day,
+          done: !LessonPrep.isDoneOn(_data, _day));
+    } catch (e) {
+      if (mounted) {
+        showVardagSnack(context, 'Kunde inte spara: $e', isError: true);
+      }
+    } finally {
+      if (mounted) setState(() => _savingPrep = false);
+    }
+  }
+
+  Future<void> _edit() async {
+    final p = context.read<FamilyProvider>();
+    await handleEventMenuAction(
+      context,
+      action: 'edit',
+      doc: widget.docSnapshot,
+      listDay: _day,
+      familyMembers: p.familyMembers,
+      familyId: p.currentUser?.familyId ?? '',
+    );
+  }
+
+  Future<void> _delete() async {
+    final p = context.read<FamilyProvider>();
+    final deleted = await handleEventMenuAction(
+      context,
+      action: 'delete',
+      doc: widget.docSnapshot,
+      listDay: _day,
+      familyMembers: p.familyMembers,
+      familyId: p.currentUser?.familyId ?? '',
+    );
+    if (deleted && mounted) Navigator.of(context).maybePop();
   }
 
   @override
@@ -117,6 +225,8 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
         extras.isNotEmpty;
 
     final maxH = MediaQuery.sizeOf(context).height * 0.85;
+    final canEdit =
+        canEditDoc(context.read<FamilyProvider>().currentUser, _data);
 
     return wrapBottomSheet(
       context,
@@ -129,12 +239,25 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
-          ),
+          // Handle + tydlig stängning
+          Row(children: [
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+            ),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Stäng',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+              ),
+            ),
+          ]),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
@@ -266,19 +389,40 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
                     ],
                   ],
                   // Checklist
-                  if (_checklist.isNotEmpty) ...[
+                  if (LessonPrep.isEnabled(_data)) ...[
+                    const SizedBox(height: 24),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('FÖRBEREDELSE DAGEN INNAN',
+                          style: AppTheme.sectionLabelStyle),
+                    ),
+                    const SizedBox(height: 8),
+                    _AnimatedCheckItem(
+                      label: LessonPrep.textOf(_data) ?? '',
+                      isDone: LessonPrep.isDoneOn(_data, _day),
+                      dayColor: dayColor,
+                      onToggle: _togglePrep,
+                    ),
+                    Text(
+                      'Gäller ${DateFormat('EEEE d MMMM', 'sv').format(_day)}.',
+                      style: TextStyle(
+                          fontSize: 12, color: AppTheme.getSubTextColor()),
+                    ),
+                  ],
+                  if (_rows.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text('ATT TA MED / FÖRBEREDELSER', style: AppTheme.sectionLabelStyle),
                     ),
                     const SizedBox(height: 8),
-                    ..._checklist.asMap().entries.map((entry) =>
-                        _AnimatedCheckItem(
-                          item: entry.value,
-                          dayColor: dayColor,
-                          onToggle: () => _toggleItem(entry.key),
-                        )),
+                    for (var i = 0; i < _rows.length; i++)
+                      _AnimatedCheckItem(
+                        label: checklistTextOf(_rows[i]) ?? '',
+                        isDone: checklistIsDone(_rows[i]),
+                        dayColor: dayColor,
+                        onToggle: () => _toggleItem(i),
+                      ),
                     // All done banner
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 400),
@@ -299,6 +443,41 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
                           : const SizedBox.shrink(key: ValueKey('no-banner')),
                     ),
                   ],
+                  if (_gone) ...[
+                    const SizedBox(height: 16),
+                    const Text('Aktiviteten finns inte längre.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ],
+                  if (!_gone && canEdit) ...[
+                    const SizedBox(height: 24),
+                    Row(children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _delete,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: const Text('Ta bort'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFB3261E),
+                            side: const BorderSide(color: Color(0x80B3261E)),
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _edit,
+                          icon: const Icon(Icons.edit_rounded),
+                          label: const Text('Redigera'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: dayColor,
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ],
                   const SizedBox(height: 32),
                 ],
               ),
@@ -313,12 +492,14 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
 
 // ─── ANIMATED CHECK ITEM ─────────────────────────────────────────────────────
 class _AnimatedCheckItem extends StatefulWidget {
-  final Map<String, dynamic> item;
+  final String label;
+  final bool isDone;
   final Color dayColor;
   final VoidCallback onToggle;
 
   const _AnimatedCheckItem({
-    required this.item,
+    required this.label,
+    required this.isDone,
     required this.dayColor,
     required this.onToggle,
   });
@@ -352,8 +533,8 @@ class _AnimatedCheckItemState extends State<_AnimatedCheckItem>
 
   @override
   Widget build(BuildContext context) {
-    final isDone = widget.item['isDone'] == true;
-    final label = widget.item['item'] as String? ?? '';
+    final isDone = widget.isDone;
+    final label = widget.label;
 
     return GestureDetector(
       onTap: _tap,

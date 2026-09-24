@@ -25,6 +25,7 @@ import 'screens/onboarding_page.dart';
 import 'screens/splash_screen.dart';
 import 'app_theme.dart';
 import 'navigation/app_navigation.dart';
+import 'utils/aktivitet_payload.dart';
 import 'theme/app_colors.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
@@ -158,6 +159,7 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Vardag',
+      navigatorKey: AppNavigation.navigatorKey,
       debugShowCheckedModeBanner: false,
 
       // Språkstöd för svenska
@@ -271,6 +273,7 @@ class _MainPageState extends State<MainPage> {
     AppNavigation.tabsAvailable = true;
     AppNavigation.tab.value = _selectedIndex;
     AppNavigation.tab.addListener(_onNavigationTab);
+    AktivitetSparning.instans.senaFel.addListener(_onLateSaveError);
     _pageController = PageController(initialPage: _selectedIndex);
     _pages = [
       const DashboardPage(),
@@ -333,9 +336,37 @@ class _MainPageState extends State<MainPage> {
   @override
   void dispose() {
     AppNavigation.tab.removeListener(_onNavigationTab);
+    AktivitetSparning.instans.senaFel.removeListener(_onLateSaveError);
     AppNavigation.tabsAvailable = false;
     _pageController.dispose();
     super.dispose();
+  }
+
+  bool _showingLateError = false;
+
+  /// Ett nekande som kom efter att formuläret slutat vänta — sägs alltid.
+  Future<void> _onLateSaveError() async {
+    if (_showingLateError) return;
+    final errors = AktivitetSparning.instans.senaFel.value;
+    final ctx = AppNavigation.navigatorKey.currentContext;
+    if (errors.isEmpty || ctx == null) return;
+    _showingLateError = true;
+    await showDialog<void>(
+      context: ctx,
+      builder: (c) => AlertDialog(
+        title: const Text('Aktiviteten sparades inte'),
+        content: Text(errors.first),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(c), child: const Text('OK')),
+        ],
+      ),
+    );
+    AktivitetSparning.instans.kvitteraFel();
+    _showingLateError = false;
+    if (AktivitetSparning.instans.senaFel.value.isNotEmpty) {
+      unawaited(_onLateSaveError());
+    }
   }
 
   /// En genväg någon annanstans i appen har bytt flik.

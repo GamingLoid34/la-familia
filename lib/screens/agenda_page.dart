@@ -416,6 +416,8 @@ class _AgendaPageState extends State<AgendaPage>
                   familyId: user?.familyId ?? '',
                   onFallbackToForm: (raw) {
                     showModalBottomSheet(
+                      isDismissible: false,
+                      enableDrag: false,
                       context: context,
                       isScrollControlled: true,
                       backgroundColor: Colors.transparent,
@@ -681,6 +683,8 @@ class _AgendaPageState extends State<AgendaPage>
         onActivityTap: () {
           Navigator.pop(context);
           showModalBottomSheet(
+            isDismissible: false,
+            enableDrag: false,
             context: context,
             isScrollControlled: true,
             backgroundColor: Colors.transparent,

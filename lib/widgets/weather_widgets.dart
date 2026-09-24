@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
 import '../services/weather_service.dart';
+import '../utils/calendar_weather_selection.dart';
 import 'weather_detail_sheet.dart';
 
 /// Aktuell temp + symbol för Hem-headern.
@@ -210,6 +211,94 @@ class _DayCell extends StatelessWidget {
         else
           const SizedBox(height: 12),
       ],
+    );
+  }
+}
+
+/// Väder för **vald** dag i Kalenderns dagläge (Androids
+/// `CalendarDayWeatherRow`). Ritas bara när prognosen har underlag för just
+/// den dagen; gammal cache markeras "Kan vara inaktuell".
+class CalendarDayWeatherRow extends StatefulWidget {
+  final double lat;
+  final double lon;
+  final String? placeName;
+  final DateTime day;
+
+  const CalendarDayWeatherRow({
+    super.key,
+    required this.lat,
+    required this.lon,
+    required this.day,
+    this.placeName,
+  });
+
+  @override
+  State<CalendarDayWeatherRow> createState() => _CalendarDayWeatherRowState();
+}
+
+class _CalendarDayWeatherRowState extends State<CalendarDayWeatherRow> {
+  WeatherSnapshot? _snap;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant CalendarDayWeatherRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.lat != widget.lat || oldWidget.lon != widget.lon) _load();
+  }
+
+  Future<void> _load() async {
+    final snap = await WeatherService.instance.forecastFor(widget.lat, widget.lon);
+    if (mounted) setState(() => _snap = snap);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final val = CalendarWeatherSelection.valjFor(
+      snapshot: _snap,
+      harHemposition: true,
+      valdDag: widget.day,
+      nu: DateTime.now(),
+    );
+    if (val is! VaderTraff) return const SizedBox.shrink();
+    final c = AppTheme.colors();
+    final temp = CalendarWeatherSelection.temperaturText(val.forecast);
+    return Semantics(
+      label: CalendarWeatherSelection.upplasning(val, idag: DateTime.now()),
+      button: true,
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+        child: Material(
+          color: c.cardSurface,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => showWeatherDetailSheet(context,
+                lat: widget.lat, lon: widget.lon, placeName: widget.placeName),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Row(children: [
+                Text(val.forecast.emoji, style: const TextStyle(fontSize: 20)),
+                const SizedBox(width: 10),
+                if (temp != null)
+                  Text(temp,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800, color: c.onCardPrimary)),
+                const Spacer(),
+                if (val.aldrig)
+                  Text(CalendarWeatherSelection.kanVaraInaktuell,
+                      style: TextStyle(fontSize: 12, color: c.onCardSecondary)),
+                Icon(Icons.chevron_right_rounded, color: c.onCardIcon, size: 18),
+              ]),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

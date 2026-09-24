@@ -434,6 +434,8 @@ class _AiPlannerSheetState extends State<_AiPlannerSheet> {
     final user = provider.currentUser;
 
     await showModalBottomSheet<void>(
+      isDismissible: false,
+      enableDrag: false,
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,

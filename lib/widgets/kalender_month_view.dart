@@ -1,9 +1,9 @@
-import '../navigation/app_navigation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../app_theme.dart';
+import '../navigation/app_navigation.dart';
 import '../models/user_model.dart';
 import '../services/notification_service.dart';
 import '../services/chore_service.dart';
@@ -842,6 +842,8 @@ class _MonthDaySheetState extends State<_MonthDaySheet> {
                     style: IconButton.styleFrom(backgroundColor: dayColor),
                     onPressed: () {
                       showModalBottomSheet<void>(
+                        isDismissible: false,
+                        enableDrag: false,
                         context: context,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,

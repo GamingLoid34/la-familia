@@ -8,12 +8,11 @@ import '../providers/family_provider.dart';
 import '../utils/chore_utils.dart';
 import '../utils/date_utils.dart';
 import '../utils/layout.dart';
-import '../utils/member_presence.dart';
 import '../utils/minute_ticker.dart';
 import '../utils/person_match.dart';
-import '../widgets/member_avatar.dart';
-import '../widgets/member_day_sheet.dart';
 import '../widgets/min_dag_view.dart';
+import '../widgets/tomorrow_overview_section.dart';
+import '../widgets/add_event_sheet.dart';
 import '../widgets/routine_card.dart';
 import '../widgets/today_chores_sheet.dart';
 import '../widgets/weather_widgets.dart';
@@ -38,21 +37,6 @@ class _DashboardPageState extends State<DashboardPage>
     super.initState();
     MinuteTicker.ensureRunning();
   }
-
-  Stream<QuerySnapshot>? _shiftsStream(String? fid) => fid == null || fid.isEmpty
-      ? null
-      : FirebaseFirestore.instance
-          .collection('families')
-          .doc(fid)
-          .collection('work_shifts')
-          .snapshots();
-
-  Stream<QuerySnapshot>? _busyStream(String? fid) => fid == null || fid.isEmpty
-      ? null
-      : FirebaseFirestore.instance
-          .collection('busy_sessions')
-          .where('familyId', isEqualTo: fid)
-          .snapshots();
 
   List<QueryDocumentSnapshot> _getSortedDocs(List<QueryDocumentSnapshot> rawDocs) {
     final list = rawDocs.toList();
@@ -221,7 +205,7 @@ class _DashboardPageState extends State<DashboardPage>
         isUpcoming: false,
         isTomorrow: true,
         isEmpty: false,
-        heroTag: 'Inget mer idag 🎈',
+        heroTag: 'Nästa: i morgon',
         title: '$pik $title',
         timeInfo: 'I morgon kl $tStr',
         piktogram: pik,
@@ -274,107 +258,126 @@ class _DashboardPageState extends State<DashboardPage>
       return const MinDagView(embedded: true);
     }
 
-    // Förälder- och ungdomsläge får "Upp näst"-hemmet.
-    return Container(
-      decoration: AppTheme.getBackground(),
-      child: _buildParentYouthView(familyProvider),
+    // Förälder- och ungdomsläge får "Upp näst"-hemmet. Vuxna har "Lägg till".
+    final colors = AppTheme.colors();
+    return Scaffold(
+      backgroundColor: colors.pageBackground,
+      floatingActionButton: user?.isParent == true
+          ? Semantics(
+              label: 'Lägg till aktivitet',
+              child: FloatingActionButton.extended(
+                heroTag: 'hem_lagg_till',
+                backgroundColor: colors.accent,
+                foregroundColor: colors.onAccent,
+                elevation: AppTheme.lowStimuli ? 0 : 6,
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Lägg till',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  isDismissible: false,
+                  enableDrag: false,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => AddEventSheet(
+                    selectedDay: DateTime.now(),
+                    familyMembers: familyProvider.familyMembers,
+                    familyId: user?.familyId,
+                  ),
+                ),
+              ),
+            )
+          : null,
+      body: _buildParentYouthView(familyProvider),
     );
   }
 
   Widget _buildParentYouthView(FamilyProvider provider) {
     final user = provider.currentUser;
-    final fid = user?.familyId ?? provider.currentUser?.familyId;
     final chores = _choresForMe(provider.chores, user);
     final dayColor = AppTheme.getDayAccentColor();
+    final isParent = user?.isParent == true;
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: _shiftsStream(fid),
-      builder: (context, shiftSnap) {
-        final shifts = shiftSnap.data?.docs ?? const <QueryDocumentSnapshot>[];
+    // "INFÖR I MORGON" för vuxna hela dagen (Android-appen Vardag). Övriga får
+    // den enkla "I MORGON"-listan efter 18:00. "IDAG I FAMILJEN" är borttagen
+    // från Hem — familjemedlemmarna nås via Kalenderns meny.
+    Widget? tomorrow(DateTime now) {
+      if (isParent) return TomorrowOverviewSection(now: now);
+      if (now.hour >= 18) {
+        return _buildSection('I MORGON', _buildTomorrowPreview(provider, user));
+      }
+      return null;
+    }
 
-        return StreamBuilder<QuerySnapshot>(
-          stream: _busyStream(fid),
-          builder: (context, busySnap) {
-            final busyDocs = busySnap.data?.docs ?? const <QueryDocumentSnapshot>[];
+    final bottom = SizedBox(height: navSafeBottom(context).bottom + 84);
 
-            if (!WindowSize.of(context).isWide) {
-              return CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverToBoxAdapter(child: _buildHeader(user)),
-                  SliverToBoxAdapter(
-                    child: _buildNuNastHero(context, provider, user, dayColor),
-                  ),
-                  ..._myRoutineSlivers(provider, user),
-                  SliverToBoxAdapter(
-                    child: _buildFamilyRow(context, provider, user, shifts, busyDocs),
-                  ),
-                  if (provider.todayMeals.isNotEmpty)
-                    SliverToBoxAdapter(child: _buildTonightMeal(provider)),
-                  SliverToBoxAdapter(
-                    child: _buildChoresCard(context, chores, user, dayColor),
-                  ),
-                  if (DateTime.now().hour >= 18)
-                    SliverToBoxAdapter(
-                      child: _buildSection(
-                        'I MORGON',
-                        _buildTomorrowPreview(provider, user),
-                      ),
-                    ),
-                  SliverToBoxAdapter(
-                    child: SizedBox(height: navSafeBottom(context).bottom + 20),
-                  ),
-                ],
-              );
-            }
+    if (!WindowSize.of(context).isWide) {
+      return ValueListenableBuilder<DateTime>(
+        valueListenable: MinuteTicker.now,
+        builder: (context, now, _) {
+          final t = tomorrow(now);
+          return CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(child: _buildHeader(user)),
+              SliverToBoxAdapter(
+                child: _buildNuNastHero(context, provider, user, dayColor),
+              ),
+              ..._myRoutineSlivers(provider, user),
+              if (provider.todayMeals.isNotEmpty)
+                SliverToBoxAdapter(child: _buildTonightMeal(provider)),
+              SliverToBoxAdapter(
+                child: _buildChoresCard(context, chores, user, dayColor),
+              ),
+              if (t != null) SliverToBoxAdapter(child: t),
+              SliverToBoxAdapter(child: bottom),
+            ],
+          );
+        },
+      );
+    }
 
-            // Bred skärm
-            return CustomScrollView(
-              physics: const BouncingScrollPhysics(),
-              slivers: [
-                SliverToBoxAdapter(child: _buildHeader(user)),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: navSafeBottom(context),
-                    child: IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+    // Bred skärm
+    return ValueListenableBuilder<DateTime>(
+      valueListenable: MinuteTicker.now,
+      builder: (context, now, _) {
+        final t = tomorrow(now);
+        return CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(child: _buildHeader(user)),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: navSafeBottom(context),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Vänster kolumn
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Vänster kolumn
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _buildNuNastHero(context, provider, user, dayColor),
-                                _buildFamilyRow(context, provider, user, shifts, busyDocs),
-                                ..._routineColumnChildren(provider, user),
-                              ],
-                            ),
-                          ),
-                          // Höger kolumn
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                if (provider.todayMeals.isNotEmpty)
-                                  _buildTonightMeal(provider),
-                                _buildChoresCard(context, chores, user, dayColor),
-                                if (DateTime.now().hour >= 18)
-                                  _buildSection(
-                                    'I MORGON',
-                                    _buildTomorrowPreview(provider, user),
-                                  ),
-                              ],
-                            ),
-                          ),
+                          _buildNuNastHero(context, provider, user, dayColor),
+                          ..._routineColumnChildren(provider, user),
+                          if (provider.todayMeals.isNotEmpty)
+                            _buildTonightMeal(provider),
+                          _buildChoresCard(context, chores, user, dayColor),
                         ],
                       ),
                     ),
-                  ),
+                    // Höger kolumn
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [?t],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            );
-          },
+              ),
+            ),
+            SliverToBoxAdapter(child: bottom),
+          ],
         );
       },
     );
@@ -541,85 +544,6 @@ class _DashboardPageState extends State<DashboardPage>
           ),
         );
       },
-    );
-  }
-
-  Widget _buildFamilyRow(
-    BuildContext context,
-    FamilyProvider provider,
-    UserModel? user,
-    List<QueryDocumentSnapshot> shifts,
-    List<QueryDocumentSnapshot> busyDocs,
-  ) {
-    final members = provider.familyMembers;
-    if (members.isEmpty) return const SizedBox.shrink();
-
-    return _buildSection(
-      'IDAG I FAMILJEN',
-      SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: members.map((m) {
-            final memberEvents = provider.todayEvents.where((doc) {
-              return eventIncludesPerson(
-                doc.data() as Map<String, dynamic>,
-                uid: m.uid,
-                name: m.name,
-              );
-            }).toList();
-
-            final presence = computeMemberPresence(
-              m,
-              memberTodayEvents: memberEvents,
-              familyShiftDocs: shifts,
-              familyBusyDocs: busyDocs,
-            );
-
-            return Padding(
-              padding: const EdgeInsets.only(right: 14),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) => MemberDaySheet(
-                    member: m,
-                    currentUser: user,
-                    initialDay: DateTime.now(),
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FamilyMemberAvatar(
-                      member: m,
-                      size: 50,
-                      presenceColor: presence.ringColor,
-                    ),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      width: 58,
-                      child: Text(
-                        m.name.split(' ').first,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
     );
   }
 

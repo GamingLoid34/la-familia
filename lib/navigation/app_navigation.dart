@@ -62,6 +62,14 @@ class AppNavigation {
   /// öppnas undersidor direkt ovanpå den vy man står i.
   static bool tabsAvailable = false;
 
+  /// Appens rotnavigator (`MaterialApp.navigatorKey`), så att en genväg kan
+  /// användas även efter att arket den startades från stängts.
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
+  static NavigatorState _nav(BuildContext? context) =>
+      navigatorKey.currentState ?? Navigator.of(context!, rootNavigator: true);
+
   static Widget pageFor(MerRoute route, {bool composeNote = false}) {
     switch (route) {
       case MerRoute.aterkommande:
@@ -94,8 +102,7 @@ class AppNavigation {
   /// Lämna eventuella undersidor och gå till fliken [index].
   static void goToTab(BuildContext context, int index) {
     if (tabsAvailable) {
-      Navigator.of(context, rootNavigator: true)
-          .popUntil((r) => r.isFirst);
+      _nav(context).popUntil((r) => r.isFirst);
     }
     tab.value = index;
   }
@@ -106,7 +113,7 @@ class AppNavigation {
     MerRoute route, {
     bool composeNote = false,
   }) async {
-    final nav = Navigator.of(context, rootNavigator: true);
+    final nav = _nav(context);
     if (tabsAvailable) {
       nav.popUntil((r) => r.isFirst);
       tab.value = tabMer;
@@ -118,7 +125,7 @@ class AppNavigation {
 
   /// Städdag hör till Sysslor.
   static Future<void> openStaddag(BuildContext context) async {
-    final nav = Navigator.of(context, rootNavigator: true);
+    final nav = _nav(context);
     if (tabsAvailable) {
       nav.popUntil((r) => r.isFirst);
       tab.value = tabSysslor;
@@ -130,7 +137,16 @@ class AppNavigation {
   static void showInCalendar(BuildContext context, DateTime day,
       {String? eventId}) {
     if (!tabsAvailable) return;
-    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+    _nav(context).popUntil((r) => r.isFirst);
+    tab.value = tabKalender;
+    calendarTarget.value = CalendarTarget(day, eventId: eventId);
+  }
+
+  /// Som [showInCalendar] men utan kontext (t.ex. från en snackbar efter
+  /// att formuläret stängts).
+  static void showInCalendarGlobal(DateTime day, {String? eventId}) {
+    if (!tabsAvailable) return;
+    navigatorKey.currentState?.popUntil((r) => r.isFirst);
     tab.value = tabKalender;
     calendarTarget.value = CalendarTarget(day, eventId: eventId);
   }

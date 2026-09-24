@@ -1,4 +1,3 @@
-import '../navigation/app_navigation.dart';
 import 'dart:async';
 import 'dart:developer' as developer;
 
@@ -10,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../app_theme.dart';
+import '../navigation/app_navigation.dart';
 import '../models/user_model.dart';
 import '../providers/family_provider.dart';
 import '../utils/chore_utils.dart';
@@ -23,14 +23,12 @@ import '../utils/permissions.dart';
 import '../utils/person_match.dart';
 import '../utils/recurrence.dart';
 import '../widgets/add_event_sheet.dart';
-import '../widgets/busy_check_in_sheet.dart';
-import '../widgets/family_notes_strip.dart';
 import '../utils/schedule_display.dart';
 import '../utils/schedule_time_utils.dart';
 import '../widgets/activity_detail_sheet.dart';
 import '../widgets/kalender_month_view.dart';
+import '../widgets/member_avatar.dart';
 import '../widgets/member_day_sheet.dart';
-import '../widgets/quick_add_bar.dart';
 import '../widgets/week_grid.dart';
 import '../widgets/week_list.dart';
 import '../widgets/weather_widgets.dart';
@@ -75,10 +73,46 @@ class _KalenderPageState extends State<KalenderPage>
     MinuteTicker.now.addListener(_onMinuteTick);
     _scheduleMidnightRoll();
     _loadLage();
+    AppNavigation.calendarTarget.addListener(_onCalendarTarget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onCalendarTarget());
+  }
+
+  /// "Visa" efter sparning: rätt datum i dagläget och aktivitetens detalj.
+  Future<void> _onCalendarTarget() async {
+    final target = AppNavigation.calendarTarget.value;
+    if (target == null || !mounted) return;
+    AppNavigation.calendarTarget.value = null;
+    final day = DateTime(target.day.year, target.day.month, target.day.day);
+    setState(() {
+      _selectedDay = day;
+      _focusedDay = day;
+      _weekStart = _mondayOf(day);
+      if (_lage == KalenderLage.manad) _lage = KalenderLage.dag;
+    });
+    final id = target.eventId;
+    if (id == null) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('planner_events')
+          .where(FieldPath.documentId, isEqualTo: id)
+          .limit(1)
+          .get();
+      if (!mounted || snap.docs.isEmpty) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) =>
+            ActivityDetailSheet(docSnapshot: snap.docs.first, occurrenceDate: day),
+      );
+    } catch (e, stack) {
+      developer.log('Kunde inte öppna aktiviteten', error: e, stackTrace: stack);
+    }
   }
 
   @override
   void dispose() {
+    AppNavigation.calendarTarget.removeListener(_onCalendarTarget);
     MinuteTicker.now.removeListener(_onMinuteTick);
     _midnightTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -381,23 +415,6 @@ class _KalenderPageState extends State<KalenderPage>
       });
   }
 
-  void _openMemberToday(
-    FamilyProvider provider,
-    UserModel member, [
-    List<QueryDocumentSnapshot>? todayEvents,
-  ]) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => MemberDaySheet(
-        member: member,
-        currentUser: provider.currentUser,
-        initialDay: DateTime.now(),
-      ),
-    );
-  }
-
   void _openCell(
     FamilyProvider provider,
     UserModel member,
@@ -416,39 +433,6 @@ class _KalenderPageState extends State<KalenderPage>
     );
   }
 
-  Future<void> _takeResponsibility(
-      FamilyProvider provider, ScheduleConflict c) async {
-    final me = provider.currentUser;
-    if (me == null) return;
-    final now = DateTime.now();
-    final label =
-        '${DateFormat('EEE', 'sv').format(c.day)} ${DateFormat('HH:mm').format(c.start)}';
-    try {
-      await FirebaseFirestore.instance.collection('family_notes').add({
-        'familyId': me.familyId,
-        'fromUid': me.uid,
-        'fromName': me.name,
-        'fromColor': me.color,
-        'date': dateKey(c.day),
-        'createdAt': FieldValue.serverTimestamp(),
-        'text': '✋ ${me.name.split(' ').first} tar ansvar $label',
-        'expiresAt': Timestamp.fromDate(now.add(const Duration(days: 7))),
-      });
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Noterat på familjetavlan! ✋'),
-            backgroundColor: Color(0xFF6BAE75),
-          ),
-        );
-      }
-    } catch (e, stack) {
-      developer.log('takeResponsibility misslyckades',
-          error: e, stackTrace: stack);
-    }
-  }
-
   void _showConflict(FamilyProvider provider, ScheduleConflict c) {
     if (c.isPickup) {
       showDialog<void>(
@@ -460,11 +444,6 @@ class _KalenderPageState extends State<KalenderPage>
             TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text('Stäng'),
-            ),
-            FilledButton.icon(
-              icon: const Text('✋'),
-              label: const Text('Jag tar det'),
-              onPressed: () => _takeResponsibility(provider, c),
             ),
           ],
         ),
@@ -487,11 +466,6 @@ class _KalenderPageState extends State<KalenderPage>
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Stäng'),
-          ),
-          FilledButton.icon(
-            icon: const Text('✋'),
-            label: const Text('Jag tar det'),
-            onPressed: () => _takeResponsibility(provider, c),
           ),
         ],
       ),
@@ -634,8 +608,27 @@ class _KalenderPageState extends State<KalenderPage>
     final window = _dateWindow();
     final effectiveLage = _effectiveLage;
 
+    final colors = AppTheme.colors();
     return Scaffold(
       backgroundColor: Colors.transparent,
+      floatingActionButton: isFocus
+          ? null
+          : FloatingActionButton.extended(
+              heroTag: 'kalender_lagg_till',
+              tooltip: 'Lägg till aktivitet',
+              backgroundColor: colors.accent,
+              foregroundColor: colors.onAccent,
+              elevation: AppTheme.lowStimuli ? 0 : 6,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Lägg till',
+                  style: TextStyle(fontWeight: FontWeight.w800)),
+              onPressed: () => showActivityForm(
+                context,
+                day: _selectedDay,
+                familyMembers: members,
+                familyId: fid,
+              ),
+            ),
       body: Container(
         decoration: AppTheme.getBackground(),
         child: StreamBuilder<QuerySnapshot>(
@@ -688,35 +681,26 @@ class _KalenderPageState extends State<KalenderPage>
                                 user?.isParent ?? false,
                                 provider,
                               ),
-                              QuickAddBar(
-                                dense: true,
-                                familyMembers: members,
-                                familyId: fid ?? '',
-                                onFallbackToForm: (raw) {
-                                  showModalBottomSheet<void>(
-                                    context: context,
-                                    isScrollControlled: true,
-                                    backgroundColor: Colors.transparent,
-                                    builder: (_) => AddEventSheet(
-                                      selectedDay: _selectedDay,
-                                      familyMembers: members,
-                                      familyId: fid ?? '',
-                                      initialTitle: raw,
-                                    ),
-                                  );
-                                },
-                              ),
-                              const FamilyNotesStrip(),
                               if (conflicts.isNotEmpty &&
                                   !(effectiveLage == KalenderLage.vecka &&
                                       !WindowSize.of(context).isExpanded))
                                 _buildConflictStrip(provider, conflicts),
                               _buildModeSelector(dayColor, isFocus),
                               _buildPersonFilter(members, dayColor),
+                              _buildActiveFilterLine(),
+                              if (effectiveLage == KalenderLage.dag &&
+                                  provider.hasHomeLocation)
+                                CalendarDayWeatherRow(
+                                  lat: provider.homeLat!,
+                                  lon: provider.homeLon!,
+                                  placeName: provider.homeName,
+                                  day: _selectedDay,
+                                ),
                             ] else ...[
                               _buildMinimalHeader(context),
                               _buildModeSelector(dayColor, isFocus),
                               _buildPersonFilter(members, dayColor),
+                              _buildActiveFilterLine(),
                             ],
                             Expanded(
                               child: _buildModeContent(
@@ -817,7 +801,7 @@ class _KalenderPageState extends State<KalenderPage>
                               _openCell(provider, m, day, dayEvents),
                           onFamilyRowTap: _showFamilyDaySheet,
                           onMemberAvatarTap: (m) =>
-                              _openMemberToday(provider, m, provider.todayEvents),
+                              _openCell(provider, m, _selectedDay),
                         ),
                 ),
               ),
@@ -843,7 +827,7 @@ class _KalenderPageState extends State<KalenderPage>
                             _openCell(provider, m, day, dayEvents),
                         onFamilyRowTap: _showFamilyDaySheet,
                         onMemberAvatarTap: (m) =>
-                            _openMemberToday(provider, m, provider.todayEvents),
+                            _openCell(provider, m, _selectedDay),
                         onConflictTap: (c) => _showConflict(provider, c),
                       ),
               ),
@@ -1231,6 +1215,11 @@ class _KalenderPageState extends State<KalenderPage>
               label: m.name.split(' ').first,
               selected: _filterPerson == m.name,
               color: mc,
+              avatar: FamilyMemberAvatar(
+                member: m,
+                size: 24,
+                presenceColor: _filterPerson == m.name ? mc : null,
+              ),
               onTap: () => setState(() {
                 if (_filterPerson == m.name) {
                   _filterPerson = null;
@@ -1243,22 +1232,6 @@ class _KalenderPageState extends State<KalenderPage>
             );
           }),
         ],
-      ),
-    );
-  }
-
-  void _openBusySheet(FamilyProvider provider) {
-    final me = provider.currentUser;
-    final fid = me?.familyId;
-    if (me == null || fid == null || fid.isEmpty) return;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => BusyCheckInSheet(
-        familyId: fid,
-        userName: me.name,
-        userUid: me.uid,
       ),
     );
   }
@@ -1280,12 +1253,18 @@ class _KalenderPageState extends State<KalenderPage>
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              'Kalender',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: textColor,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Kalender',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                ),
               ),
             ),
           ),
@@ -1298,27 +1277,6 @@ class _KalenderPageState extends State<KalenderPage>
             ),
             const SizedBox(width: 4),
           ],
-          TextButton.icon(
-            onPressed: () => _openBusySheet(provider),
-            icon: Icon(
-              Icons.do_not_disturb_on_rounded,
-              color: textColor,
-              size: 18,
-            ),
-            label: Text(
-              'Upptagen',
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              visualDensity: VisualDensity.compact,
-              foregroundColor: textColor,
-            ),
-          ),
           IconButton(
             tooltip: _fullscreen ? 'Avsluta helskärm' : 'Helskärm',
             visualDensity: VisualDensity.compact,
@@ -1332,8 +1290,106 @@ class _KalenderPageState extends State<KalenderPage>
             ),
             onPressed: _toggleFullscreen,
           ),
+          _buildMoreMenu(textColor, provider),
         ],
       ),
+    );
+  }
+
+  /// ⋮ "Fler val": Familjemedlemmar (medlemsdag för vald dag) och
+  /// Återkommande (samma lista som under Mer).
+  Widget _buildMoreMenu(Color textColor, FamilyProvider provider) {
+    return PopupMenuButton<String>(
+      tooltip: 'Fler val',
+      icon: Icon(Icons.more_vert_rounded, color: textColor),
+      onSelected: (v) {
+        if (v == 'members') _showFamilyMembers(provider);
+        if (v == 'aterkommande') {
+          AppNavigation.openInMer(context, MerRoute.aterkommande);
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'members', child: Text('Familjemedlemmar')),
+        PopupMenuItem(value: 'aterkommande', child: Text('Återkommande')),
+      ],
+    );
+  }
+
+  void _showFamilyMembers(FamilyProvider provider) {
+    final members = provider.familyMembers;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Familjemedlemmar', style: AppTheme.sectionTitleStyle),
+              Text(DateFormat('EEEE d MMMM', 'sv').format(_selectedDay),
+                  style: TextStyle(color: AppTheme.getSubTextColor())),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 16,
+                runSpacing: 12,
+                children: [
+                  for (final m in members)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openCell(provider, m, _selectedDay);
+                      },
+                      child: SizedBox(
+                        width: 64,
+                        child: Column(children: [
+                          FamilyMemberAvatar(member: m, size: 52),
+                          const SizedBox(height: 6),
+                          Text(m.name.split(' ').first,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w600)),
+                        ]),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// "Visar bara Anna" + "Visa alla" när ett personfilter är på.
+  Widget _buildActiveFilterLine() {
+    final name = _filterPerson;
+    if (name == null) return const SizedBox.shrink();
+    final c = AppTheme.colors();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 12, 2),
+      child: Row(children: [
+        Expanded(
+          child: Text('Visar bara ${name.split(' ').first}',
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, color: c.onPage, fontSize: 13)),
+        ),
+        TextButton(
+          onPressed: () => setState(() {
+            _filterPerson = null;
+            _filterPersonUid = null;
+          }),
+          style: TextButton.styleFrom(foregroundColor: c.onPage),
+          child: const Text('Visa alla',
+              style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+      ]),
     );
   }
 
@@ -1343,7 +1399,6 @@ class _KalenderPageState extends State<KalenderPage>
     KalenderLage effectiveLage,
   ) {
     final textColor = AppTheme.getNpfTextColor(DateTime.now().weekday);
-    final provider = context.read<FamilyProvider>();
     return Container(
       decoration: AppTheme.headerDecoration(),
       padding: AppTheme.paddingBelowStatusBar(
@@ -1379,12 +1434,6 @@ class _KalenderPageState extends State<KalenderPage>
           ),
           Flexible(
             child: _buildCompactModeChips(dayColor, isFocus),
-          ),
-          IconButton(
-            tooltip: 'Jag är upptagen',
-            visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.do_not_disturb_on_rounded, color: textColor),
-            onPressed: () => _openBusySheet(provider),
           ),
           IconButton(
             tooltip: 'Avsluta helskärm',
@@ -1483,7 +1532,7 @@ class _KalenderPageState extends State<KalenderPage>
       child: Text(
         'Kalender',
         style: TextStyle(
-          fontSize: 22,
+          fontSize: 28,
           fontWeight: FontWeight.bold,
           color: textColor,
         ),
@@ -1694,10 +1743,12 @@ class _KalenderPageState extends State<KalenderPage>
   }
 }
 
+/// Personfiltrets val: profilbild (med ring när vald) och förnamn.
 class _FilterPill extends StatelessWidget {
   final String label;
   final bool selected;
   final Color color;
+  final Widget? avatar;
   final VoidCallback onTap;
 
   const _FilterPill({
@@ -1705,27 +1756,35 @@ class _FilterPill extends StatelessWidget {
     required this.selected,
     required this.color,
     required this.onTap,
+    this.avatar,
   });
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          margin: const EdgeInsets.only(right: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? color : Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: selected ? color : Colors.grey.shade300),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? Colors.white : AppTheme.getTextColor(),
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        selected: selected,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.only(right: 8),
+            padding: EdgeInsets.fromLTRB(avatar != null ? 4 : 14, 4, 14, 4),
+            decoration: BoxDecoration(
+              color: selected ? color : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: selected ? color : Colors.grey.shade300),
             ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (avatar != null) ...[avatar!, const SizedBox(width: 6)],
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? Colors.white : AppTheme.getTextColor(),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ]),
           ),
         ),
       );
