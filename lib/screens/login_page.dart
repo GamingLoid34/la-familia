@@ -449,9 +449,11 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Loggan bär appens namn, så ingen rubrik behövs (Android).
                     Image.asset(
                       'assets/images/vardag_logo.png',
-                      width: 160,
+                      width: 200,
+                      semanticLabel: 'Vardag',
                       fit: BoxFit.contain,
                       errorBuilder: (_, _, _) => Text(
                         'Vardag',

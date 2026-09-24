@@ -1360,14 +1360,8 @@ class _SettingsPageState extends State<SettingsPage>
     return _Card(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Column(children: [
-        Image.asset(
-          'assets/images/vardag_logo.png',
-          width: 72,
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, e) =>
-              const Icon(Icons.favorite_rounded, size: 48, color: Colors.grey),
-        ),
-        const SizedBox(height: 10),
+        Text('OM', style: AppTheme.sectionLabelStyle),
+        const SizedBox(height: 8),
         const Text('Vardag',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),

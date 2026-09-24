@@ -74,6 +74,14 @@ Future<void> snap(
     ),
   ));
   await tester.pump(const Duration(milliseconds: 400));
+  // Bilder avkodas asynkront: förladda dem i den riktiga händelseloopen.
+  await tester.runAsync(() async {
+    for (final e in find.byType(Image).evaluate()) {
+      final img = e.widget as Image;
+      await precacheImage(img.image, e);
+    }
+  });
+  await tester.pump();
   await tester.runAsync(() async {
     final boundary =
         key.currentContext!.findRenderObject()! as RenderRepaintBoundary;

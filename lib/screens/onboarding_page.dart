@@ -263,14 +263,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Image.asset(
-                      'assets/images/vardag_logo.png',
-                      width: 150,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) =>
-                          Text('Vardag', style: AppTheme.pageTitleStyle),
-                    ),
-                    const SizedBox(height: 20),
+                    // Som Android: ingen logga här, välkomsttexten först.
                     Text(
                       'Välkommen! 👋',
                       style: TextStyle(

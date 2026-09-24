@@ -8,6 +8,8 @@ import 'package:la_familia/models/user_model.dart';
 import 'package:la_familia/providers/family_provider.dart';
 import 'package:la_familia/screens/inbox_page.dart';
 import 'package:la_familia/screens/tasks_page.dart';
+import 'package:la_familia/screens/login_page.dart';
+import 'package:la_familia/screens/onboarding_page.dart';
 import 'package:la_familia/theme/app_colors.dart';
 import 'package:la_familia/widgets/add_event_sheet.dart';
 import 'package:la_familia/widgets/mer_sections.dart';
@@ -190,6 +192,11 @@ void main() {
 
   testWidgets('Återkommande (tom)', (tester) async {
     await snap(tester, 'aterkommande_tom', _withProvider(const AterkommandePage()));
+  });
+
+  testWidgets('Inloggning och onboarding', (tester) async {
+    await snap(tester, 'inloggning', screenApp(const LoginPage()));
+    await snap(tester, 'onboarding', screenApp(const OnboardingPage()));
   });
 
   testWidgets('Inkorg', (tester) async {

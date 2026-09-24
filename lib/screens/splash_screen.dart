@@ -19,7 +19,7 @@ class _SplashScreenState extends State<SplashScreen>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2200),
+      duration: const Duration(milliseconds: 1400),
     );
     _fadeIn = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
@@ -54,8 +54,10 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Samma startbild som Android-appen Vardag: v-symbolen i loggans
+    // djupgröna (#1E5155) mot vitt.
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: Colors.white,
       body: FadeTransition(
         opacity: _fadeIn,
         child: FadeTransition(
@@ -65,9 +67,10 @@ class _SplashScreenState extends State<SplashScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset(
-                  'assets/images/vardag_logo.png',
-                  width: 220,
+                  'assets/images/vardag_symbol.png',
+                  width: 160,
                   fit: BoxFit.contain,
+                  semanticLabel: 'Vardag',
                 ),
               ],
             ),
