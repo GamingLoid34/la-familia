@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -292,29 +293,60 @@ class _AddEventSheetState extends State<AddEventSheet> {
     final packlista = _f.packlista;
     final piktogram = _f.piktogram;
 
+    bool offline;
+    try {
+      final c = await Connectivity().checkConnectivity();
+      offline = c.every((r) => r == ConnectivityResult.none);
+    } catch (_) {
+      offline = false;
+    }
+    String? nyttId;
     final utfall = await AktivitetSparning.instans.spara(
       titel: titel,
       kandId: editDoc?.id,
       skriv: (mottagId) => editDoc != null
           ? skrivRedigering(coll.doc(editDoc.id), payload,
-              originalChecklist: checklistRowsOf(original?['checklist']))
-          : skrivNyAktivitet(coll, payload, mottagId: mottagId),
+              originalChecklist: checklistRowsOf(original?['checklist']),
+              offline: offline)
+          : skrivNyAktivitet(coll, payload, mottagId: (id) {
+              nyttId = id;
+              mottagId(id);
+            }),
       narIdArKant: (id) async {
         if (original != null) {
           await NotificationService.cancelActivityReminders(id, original);
         }
         await NotificationService.scheduleActivityReminders(
             docId: id, data: payload.forPaminnelser);
-        if (saveTemplate) {
-          await FirebaseFirestore.instance.collection('activity_templates').add(
-              aktivitetsmall(
-                  titel: titel,
-                  piktogram: piktogram,
-                  packlista: packlista,
-                  familyId: fid));
-        }
       },
     );
+    if (!mounted) return;
+
+    if (utfall is SparNekat) {
+      // Påminnelserna lades upp innan servern svarat — ställ tillbaka dem.
+      final id = editDoc?.id ?? nyttId;
+      if (id != null) {
+        await NotificationService.cancelActivityReminders(
+            id, payload.forPaminnelser);
+        if (original != null) {
+          await NotificationService.scheduleActivityReminders(
+              docId: id, data: original);
+        }
+      }
+    } else if (saveTemplate) {
+      // Mallen sparas först när aktiviteten är sparad (eller köad).
+      FirebaseFirestore.instance
+          .collection('activity_templates')
+          .add(aktivitetsmall(
+              titel: titel,
+              piktogram: piktogram,
+              packlista: packlista,
+              familyId: fid))
+          .catchError((Object e) {
+        developer.log('Kunde inte spara mallen', error: e);
+        return FirebaseFirestore.instance.collection('activity_templates').doc();
+      });
+    }
     if (!mounted) return;
 
     switch (utfall) {

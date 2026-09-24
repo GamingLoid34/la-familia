@@ -79,7 +79,6 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
   bool _gone = false;
   final Set<int> _savingRows = {};
-  bool _savingPrep = false;
 
   List<dynamic> get _rows => checklistRowsOf(_data['checklist']);
 
@@ -152,19 +151,16 @@ class _ActivityDetailSheetState extends State<ActivityDetailSheet> {
     }
   }
 
-  Future<void> _togglePrep() async {
-    if (_savingPrep) return;
-    setState(() => _savingPrep = true);
-    try {
-      await LessonPrep.setDone(_ref, _day,
-          done: !LessonPrep.isDoneOn(_data, _day));
-    } catch (e) {
+  /// Skrivningen väntas inte in: utan nät blir den klar först när nätet
+  /// kommer tillbaka, och bocken ska kunna ångras under tiden. Den lokala
+  /// cachen uppdaterar vyn direkt.
+  void _togglePrep() {
+    LessonPrep.setDone(_ref, _day, done: !LessonPrep.isDoneOn(_data, _day))
+        .catchError((Object e) {
       if (mounted) {
         showVardagSnack(context, 'Kunde inte spara: $e', isError: true);
       }
-    } finally {
-      if (mounted) setState(() => _savingPrep = false);
-    }
+    });
   }
 
   Future<void> _edit() async {

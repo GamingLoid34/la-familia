@@ -103,12 +103,12 @@ class _WeekListState extends State<WeekList> {
     }
   }
 
-  void _openEventDetail(QueryDocumentSnapshot doc) {
+  void _openEventDetail(QueryDocumentSnapshot doc, DateTime day) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => ActivityDetailSheet(docSnapshot: doc),
+      builder: (_) => ActivityDetailSheet(docSnapshot: doc, occurrenceDate: day),
     );
   }
 
@@ -512,7 +512,7 @@ class _WeekListState extends State<WeekList> {
     if (entry.isShift) {
       return _buildShiftRow(entry, dayColor);
     }
-    return _buildEventRow(entry, dayColor);
+    return _buildEventRow(entry, dayColor, day);
   }
 
   Widget _buildClusterRow(_WeekListEntry entry, Color dayColor, DateTime day) {
@@ -636,7 +636,7 @@ class _WeekListState extends State<WeekList> {
                 final lessonTime = t.isEmpty ? '' : (end.isEmpty ? t : '$t–$end');
 
                 return InkWell(
-                  onTap: () => _openEventDetail(doc),
+                  onTap: () => _openEventDetail(doc, day),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(36, 6, 14, 6),
                     child: Row(
@@ -684,7 +684,7 @@ class _WeekListState extends State<WeekList> {
     );
   }
 
-  Widget _buildEventRow(_WeekListEntry entry, Color dayColor) {
+  Widget _buildEventRow(_WeekListEntry entry, Color dayColor, DateTime day) {
     final doc = entry.doc!;
     final d = doc.data() as Map<String, dynamic>;
     final title = d['title'] as String? ?? 'Aktivitet';
@@ -701,7 +701,7 @@ class _WeekListState extends State<WeekList> {
     final hasNoPersons = eventHasNoPersons(d);
 
     return InkWell(
-      onTap: () => _openEventDetail(doc),
+      onTap: () => _openEventDetail(doc, day),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Row(

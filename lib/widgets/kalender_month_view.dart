@@ -880,8 +880,8 @@ class _MonthDaySheetState extends State<_MonthDaySheet> {
                       context: context,
                       isScrollControlled: true,
                       backgroundColor: Colors.transparent,
-                      builder: (_) =>
-                          ActivityDetailSheet(docSnapshot: doc),
+                      builder: (_) => ActivityDetailSheet(
+                          docSnapshot: doc, occurrenceDate: widget.day),
                     );
                   },
                 ),
@@ -895,8 +895,8 @@ class _MonthDaySheetState extends State<_MonthDaySheet> {
                       context: context,
                       isScrollControlled: true,
                       backgroundColor: Colors.transparent,
-                      builder: (_) =>
-                          ActivityDetailSheet(docSnapshot: doc),
+                      builder: (_) => ActivityDetailSheet(
+                          docSnapshot: doc, occurrenceDate: widget.day),
                     );
                   },
                 ),

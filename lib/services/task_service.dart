@@ -24,9 +24,38 @@ class TaskService {
     return ref.id;
   }
 
-  /// Hela dokumentet skrivs, eftersom reglerna validerar alla nycklar.
+  /// Hela dokumentet skrivs, eftersom reglerna validerar alla nycklar. Status
+  /// och klartid tas från senaste versionen i en transaktion, så att en
+  /// samtidig avbockning av någon annan inte ångras av en redigering.
   static Future<void> update(TaskModel task) =>
-      _tasks.doc(task.id).set(task.toFirestoreMap());
+      FirebaseFirestore.instance.runTransaction((tx) async {
+        final ref = _tasks.doc(task.id);
+        final snap = await tx.get(ref);
+        if (!snap.exists) {
+          throw StateError('Uppgiften finns inte längre.');
+        }
+        final current = TaskModel.fromMap(snap.id, snap.data()!);
+        final merged = TaskModel(
+          id: task.id,
+          familyId: task.familyId,
+          title: task.title,
+          dueDate: task.dueDate,
+          dueTime: task.dueTime,
+          hasTime: task.hasTime,
+          showFromDate: task.showFromDate,
+          assigneeUid: task.assigneeUid,
+          aboutUids: task.aboutUids,
+          status: current.status,
+          sourceNoteId: current.sourceNoteId,
+          eventId: current.eventId,
+          occurrenceDate: current.occurrenceDate,
+          createdByUid: current.createdByUid.isNotEmpty
+              ? current.createdByUid
+              : task.createdByUid,
+          doneAt: current.doneAt,
+        );
+        tx.set(ref, merged.toFirestoreMap());
+      });
 
   /// Slutför eller återöppna. Läser senaste versionen i en transaktion så att
   /// en samtidig ändring av titel eller datum inte skrivs över.

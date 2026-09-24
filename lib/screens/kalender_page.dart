@@ -92,8 +92,11 @@ class _KalenderPageState extends State<KalenderPage>
     final id = target.eventId;
     if (id == null) return;
     try {
+      final fid = context.read<FamilyProvider>().currentUser?.familyId ?? '';
+      if (fid.isEmpty) return;
       final snap = await FirebaseFirestore.instance
           .collection('planner_events')
+          .where('familyId', isEqualTo: fid)
           .where(FieldPath.documentId, isEqualTo: id)
           .limit(1)
           .get();
@@ -919,6 +922,7 @@ class _KalenderPageState extends State<KalenderPage>
               label: disp.label,
               docs: disp.docs,
               dayColor: dayColor,
+              day: day,
             ),
           ));
         }
@@ -1794,11 +1798,13 @@ class _AgendaSchoolCluster extends StatefulWidget {
   final String label;
   final List<QueryDocumentSnapshot> docs;
   final Color dayColor;
+  final DateTime day;
 
   const _AgendaSchoolCluster({
     required this.label,
     required this.docs,
     required this.dayColor,
+    required this.day,
   });
 
   @override
@@ -1865,7 +1871,8 @@ class _AgendaSchoolClusterState extends State<_AgendaSchoolCluster> {
                     context: context,
                     isScrollControlled: true,
                     backgroundColor: Colors.transparent,
-                    builder: (_) => ActivityDetailSheet(docSnapshot: doc),
+                    builder: (_) => ActivityDetailSheet(
+                        docSnapshot: doc, occurrenceDate: widget.day),
                   );
                 },
               ),

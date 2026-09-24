@@ -322,7 +322,10 @@ class _InboxPageState extends State<InboxPage> {
       return;
     }
     await _run(n.id, 'Kunde inte spara ändringen', () async {
+      final uid = _p.currentUser?.uid ?? '';
+      if (uid.isEmpty) throw StateError('Inte inloggad.');
       final outcome = await NoteService.editNote(n,
+          myUid: uid,
           text: result.text,
           isPrivate: result.isPrivate,
           aboutUids: result.aboutUids);

@@ -204,6 +204,10 @@ class TaskDraft {
 
   static DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
 
+  /// Titeln på en rad, trimmad.
+  static String singleLineTitle(String t) =>
+      t.replaceAll(RegExp(r'\s*[\r\n]+\s*'), ' ').trim();
+
   /// Bygger dokumentet. Vid redigering bevaras status, klartid, skapare
   /// och källkopplingar från [existing].
   TaskModel toTask({
@@ -215,7 +219,9 @@ class TaskDraft {
     return TaskModel(
       id: existing?.id ?? '',
       familyId: familyId,
-      title: title.trim(),
+      // Reglernas `title.matches('.*[^\\s].*')` avvisar radbrytningar, så de
+      // blir mellanslag.
+      title: singleLineTitle(title),
       dueDate: dueDate == null ? null : dateKey(dueDate!),
       dueTime: dueDate != null ? dueTime : null,
       hasTime: hasTime && dueDate != null,

@@ -171,6 +171,7 @@ class NoteService {
   /// om något gick halvvägs.
   static Future<EditOutcome> editNote(
     NoteModel note, {
+    required String myUid,
     required String text,
     required bool isPrivate,
     required List<String> aboutUids,
@@ -179,9 +180,11 @@ class NoteService {
         text: text, isPrivate: isPrivate, aboutUids: aboutUids)) {
       return EditOutcome.unchanged;
     }
+    // Den nya anteckningen ägs av den som ändrar — reglerna kräver att
+    // ownerUid och createdByUid är den inloggade (som i Android).
     await add(
       familyId: note.familyId,
-      ownerUid: note.ownerUid.isNotEmpty ? note.ownerUid : note.createdByUid,
+      ownerUid: myUid,
       text: text,
       isPrivate: isPrivate,
       aboutUids: aboutUids,

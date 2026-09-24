@@ -4,6 +4,9 @@ import '../app_theme.dart';
 import '../models/user_model.dart';
 import 'vardag_header.dart';
 
+/// Reglernas tak för en anteckning (`notes.text`).
+const maxNoteLength = 10000;
+
 /// Resultatet av formuläret "Ny anteckning" / "Ändra anteckning".
 class ComposedNote {
   final String text;
@@ -86,7 +89,11 @@ class _ComposeNoteSheetState extends State<ComposeNoteSheet> {
 
   void _save() {
     // Ett dubbeltryck får inte skicka två anteckningar.
-    if (_sent || _text.text.trim().isEmpty) return;
+    if (_sent ||
+        _text.text.trim().isEmpty ||
+        _text.text.trim().length > maxNoteLength) {
+      return;
+    }
     _sent = true;
     Navigator.of(context).pop(ComposedNote(_text.text, _private, _about.toList()));
   }
@@ -94,7 +101,8 @@ class _ComposeNoteSheetState extends State<ComposeNoteSheet> {
   @override
   Widget build(BuildContext context) {
     final c = AppTheme.colors();
-    final canSave = _text.text.trim().isNotEmpty;
+    final tooLong = _text.text.trim().length > maxNoteLength;
+    final canSave = _text.text.trim().isNotEmpty && !tooLong;
     return SheetFrame(
       title: widget.title,
       // Spara ligger i rubrikraden så att en lång inklistring inte trycker
@@ -134,6 +142,15 @@ class _ComposeNoteSheetState extends State<ComposeNoteSheet> {
                 ),
               ),
             ),
+            if (tooLong)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Texten får vara högst 10 000 tecken (nu ${_text.text.trim().length}).',
+                  style: const TextStyle(
+                      color: Color(0xFFB3261E), fontWeight: FontWeight.w700),
+                ),
+              ),
             if (widget.people.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text('VEM GÄLLER DET?',

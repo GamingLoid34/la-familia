@@ -393,11 +393,33 @@ Future<String> skrivNyAktivitet(
 /// [originalChecklist] är `checklist` som den låg när formuläret öppnades.
 /// `update()` fungerar utan nät; transaktionen körs när uppdateringen nått
 /// servern och kräver nät.
+///
+/// Utan nät ([offline]) kan transaktionen inte köras. Då slås packlistan ihop
+/// mot den senaste versionen i telefonens cache och skickas i samma köade
+/// `update()`, så att ändringen inte försvinner om appen stängs innan nätet
+/// kommer tillbaka.
 Future<String> skrivRedigering(
   DocumentReference<Map<String, dynamic>> ref,
   AktivitetPayload payload, {
   required List<dynamic> originalChecklist,
+  bool offline = false,
 }) async {
+  if (offline && payload.packlistanAndrad) {
+    List<dynamic> latest;
+    try {
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      latest = checklistRowsOf(cached.data()?['checklist']);
+    } catch (_) {
+      latest = originalChecklist;
+    }
+    final merged = mergeChecklist(
+      latestRows: latest,
+      originalRows: originalChecklist,
+      editedRows: payload.packlista,
+    );
+    await ref.update({...payload.tillFirestore(), 'checklist': merged});
+    return ref.id;
+  }
   if (!payload.tomRedigering) {
     await ref.update(payload.tillFirestore());
   }

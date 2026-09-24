@@ -77,6 +77,13 @@ void main() {
           ]));
     });
 
+    test('radbrytning i titeln blir mellanslag (reglerna avvisar radbrytning)', () {
+      final t = const TaskDraft(title: '  Köp mjölk\n  och bröd \r\n')
+          .toTask(familyId: 'f1', myUid: 'me');
+      expect(t.title, 'Köp mjölk och bröd');
+      expect(RegExp(r'^.*[^\s].*$').hasMatch(t.title), isTrue);
+    });
+
     test('tid utan datum skrivs aldrig till dokumentet', () {
       final task = const TaskDraft(title: 'Ringa', dueTime: '09:00')
           .toTask(familyId: 'f1', myUid: 'me');

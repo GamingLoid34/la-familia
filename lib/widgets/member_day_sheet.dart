@@ -450,8 +450,8 @@ class _MemberDayPage extends StatelessWidget {
                         context: context,
                         isScrollControlled: true,
                         backgroundColor: Colors.transparent,
-                        builder: (_) =>
-                            ActivityDetailSheet(docSnapshot: doc),
+                        builder: (_) => ActivityDetailSheet(
+                            docSnapshot: doc, occurrenceDate: currentDay),
                       );
                     },
                   )),
