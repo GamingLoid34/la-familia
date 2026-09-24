@@ -12,6 +12,7 @@ import '../providers/family_provider.dart';
 import '../screens/min_dag_page.dart';
 import '../screens/settings_page.dart';
 import '../utils/chore_utils.dart';
+import '../utils/data_tillstand.dart';
 import '../utils/date_utils.dart';
 import '../utils/day_events.dart';
 import '../utils/layout.dart';
@@ -21,8 +22,18 @@ import '../utils/timeline_layout.dart';
 import '../utils/transport_labels.dart';
 import 'activity_detail_sheet.dart';
 import 'meal_choice_sheet.dart';
+import 'min_dag_skollunch.dart';
+import 'min_dag_tillstand.dart';
 import 'today_chores_sheet.dart';
 import 'weather_widgets.dart';
+
+/// Sjukhusmenyn och matvalet (lunch 12:00, middag 17:00, "tryck för att välja mat").
+///
+/// Dolda som i Android (`MinDagViewModel.VISA_SJUKHUSMAT = false`, 1.9.1, på beställarens
+/// begäran). Sätt till true för att visa dem igen — koden ligger kvar. Med flaggan av blir
+/// en händelse som heter "Lunch …" eller "Middag …" en vanlig händelse, inte ett matval,
+/// och måltidsvalet läses inte (dess läsfel ska inte ge en felrad om något som inte syns).
+const bool kVisaSjukhusmat = false;
 
 /// Delad vy för "Min dag" — proportionell tidsaxel med vandrande NU-linje
 /// för tidsorientering, minnesstöd och sjukhusmatsedel efter stroke.
@@ -55,6 +66,25 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
   bool _showReturnToNu = false;
   double _nuScrollTarget = 0.0;
   bool _hasInitialScrolled = false;
+
+  // UX 02: ett tillstånd per datakälla, nycklat så att sena svar för fel dag, person
+  // eller familj kasseras. Återkommande aktiviteter och sysslor läses här i stället för
+  // via FamilyProvider, som bara har ett globalt syncError.
+  /// Familjens strömmar (återkommande aktiviteter, sysslor), nycklade på familj.
+  final KallSamlare<MinDagKalla, String> _familjSamlare = KallSamlare();
+
+  /// Dagens strömmar (aktiviteter, måltidsval), nycklade på dag + person + familj.
+  final KallSamlare<MinDagKalla, String> _dagSamlare = KallSamlare();
+
+  /// Skollunch. Egen samlare: dess läsfel sväljs och räknas inte in i lägesraden.
+  final KallSamlare<String, String> _skolSamlare = KallSamlare();
+  static const String _skolmatKalla = 'skolmat';
+
+  late final Listenable _allaKallor =
+      Listenable.merge([_familjSamlare, _dagSamlare, _skolSamlare]);
+
+  /// Sant medan ett återförsök pågår, så knappen inte kan tryckas två gånger.
+  bool _forsokerIgen = false;
 
   bool get _isViewingToday {
     return _viewedDay.year == _currentTime.year &&
@@ -102,6 +132,9 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     _tickerTimer?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _familjSamlare.dispose();
+    _dagSamlare.dispose();
+    _skolSamlare.dispose();
     super.dispose();
   }
 
@@ -207,9 +240,10 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     return 'God natt';
   }
 
-  int _uncompletedChoresCount(FamilyProvider provider, UserModel? user) {
+  int _uncompletedChoresCount(
+      List<QueryDocumentSnapshot> allChores, UserModel? user) {
     final now = DateTime.now();
-    final chores = provider.chores.where((doc) {
+    final chores = allChores.where((doc) {
       final d = doc.data() as Map<String, dynamic>;
       if (!choreOccursOnDay(d, now)) return false;
       if (choreDoneOnDay(d, now)) return false;
@@ -270,21 +304,76 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     return !target.isBefore(today);
   }
 
+  /// Den gemensamma detaljrutan (Redigera / Ta bort). Förekomsten är alltid den visade
+  /// dagen, så "Bara denna gång" och lektionsförberedelsen gäller rätt tillfälle.
   void _openDetail(QueryDocumentSnapshot doc) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => ActivityDetailSheet(docSnapshot: doc),
+      builder: (_) => ActivityDetailSheet(
+        docSnapshot: doc,
+        occurrenceDate: _viewedDay,
+      ),
     );
+  }
+
+  /// Startar (eller behåller) prenumerationerna för aktuell dag, person och familj.
+  ///
+  /// [KallSamlare.lyssna] gör ingenting när nyckeln är densamma, så anropet kan ligga i
+  /// build. Vid ny nyckel sätts alla källor till "laddar" innan de nya startar.
+  void _syncKallor({required String familyId, required String uid}) {
+    if (familyId.isEmpty) return;
+    final dag = _viewedDay;
+    final datum = dateKey(dag);
+    final db = FirebaseFirestore.instance;
+    _familjSamlare.lyssna(familyId, {
+      MinDagKalla.aterkommande: () => db
+          .collection('planner_events')
+          .where('familyId', isEqualTo: familyId)
+          .where('isRecurring', isEqualTo: true)
+          .snapshots(),
+      MinDagKalla.sysslor: () => db
+          .collection('chores')
+          .where('familyId', isEqualTo: familyId)
+          .snapshots(),
+    });
+    _dagSamlare.lyssna(
+      minDagDagNyckel(datum: datum, uid: uid, familyId: familyId),
+      {
+        MinDagKalla.aktiviteter: () =>
+            dayEventsStream(familyId: familyId, day: dag),
+        if (kVisaSjukhusmat && uid.isNotEmpty)
+          MinDagKalla.maltidsval: () => db
+              .collection('meal_choices')
+              .doc('${uid}_$datum')
+              .snapshots(),
+      },
+    );
+    _skolSamlare.lyssna('$datum|$familyId', {
+      _skolmatKalla: () => skolmatDagStream(familyId: familyId, dag: dag),
+    });
+  }
+
+  /// Startar om de källor som fallerat. Övriga rörs inte.
+  Future<void> _forsokIgen() async {
+    if (_forsokerIgen) return;
+    setState(() => _forsokerIgen = true);
+    _familjSamlare.forsokIgen();
+    _dagSamlare.forsokIgen();
+    _skolSamlare.forsokIgen();
+    // Kort fördröjning så knappen hinner visa att något händer.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) setState(() => _forsokerIgen = false);
   }
 
   void _showTransportSheet(
     BuildContext context,
-    DocumentReference docRef,
+    QueryDocumentSnapshot doc,
     Map<String, dynamic> data,
     Color dayColor,
   ) {
+    final docRef = doc.reference;
     final title = data['title'] as String? ?? 'Aktivitet';
     final piktogram = data['piktogram'] as String? ?? '📅';
     final currentTransport = data['transport'] as String?;
@@ -420,6 +509,27 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
                     onPressed: () => _updateTransport(sheetContext, docRef, null),
                   ),
                 ],
+                const SizedBox(height: 12),
+                // Ändra eller ta bort: öppnar den gemensamma detaljrutan för den visade
+                // dagen, där Redigera och Ta bort finns (som Androids TransportSheet).
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52),
+                    foregroundColor: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  icon: const Icon(Icons.edit_rounded, size: 20),
+                  label: const Text(
+                    'Ändra eller ta bort',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _openDetail(doc);
+                  },
+                ),
               ],
             ),
           ),
@@ -454,317 +564,365 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final provider = context.watch<FamilyProvider>();
     final user = provider.currentUser;
-    final familyId = user?.familyId ?? provider.currentUser?.familyId ?? '';
+    final familyId = user?.familyId ?? '';
+    _syncKallor(familyId: familyId, uid: user?.uid ?? '');
 
+    return ListenableBuilder(
+      listenable: _allaKallor,
+      builder: (context, _) => _buildDag(context, provider, user),
+    );
+  }
+
+  Widget _buildDag(
+    BuildContext context,
+    FamilyProvider provider,
+    UserModel? user,
+  ) {
     final weekday = _viewedDay.weekday;
     final dayColor = AppTheme.getDayAccentColor(weekday);
     final isLowStimuli = AppTheme.lowStimuli;
-
-    final viewedDateStr = dateKey(_viewedDay);
-    final mealChoiceDocId = user != null ? '${user.uid}_$viewedDateStr' : null;
-
-    final mealChoiceStream = mealChoiceDocId != null
-        ? FirebaseFirestore.instance
-            .collection('meal_choices')
-            .doc(mealChoiceDocId)
-            .snapshots()
-        : null;
 
     final maxW = WindowSize.of(context).isExpanded
         ? WindowSize.settingsMaxWidth
         : 480.0;
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: mealChoiceStream,
-      builder: (context, mealSnapshot) {
-        final mealData = mealSnapshot.data?.data();
-        final lunchChoice = mealData?['lunch'] as Map<String, dynamic>?;
-        final middagChoice = mealData?['middag'] as Map<String, dynamic>?;
+    // Källornas data. Tillhör en källa en annan dag, person eller familj rapporterar
+    // samlaren "laddar", så inget gammalt ritas som om det hörde till den nya vyn.
+    final mealData = kVisaSjukhusmat
+        ? _dagSamlare
+            .visat<DocumentSnapshot<Map<String, dynamic>>>(
+                MinDagKalla.maltidsval)
+            ?.data()
+        : null;
+    final lunchChoice = mealData?['lunch'] as Map<String, dynamic>?;
+    final middagChoice = mealData?['middag'] as Map<String, dynamic>?;
 
-        return StreamBuilder<QuerySnapshot>(
-          stream: dayEventsStream(familyId: familyId, day: _viewedDay),
-          builder: (context, eventSnapshot) {
-            final dateEvents = eventSnapshot.data?.docs ?? const [];
-            final recurringEvents = provider.recurringEvents;
+    final dateEvents = _dagSamlare
+            .visat<QuerySnapshot>(MinDagKalla.aktiviteter)
+            ?.docs ??
+        const <QueryDocumentSnapshot>[];
+    final recurringEvents = _familjSamlare
+            .visat<QuerySnapshot>(MinDagKalla.aterkommande)
+            ?.docs ??
+        const <QueryDocumentSnapshot>[];
+    final allChores =
+        _familjSamlare.visat<QuerySnapshot>(MinDagKalla.sysslor)?.docs ??
+            const <QueryDocumentSnapshot>[];
 
-            final mergedEvents = mergeAndDedupDayEvents(
-              dateEvents: dateEvents,
-              recurringEvents: recurringEvents,
-              day: _viewedDay,
-            );
+    final mergedEvents = mergeAndDedupDayEvents(
+      dateEvents: dateEvents,
+      recurringEvents: recurringEvents,
+      day: _viewedDay,
+    );
 
-            final myEvents = _filterMyEvents(mergedEvents, user);
+    final myEvents = _filterMyEvents(mergedEvents, user);
 
-            final timedItems = <_MinDagTimelineItem>[];
-            final untimedEvents =
-                <({QueryDocumentSnapshot doc, Map<String, dynamic> data})>[];
+    final timedItems = <_MinDagTimelineItem>[];
+    final untimedEvents =
+        <({QueryDocumentSnapshot doc, Map<String, dynamic> data})>[];
 
-            bool hasLunchEvent = false;
-            bool hasMiddagEvent = false;
+    bool hasLunchEvent = false;
+    bool hasMiddagEvent = false;
 
-            for (final doc in myEvents) {
-              final d = doc.data() as Map<String, dynamic>;
-              final parsed = parseDateTime(d, _viewedDay);
-              final timeStr = (d['time'] as String? ?? '').trim();
-              if (parsed != null && timeStr.isNotEmpty) {
-                final end = _computeEndTime(parsed, d);
-                final titleLower =
-                    (d['title'] as String? ?? '').toLowerCase().trim();
-                final isLunch = titleLower.startsWith('lunch');
-                final isMiddag = titleLower.startsWith('middag');
+    for (final doc in myEvents) {
+      final d = doc.data() as Map<String, dynamic>;
+      final parsed = parseDateTime(d, _viewedDay);
+      final timeStr = (d['time'] as String? ?? '').trim();
+      if (parsed != null && timeStr.isNotEmpty) {
+        final end = _computeEndTime(parsed, d);
+        final titleLower =
+            (d['title'] as String? ?? '').toLowerCase().trim();
+        // Med sjukhusmaten dold är "Lunch …" en vanlig händelse.
+        final isLunch =
+            kVisaSjukhusmat && titleLower.startsWith('lunch');
+        final isMiddag =
+            kVisaSjukhusmat && titleLower.startsWith('middag');
 
-                if (isLunch) hasLunchEvent = true;
-                if (isMiddag) hasMiddagEvent = true;
+        if (isLunch) hasLunchEvent = true;
+        if (isMiddag) hasMiddagEvent = true;
 
-                timedItems.add(_MinDagTimelineItem(
-                  doc: doc,
-                  data: d,
-                  start: parsed,
-                  end: end,
-                  mealType: isLunch ? 'lunch' : (isMiddag ? 'middag' : null),
-                  mealChoice:
-                      isLunch ? lunchChoice : (isMiddag ? middagChoice : null),
-                  isSyntheticMeal: false,
-                ));
-              } else {
-                untimedEvents.add((doc: doc, data: d));
-              }
-            }
+        timedItems.add(_MinDagTimelineItem(
+          doc: doc,
+          data: d,
+          start: parsed,
+          end: end,
+          mealType: isLunch ? 'lunch' : (isMiddag ? 'middag' : null),
+          mealChoice:
+              isLunch ? lunchChoice : (isMiddag ? middagChoice : null),
+          isSyntheticMeal: false,
+        ));
+      } else {
+        untimedEvents.add((doc: doc, data: d));
+      }
+    }
 
-            final isTodayOrFutureDay = _isTodayOrFuture(_viewedDay);
+    final isTodayOrFutureDay = _isTodayOrFuture(_viewedDay);
 
-            if (!hasLunchEvent && (lunchChoice != null || isTodayOrFutureDay)) {
-              final lunchStart = DateTime(
-                  _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 0);
-              final lunchEnd = DateTime(
-                  _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 45);
-              timedItems.add(_MinDagTimelineItem(
-                doc: null,
-                data: {
-                  'title': 'Lunch',
-                  'piktogram': '🍽️',
-                  'time': '12:00',
-                  'endTime': '12:45',
-                },
-                start: lunchStart,
-                end: lunchEnd,
-                mealType: 'lunch',
-                mealChoice: lunchChoice,
-                isSyntheticMeal: true,
-              ));
-            }
+    if (kVisaSjukhusmat &&
+        !hasLunchEvent &&
+        (lunchChoice != null || isTodayOrFutureDay)) {
+      final lunchStart = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 0);
+      final lunchEnd = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 45);
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: {
+          'title': 'Lunch',
+          'piktogram': '🍽️',
+          'time': '12:00',
+          'endTime': '12:45',
+        },
+        start: lunchStart,
+        end: lunchEnd,
+        mealType: 'lunch',
+        mealChoice: lunchChoice,
+        isSyntheticMeal: true,
+      ));
+    }
 
-            if (!hasMiddagEvent &&
-                (middagChoice != null || isTodayOrFutureDay)) {
-              final middagStart = DateTime(
-                  _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 0);
-              final middagEnd = DateTime(
-                  _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 45);
-              timedItems.add(_MinDagTimelineItem(
-                doc: null,
-                data: {
-                  'title': 'Middag',
-                  'piktogram': '🍽️',
-                  'time': '17:00',
-                  'endTime': '17:45',
-                },
-                start: middagStart,
-                end: middagEnd,
-                mealType: 'middag',
-                mealChoice: middagChoice,
-                isSyntheticMeal: true,
-              ));
-            }
+    if (kVisaSjukhusmat &&
+        !hasMiddagEvent &&
+        (middagChoice != null || isTodayOrFutureDay)) {
+      final middagStart = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 0);
+      final middagEnd = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 45);
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: {
+          'title': 'Middag',
+          'piktogram': '🍽️',
+          'time': '17:00',
+          'endTime': '17:45',
+        },
+        start: middagStart,
+        end: middagEnd,
+        mealType: 'middag',
+        mealChoice: middagChoice,
+        isSyntheticMeal: true,
+      ));
+    }
 
-            // Sortera tidsatta poster kronologiskt
-            timedItems.sort((a, b) => a.start.compareTo(b.start));
+    // Skollunch per barn (11:00–11:45, "Namn: rätt", 🍎). Läsning ur skolans
+    // matsedel — inget matval, går inte att trycka på.
+    final skolLuncher = byggSkolLunchBlock(
+      skolmat: _skolSamlare.visat<SkolmatDag>(_skolmatKalla),
+      medlemmar: provider.familyMembers,
+      dag: _viewedDay,
+    );
+    for (final block in skolLuncher) {
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: block.data,
+        start: block.start,
+        end: block.slut,
+      ));
+    }
 
-            // Axelns tidsspann
-            int startHour = _isViewingToday ? min(7, _currentTime.hour) : 7;
-            if (timedItems.isNotEmpty) {
-              final firstH = timedItems.first.start.hour;
-              if (firstH < startHour) startHour = firstH;
-            }
+    // UX 02: skilj laddar, tom dag, delvis fel och allt fallerat åt.
+    final harInnehall =
+        timedItems.isNotEmpty || untimedEvents.isNotEmpty;
+    final lage = user == null
+        ? const LageLaddar()
+        : bedomMinDag(
+            {
+              ..._familjSamlare.aktuellt,
+              ..._dagSamlare.aktuellt,
+            },
+            harInnehall: harInnehall,
+          );
+    final rad = minDagRad(lage);
 
-            int endHour = _isViewingToday ? max(20, _currentTime.hour + 1) : 20;
-            for (final ev in timedItems) {
-              final h = ev.end.hour + (ev.end.minute > 0 ? 1 : 0) + 1;
-              if (h > endHour) endHour = h;
-            }
-            if (endHour > 24) endHour = 24;
+    // Sortera tidsatta poster kronologiskt
+    timedItems.sort((a, b) => a.start.compareTo(b.start));
 
-            final totalHours = max(1, endHour - startHour);
-            final timelineHeight = totalHours * hourHeight;
+    // Axelns tidsspann
+    int startHour = _isViewingToday ? min(7, _currentTime.hour) : 7;
+    if (timedItems.isNotEmpty) {
+      final firstH = timedItems.first.start.hour;
+      if (firstH < startHour) startHour = firstH;
+    }
 
-            // Hitta index för nästa kommande (endast relevant idag)
-            int? nextUpcomingIndex;
-            if (_isViewingToday) {
-              for (var i = 0; i < timedItems.length; i++) {
-                final ev = timedItems[i];
-                if (ev.start.isAfter(_currentTime)) {
-                  nextUpcomingIndex = i;
-                  break;
-                }
-              }
-            }
+    int endHour = _isViewingToday ? max(20, _currentTime.hour + 1) : 20;
+    for (final ev in timedItems) {
+      final h = ev.end.hour + (ev.end.minute > 0 ? 1 : 0) + 1;
+      if (h > endHour) endHour = h;
+    }
+    if (endHour > 24) endHour = 24;
 
-            // Beräkna layoutplacering
-            final layoutList = _computeLayout(
-              timedItems,
-              startHour,
-              _currentTime,
-              nextUpcomingIndex,
-              isViewingToday: _isViewingToday,
-            );
+    final totalHours = max(1, endHour - startHour);
+    final timelineHeight = totalHours * hourHeight;
 
-            // Beräkna position för NU-linjen (endast idag)
-            final nuMinutes = (_currentTime.hour - startHour) * 60 +
-                _currentTime.minute +
-                (_currentTime.second / 60.0);
-            final nuTop = (nuMinutes / 60.0) * hourHeight;
+    // Hitta index för nästa kommande (endast relevant idag)
+    int? nextUpcomingIndex;
+    if (_isViewingToday) {
+      for (var i = 0; i < timedItems.length; i++) {
+        final ev = timedItems[i];
+        if (ev.start.isAfter(_currentTime)) {
+          nextUpcomingIndex = i;
+          break;
+        }
+      }
+    }
 
-            final bottomPadding = widget.embedded
-                ? (navSafeBottom(context).bottom + 24)
-                : 60.0;
+    // Beräkna layoutplacering
+    final layoutList = _computeLayout(
+      timedItems,
+      startHour,
+      _currentTime,
+      nextUpcomingIndex,
+      isViewingToday: _isViewingToday,
+    );
 
-            return Scaffold(
-              backgroundColor: isLowStimuli
-                  ? const Color(0xFFF0F2F5)
-                  : const Color(0xFFF5F7FA),
-              floatingActionButton: (_showReturnToNu && _isViewingToday)
-                  ? FloatingActionButton.extended(
-                      backgroundColor: nuMarkerColor,
-                      foregroundColor: Colors.white,
-                      elevation: isLowStimuli ? 0 : 4,
-                      icon: const Icon(Icons.my_location_rounded, size: 18),
-                      label: const Text(
-                        'NU',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w900, letterSpacing: 0.5),
-                      ),
-                      onPressed: () => _scrollToNu(animated: true),
-                    )
-                  : null,
-              body: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: maxW),
-                  child: Column(
-                    children: [
-                      _buildHeader(context, provider, user, dayColor, weekday),
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onHorizontalDragEnd: (details) {
-                            final vel = details.primaryVelocity;
-                            if (vel != null && vel.abs() > 200) {
-                              if (vel < 0) {
-                                _changeDay(1);
-                              } else {
-                                _changeDay(-1);
-                              }
-                            }
-                          },
-                          child: AnimatedSwitcher(
-                            duration: Duration(
-                                milliseconds: isLowStimuli ? 150 : 200),
-                            transitionBuilder: (child, animation) {
-                              if (isLowStimuli) {
-                                return FadeTransition(
-                                    opacity: animation, child: child);
-                              }
-                              final beginOffset = _dayChangeDirection > 0
-                                  ? const Offset(0.12, 0.0)
-                                  : (_dayChangeDirection < 0
-                                      ? const Offset(-0.12, 0.0)
-                                      : Offset.zero);
-                              return FadeTransition(
-                                opacity: animation,
-                                child: SlideTransition(
-                                  position: Tween<Offset>(
-                                          begin: beginOffset, end: Offset.zero)
-                                      .animate(animation),
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: KeyedSubtree(
-                              key: ValueKey(dateKey(_viewedDay)),
-                              child: Column(
-                                children: [
-                                  if (untimedEvents.isNotEmpty)
-                                    _buildUntimedSection(
-                                        untimedEvents, dayColor, user),
-                                  if (timedItems.isEmpty &&
-                                      untimedEvents.isEmpty)
-                                    _buildEmptyDayBanner(),
-                                  Expanded(
-                                    child: LayoutBuilder(
-                                      builder: (context, constraints) {
-                                        final viewportHeight =
-                                            constraints.maxHeight;
-                                        if (_isViewingToday) {
-                                          _nuScrollTarget = max(0.0,
-                                              nuTop - (viewportHeight * 0.35));
-                                        }
+    // Beräkna position för NU-linjen (endast idag)
+    final nuMinutes = (_currentTime.hour - startHour) * 60 +
+        _currentTime.minute +
+        (_currentTime.second / 60.0);
+    final nuTop = (nuMinutes / 60.0) * hourHeight;
 
-                                        return SingleChildScrollView(
-                                          controller: _scrollController,
-                                          physics:
-                                              const BouncingScrollPhysics(),
-                                          padding:
-                                              EdgeInsets.only(bottom: bottomPadding),
-                                          child: SizedBox(
-                                            height: timelineHeight,
-                                            width: constraints.maxWidth,
-                                            child: Stack(
-                                              clipBehavior: Clip.none,
-                                              children: [
-                                                // 1. Grid- och timlinjer med timetiketter
-                                                _buildGridBackground(
-                                                  startHour: startHour,
-                                                  totalHours: totalHours,
-                                                  isLowStimuli: isLowStimuli,
-                                                  width: constraints.maxWidth,
-                                                ),
+    final bottomPadding = widget.embedded
+        ? (navSafeBottom(context).bottom + 24)
+        : 60.0;
 
-                                                // 2. Händelseblock & Måltidsblock
-                                                for (final layout in layoutList)
-                                                  _buildPositionedEventCard(
-                                                    layout: layout,
-                                                    totalWidth:
-                                                        constraints.maxWidth,
-                                                    dayColor: dayColor,
-                                                    isLowStimuli: isLowStimuli,
-                                                    user: user,
-                                                  ),
+    return Scaffold(
+      backgroundColor: isLowStimuli
+          ? const Color(0xFFF0F2F5)
+          : const Color(0xFFF5F7FA),
+      floatingActionButton: (_showReturnToNu && _isViewingToday)
+          ? FloatingActionButton.extended(
+              backgroundColor: nuMarkerColor,
+              foregroundColor: Colors.white,
+              elevation: isLowStimuli ? 0 : 4,
+              icon: const Icon(Icons.my_location_rounded, size: 18),
+              label: const Text(
+                'NU',
+                style: TextStyle(
+                    fontWeight: FontWeight.w900, letterSpacing: 0.5),
+              ),
+              onPressed: () => _scrollToNu(animated: true),
+            )
+          : null,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxW),
+          child: Column(
+            children: [
+              _buildHeader(
+                  context, provider, user, allChores, weekday),
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: (details) {
+                    final vel = details.primaryVelocity;
+                    if (vel != null && vel.abs() > 200) {
+                      if (vel < 0) {
+                        _changeDay(1);
+                      } else {
+                        _changeDay(-1);
+                      }
+                    }
+                  },
+                  child: AnimatedSwitcher(
+                    duration: Duration(
+                        milliseconds: isLowStimuli ? 150 : 200),
+                    transitionBuilder: (child, animation) {
+                      if (isLowStimuli) {
+                        return FadeTransition(
+                            opacity: animation, child: child);
+                      }
+                      final beginOffset = _dayChangeDirection > 0
+                          ? const Offset(0.12, 0.0)
+                          : (_dayChangeDirection < 0
+                              ? const Offset(-0.12, 0.0)
+                              : Offset.zero);
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                                  begin: beginOffset, end: Offset.zero)
+                              .animate(animation),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: KeyedSubtree(
+                      key: ValueKey(dateKey(_viewedDay)),
+                      child: Column(
+                        children: [
+                          if (untimedEvents.isNotEmpty)
+                            _buildUntimedSection(
+                                untimedEvents, dayColor, user),
+                          if (rad.typ == MinDagRadTyp.laddar)
+                            _buildLaddarRad(rad.text!)
+                          else if (rad.typ == MinDagRadTyp.tomDag)
+                            _buildEmptyDayBanner()
+                          else if (rad.typ == MinDagRadTyp.fel)
+                            _buildFelRad(rad.text ?? ''),
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final viewportHeight =
+                                    constraints.maxHeight;
+                                if (_isViewingToday) {
+                                  _nuScrollTarget = max(0.0,
+                                      nuTop - (viewportHeight * 0.35));
+                                }
 
-                                                // 3. Proportionell NU-linje (endast idag)
-                                                if (_isViewingToday)
-                                                  _buildPositionedNuLine(
-                                                    nuTop: nuTop,
-                                                    width: constraints.maxWidth,
-                                                  ),
-                                              ],
-                                            ),
+                                return SingleChildScrollView(
+                                  controller: _scrollController,
+                                  physics:
+                                      const BouncingScrollPhysics(),
+                                  padding:
+                                      EdgeInsets.only(bottom: bottomPadding),
+                                  child: SizedBox(
+                                    height: timelineHeight,
+                                    width: constraints.maxWidth,
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        // 1. Grid- och timlinjer med timetiketter
+                                        _buildGridBackground(
+                                          startHour: startHour,
+                                          totalHours: totalHours,
+                                          isLowStimuli: isLowStimuli,
+                                          width: constraints.maxWidth,
+                                        ),
+
+                                        // 2. Händelseblock & Måltidsblock
+                                        for (final layout in layoutList)
+                                          _buildPositionedEventCard(
+                                            layout: layout,
+                                            totalWidth:
+                                                constraints.maxWidth,
+                                            dayColor: dayColor,
+                                            isLowStimuli: isLowStimuli,
+                                            user: user,
                                           ),
-                                        );
-                                      },
+
+                                        // 3. Proportionell NU-linje (endast idag)
+                                        if (_isViewingToday)
+                                          _buildPositionedNuLine(
+                                            nuTop: nuTop,
+                                            width: constraints.maxWidth,
+                                          ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
+                                );
+                              },
                             ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            );
-          },
-        );
-      },
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -772,7 +930,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     BuildContext context,
     FamilyProvider provider,
     UserModel? user,
-    Color dayColor,
+    List<QueryDocumentSnapshot> allChores,
     int weekday,
   ) {
     final palette = AppTheme.dayPalette(weekday);
@@ -786,7 +944,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     final isLowStimuli = AppTheme.lowStimuli;
     final firstName = user?.name.split(' ').first ?? '';
     final hasWeather = provider.hasHomeLocation;
-    final uncompletedChores = _uncompletedChoresCount(provider, user);
+    final uncompletedChores = _uncompletedChoresCount(allChores, user);
 
     return Container(
       decoration: isLowStimuli
@@ -1069,23 +1227,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
   }
 
   Widget _buildEmptyDayBanner() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final isFuture = _viewedDay.isAfter(today);
-    final isPast = _viewedDay.isBefore(today);
-
-    String title;
-    String sub;
-    if (_isViewingToday) {
-      title = 'Inget inplanerat idag 😌';
-      sub = 'Tidsaxeln visar ändå var på dagen du befinner dig.';
-    } else if (isFuture) {
-      title = 'Inget inplanerat 🎈';
-      sub = 'Det finns inga schemalagda aktiviteter denna dag.';
-    } else {
-      title = 'Inget stod på schemat denna dag';
-      sub = 'Inga aktiviteter sparades för detta datum.';
-    }
+    final texter = tomDagTexter(visadDag: _viewedDay, idag: DateTime.now());
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
@@ -1097,23 +1239,106 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
       ),
       child: Row(
         children: [
-          Text(isPast ? '📅' : '😌', style: const TextStyle(fontSize: 26)),
+          Text(texter.emoji, style: const TextStyle(fontSize: 26)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title,
+                  texter.rubrik,
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 Text(
-                  sub,
+                  texter.underrubrik,
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                 ),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// "Hämtar dagen…" medan dagen hämtas. Avsiktligt låg: den ersätter inte tidsaxeln,
+  /// den lägger sig ovanför den — och ingen tom dag-text visas under tiden.
+  Widget _buildLaddarRad(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Säger vad som inte gick att hämta, med återförsök. Det som gick att hämta ligger
+  /// kvar under raden.
+  Widget _buildFelRad(String text) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        children: [
+          const Text('⚠️', style: TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_forsokerIgen)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            TextButton(
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                foregroundColor: const Color(0xFF1E293B),
+              ),
+              onPressed: _forsokIgen,
+              child: const Text(
+                MinDagTillforlitlighet.forsokIgenText,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
         ],
       ),
     );
@@ -1177,7 +1402,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
                 side: BorderSide(color: Colors.grey.shade300),
                 onPressed: () {
                   if (_isViewingToday && canEdit) {
-                    _showTransportSheet(context, item.doc.reference, d, dayColor);
+                    _showTransportSheet(context, item.doc, d, dayColor);
                   } else {
                     _openDetail(item.doc);
                   }
@@ -1326,7 +1551,7 @@ class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
     } else if (_isViewingToday && !isPassed && canEdit && item.doc != null) {
       onTap = () => _showTransportSheet(
             context,
-            item.doc!.reference,
+            item.doc!,
             d,
             dayColor,
           );
