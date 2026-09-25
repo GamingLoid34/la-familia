@@ -303,7 +303,9 @@ class _AddEventSheetState extends State<AddEventSheet> {
         final c = await Connectivity().checkConnectivity();
         offline = c.every((r) => r == ConnectivityResult.none);
       } catch (_) {}
-      if (offline && await PendingChecklistEdits.hasPending(editDoc.id)) {
+      if (offline &&
+          await PendingChecklistEdits.instance
+              .hasPending(editDoc.id, uid: uid)) {
         if (!mounted) return;
         setState(() {
           _saving = false;
@@ -335,7 +337,9 @@ class _AddEventSheetState extends State<AddEventSheet> {
       kandId: editDoc?.id,
       skriv: (mottagId) => editDoc != null
           ? skrivRedigering(coll.doc(editDoc.id), payload,
-              originalChecklist: checklistRowsOf(original?['checklist']))
+              originalChecklist: checklistRowsOf(original?['checklist']),
+              uid: uid,
+              familyId: fid)
           : skrivNyAktivitet(coll, payload, mottagId: (id) {
               nyttId = id;
               mottagId(id);

@@ -278,7 +278,8 @@ class _MainPageState extends State<MainPage> {
     AktivitetSparning.instans.senaFel.addListener(_onLateSaveError);
     // Packlisteändringar som väntar på nätet: vid start, när appen kommer
     // tillbaka och när nätet återkommer.
-    _flushPendingChecklists();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => unawaited(_flushWhenReady()));
     _lifecycle = AppLifecycleListener(onResume: _flushPendingChecklists);
     _connectivitySub = Connectivity().onConnectivityChanged.listen((r) {
       if (r.any((c) => c != ConnectivityResult.none)) _flushPendingChecklists();
@@ -357,9 +358,28 @@ class _MainPageState extends State<MainPage> {
   AppLifecycleListener? _lifecycle;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
+  /// Bara den inloggades egna köposter i den aktiva familjen körs.
   void _flushPendingChecklists() {
-    unawaited(PendingChecklistEdits.flush(
+    final me = context.read<FamilyProvider>().currentUser;
+    final fid = me?.familyId ?? '';
+    if (me == null || fid.isEmpty) return;
+    unawaited(PendingChecklistEdits.instance.flush(
+        uid: me.uid,
+        familyId: fid,
         onFailed: AktivitetSparning.instans.rapporteraFel));
+  }
+
+  /// Vid start finns användaren inte direkt — vänta in providern.
+  Future<void> _flushWhenReady() async {
+    final provider = context.read<FamilyProvider>();
+    for (var i = 0; i < 60 && mounted; i++) {
+      if (!provider.isLoading &&
+          (provider.currentUser?.familyId ?? '').isNotEmpty) {
+        _flushPendingChecklists();
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
   }
 
   /// Ett nekande som kom efter att formuläret slutat vänta — sägs alltid.

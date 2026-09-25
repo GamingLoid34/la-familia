@@ -397,26 +397,51 @@ Future<String> skrivNyAktivitet(
 /// skulle då skrivas över. Den går via [PendingChecklistEdits.save]: lagras
 /// först lokalt och slås sedan ihop mot serverns senaste version i en
 /// transaktion, direkt eller när nätet kommit tillbaka (även efter omstart).
+///
+/// Blev packlistan bara köad (servern nåddes inte) kastas [PacklistaKoad]
+/// när resten sparats, så att [AktivitetSparning] redovisar sparningen som
+/// lokal — inte som serverbekräftad.
 Future<String> skrivRedigering(
   DocumentReference<Map<String, dynamic>> ref,
   AktivitetPayload payload, {
   required List<dynamic> originalChecklist,
+  required String uid,
+  required String familyId,
+  PendingChecklistEdits? queue,
 }) async {
-  // Packlistan läggs i kön innan något annat, så att den finns kvar om
-  // appen stängs medan update() väntar på nätet.
-  // Felet fångas som värde, så att det inte blir ohanterat medan update()
-  // väntar.
+  // Packlistan läggs i kön innan update() väntar på nätet. Resultatet (eller
+  // felet) fångas som värde, så att inget blir ohanterat under tiden.
   final packlista = payload.packlistanAndrad
-      ? PendingChecklistEdits.save(ref,
-              originalRows: originalChecklist, editedRows: payload.packlista)
-          .then<Object?>((_) => null, onError: (Object e) => e)
+      ? (queue ?? PendingChecklistEdits.instance)
+          .save(
+            eventId: ref.id,
+            uid: uid,
+            familyId: familyId,
+            originalRows: originalChecklist,
+            editedRows: payload.packlista,
+          )
+          .then<Object>((o) => o, onError: (Object e) => _Fel(e))
       : null;
   if (!payload.tomRedigering) {
     await ref.update(payload.tillFirestore());
   }
-  final fel = packlista == null ? null : await packlista;
-  if (fel != null) throw fel;
+  final utfall = packlista == null ? null : await packlista;
+  if (utfall is _Fel) throw utfall.fel;
+  if (utfall == ChecklistSaveOutcome.queued) throw const PacklistaKoad();
   return ref.id;
+}
+
+class _Fel {
+  final Object fel;
+  const _Fel(this.fel);
+}
+
+/// Aktiviteten är sparad (eller köad), men packlistan väntar i kön på att
+/// servern ska nås. Inget fel — men heller ingen serverbekräftelse.
+class PacklistaKoad implements Exception {
+  const PacklistaKoad();
+  @override
+  String toString() => 'Packlistan sparas när nätet finns.';
 }
 
 // ---------------------------------------------------------------------------
@@ -523,14 +548,20 @@ class AktivitetSparning {
     Future<void> Function()? aterstall,
   }) async {
     final id = ValueNotifier<String?>(kandId);
-    var efterarbeteStartat = false;
+    // Påminnelsearbetet. Återställningen väntar in det, så att ett nekande
+    // inte avbokar påminnelser som arbetet sedan lägger tillbaka.
+    Future<void>? efterarbete;
 
     void idArKant(String nyttId) {
       id.value = nyttId;
-      if (kandId == null && !efterarbeteStartat) {
-        efterarbeteStartat = true;
-        _efterarbete(titel, nyttId, narIdArKant);
+      if (kandId == null && efterarbete == null) {
+        efterarbete = _efterarbete(titel, nyttId, narIdArKant);
       }
+    }
+
+    Future<void> aterstallEfterArbete() async {
+      await efterarbete;
+      await _aterstall(aterstall);
     }
 
     final svar = Future<String>.sync(() => skriv(idArKant)).then(
@@ -542,7 +573,7 @@ class AktivitetSparning {
     );
 
     // Vid redigering är id:t känt, så påminnelserna behöver inte vänta.
-    if (kandId != null) _efterarbete(titel, kandId, narIdArKant);
+    if (kandId != null) efterarbete = _efterarbete(titel, kandId, narIdArKant);
 
     bool online;
     try {
@@ -551,19 +582,20 @@ class AktivitetSparning {
       online = false;
     }
     if (!online) {
-      _bevaka(titel, svar, aterstall);
+      _bevaka(titel, svar, aterstallEfterArbete);
       return SparLokalt(id);
     }
 
     try {
       final s = await svar.timeout(vantaPaServern);
+      if (s.fel is PacklistaKoad) return SparLokalt(id);
       if (s.fel != null) {
-        await _aterstall(aterstall);
+        await aterstallEfterArbete();
         return SparNekat(felText(s.fel));
       }
       return SparBekraftat(s.id!);
     } on TimeoutException {
-      _bevaka(titel, svar, aterstall);
+      _bevaka(titel, svar, aterstallEfterArbete);
       return SparLokalt(id);
     }
   }
@@ -578,7 +610,7 @@ class AktivitetSparning {
   void _bevaka(
       String titel, Future<_Svar> svar, Future<void> Function()? aterstall) {
     svar.then((s) async {
-      if (s.fel != null) {
+      if (s.fel != null && s.fel is! PacklistaKoad) {
         await _aterstall(aterstall);
         _laggTillFel('"$titel" kunde inte sparas. ${felText(s.fel)}');
       }
@@ -589,13 +621,13 @@ class AktivitetSparning {
   /// som inte gick att spara) och som användaren ska få se.
   void rapporteraFel(String text) => _laggTillFel(text);
 
-  void _efterarbete(
+  Future<void> _efterarbete(
     String titel,
     String id,
     Future<void> Function(String id)? arbete,
   ) {
-    if (arbete == null) return;
-    Future<void>.sync(() => arbete(id)).catchError((Object e) {
+    if (arbete == null) return Future.value();
+    return Future<void>.sync(() => arbete(id)).catchError((Object e) {
       // Aktiviteten finns, men påminnelse eller mall saknas. Det ska synas.
       _laggTillFel('"$titel" sparades, men något runt den gick fel. '
           '${felText(e)}');

@@ -245,4 +245,77 @@ void main() {
       expect(aterstallt, 0);
     });
   });
+
+  group('Samordning med påminnelsearbetet (granskning omgång 3, punkt 4)', () {
+    test('återställningen väntar in påminnelsearbetet', () async {
+      final s = sparning(online: true);
+      final handelser = <String>[];
+      final arbete = Completer<void>();
+      final utfall = await s.spara(
+        titel: 'Tandläkare',
+        kandId: 'e1',
+        skriv: (_) async => throw StateError('PERMISSION_DENIED'),
+        narIdArKant: (_) async {
+          await arbete.future; // påminnelserna läggs upp långsamt
+          handelser.add('påminnelser upplagda');
+        },
+        aterstall: () async => handelser.add('återställt'),
+      ).timeout(const Duration(milliseconds: 50), onTimeout: () => const SparNekat('väntar'));
+      // Återställningen får inte ha körts före arbetet.
+      expect(handelser, isEmpty);
+      arbete.complete();
+      await vantaLite();
+      expect(utfall, isA<SparNekat>());
+      expect(handelser, ['påminnelser upplagda', 'återställt']);
+    });
+
+    test('sent nekande väntar också in arbetet', () async {
+      final s = sparning(online: false);
+      final handelser = <String>[];
+      final arbete = Completer<void>();
+      final server = Completer<String>();
+      await s.spara(
+        titel: 'Tandläkare',
+        kandId: 'e1',
+        skriv: (_) => server.future,
+        narIdArKant: (_) async {
+          await arbete.future;
+          handelser.add('påminnelser upplagda');
+        },
+        aterstall: () async => handelser.add('återställt'),
+      );
+      server.completeError(StateError('PERMISSION_DENIED'));
+      await vantaLite();
+      expect(handelser, isEmpty);
+      arbete.complete();
+      await vantaLite();
+      expect(handelser, ['påminnelser upplagda', 'återställt']);
+    });
+  });
+
+  group('Köad packlista redovisas som lokal', () {
+    test('PacklistaKoad ger SparLokalt, ingen återställning, inget fel', () async {
+      final s = sparning(online: true);
+      var aterstallt = 0;
+      final utfall = await s.spara(
+        titel: 'Fotboll',
+        kandId: 'e1',
+        skriv: (_) async => throw const PacklistaKoad(),
+        aterstall: () async => aterstallt++,
+      );
+      expect(utfall, isA<SparLokalt>());
+      await vantaLite();
+      expect(aterstallt, 0);
+      expect(s.senaFel.value, isEmpty);
+    });
+
+    test('sent PacklistaKoad ger inget fel', () async {
+      final s = sparning(online: false);
+      final server = Completer<String>();
+      await s.spara(titel: 'Fotboll', kandId: 'e1', skriv: (_) => server.future);
+      server.completeError(const PacklistaKoad());
+      await vantaLite();
+      expect(s.senaFel.value, isEmpty);
+    });
+  });
 }

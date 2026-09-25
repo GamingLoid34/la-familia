@@ -75,7 +75,7 @@ Körda på grenens sista commit (2026-09-25):
 | Kontroll | Resultat |
 |---|---|
 | `flutter analyze` | No issues found! |
-| `flutter test` | 919 test, alla gröna (baslinje före arbetet: 416) |
+| `flutter test` | 933 test, alla gröna (baslinje före arbetet: 416) |
 | `node --test` (functions, oförändrade) | 83 test, alla gröna |
 | `flutter build web --release` | Lyckas |
 | `flutter build apk --debug` | Lyckas — bara kompileringskontroll av ikon-/startskärmsresurserna; ska **inte** publiceras |
@@ -123,6 +123,25 @@ Fyra fel som kvarstod efter första rättelseomgången, nu åtgärdade:
 4. **Sena sparfel återställde inte påminnelserna.** Återställningen (påminnelser och
    ev. mall) körs nu både vid omedelbart och sent nekande. Test:
    `aktivitet_sparning_test.dart`.
+
+### Tredje granskningen (Oscar, 2026-09-25): packlistekön
+
+1. **Kön var inte bunden till konto/familj.** Varje post bär nu `uid` och `familyId`;
+   `flush` kör bara den inloggades poster i den aktiva familjen. En annan användares
+   poster rörs inte och kan inte raderas av någon annans behörighetsfel.
+2. **Misslyckad lokal lagring kunde döljas.** `save` skiljer nu på *bekräftad*
+   (servern tog emot) och *köad* (servern nåddes inte men posten ligger säkert i kön).
+   Nås varken servern eller kön kastas `PacklistaEjSparad`. En köad packlista redovisas
+   som lokal sparning (`PacklistaKoad` → "sparat på telefonen"), aldrig som bekräftad.
+3. **Samtidiga köoperationer.** Alla läsningar/skrivningar av kön går genom ett lås,
+   och varje post har ett eget operations-id; bara den genomförda operationen tas bort.
+4. **Återställning före påminnelsearbetet.** Återställningen väntar nu in
+   påminnelsearbetet, både vid omedelbart och sent nekande.
+
+Testerna kör `save` och `flush` på riktigt med ersättningar för lagring och server:
+kontobyte, annan familj, lagringsfel (med och utan serverkontakt), permanenta fel,
+samtidiga köläggningar, en pågående flush som inte får radera en nyare operation, och
+ordningen. Samtidighetstestet faller om låset tas bort (kontrollerat).
 
 ### Oberoende kodgranskning
 
