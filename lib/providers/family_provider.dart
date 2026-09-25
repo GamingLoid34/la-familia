@@ -77,6 +77,13 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Byter inloggad användare direkt — bara för tester.
+  @visibleForTesting
+  void debugSetCurrentUser(UserModel? user) {
+    _currentUser = user;
+    notifyListeners();
+  }
+
   /// Starta om familjens prenumerationer ("Försök igen").
   void retryFamilyStreams() {
     final fid = _activeFamilyId;

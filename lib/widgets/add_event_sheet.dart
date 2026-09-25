@@ -14,7 +14,10 @@ import '../services/notification_service.dart';
 import '../utils/aktivitet_formular.dart';
 import '../utils/aktivitet_payload.dart';
 import '../utils/checklist_updates.dart';
+import '../providers/family_provider.dart';
 import '../utils/pending_checklist_edits.dart';
+import '../utils/session_guard.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_colors.dart';
 import 'quick_add_bar.dart';
 import 'vardag_header.dart';
@@ -283,6 +286,10 @@ class _AddEventSheetState extends State<AddEventSheet> {
       setState(() => _error = 'Ingen familj vald.');
       return;
     }
+    // Samma fullständiga sessionskontroll som uppspelningen i main.dart:
+    // Firebase-uid, providerns uid och familj måste vara oförändrade.
+    final session = sessionGuard(
+        uid: uid, familyId: fid, provider: context.read<FamilyProvider>());
     setState(() {
       _saving = true;
       _error = null;
@@ -344,7 +351,7 @@ class _AddEventSheetState extends State<AddEventSheet> {
               originalChecklist: checklistRowsOf(original?['checklist']),
               uid: uid,
               familyId: fid,
-              stillActive: () => FirebaseAuth.instance.currentUser?.uid == uid)
+              stillActive: session)
           : skrivNyAktivitet(coll, payload, mottagId: (id) {
               nyttId = id;
               mottagId(id);

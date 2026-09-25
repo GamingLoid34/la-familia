@@ -27,6 +27,7 @@ import 'app_theme.dart';
 import 'navigation/app_navigation.dart';
 import 'utils/aktivitet_payload.dart';
 import 'utils/pending_checklist_edits.dart';
+import 'utils/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'theme/app_colors.dart';
 import 'providers/family_provider.dart';
@@ -368,10 +369,8 @@ class _MainPageState extends State<MainPage> {
         uid: me.uid,
         familyId: fid,
         // Byts kontot eller familjen mitt i uppspelningen avbryts den.
-        stillActive: () =>
-            FirebaseAuth.instance.currentUser?.uid == me.uid &&
-            provider.currentUser?.uid == me.uid &&
-            provider.currentUser?.familyId == fid,
+        stillActive:
+            sessionGuard(uid: me.uid, familyId: fid, provider: provider),
         onFailed: AktivitetSparning.instans.rapporteraFel));
   }
 
