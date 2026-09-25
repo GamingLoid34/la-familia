@@ -75,7 +75,7 @@ Körda på grenens sista commit (2026-09-25):
 | Kontroll | Resultat |
 |---|---|
 | `flutter analyze` | No issues found! |
-| `flutter test` | 900 test, alla gröna (baslinje före arbetet: 416) |
+| `flutter test` | 919 test, alla gröna (baslinje före arbetet: 416) |
 | `node --test` (functions, oförändrade) | 83 test, alla gröna |
 | `flutter build web --release` | Lyckas |
 | `flutter build apk --debug` | Lyckas — bara kompileringskontroll av ikon-/startskärmsresurserna; ska **inte** publiceras |
@@ -95,6 +95,34 @@ Mer (måndag, torsdag, fredag, lågstimuli, neutral), Uppgifter (även stor text
 Inkorg (även bred skärm), aktivitetsformuläret, Inför i morgon, Återkommande,
 inloggning och onboarding. Granskat: dagsfärg på sidan, tonade kort, svart text
 enligt WCAG-valet, loggan på inloggningen, datum på varje rad i Inför i morgon.
+
+### Andra granskningen (Oscar, 2026-09-25)
+
+Fyra fel som kvarstod efter första rättelseomgången, nu åtgärdade:
+
+1. **Packlista utan nät kunde skriva över Androids avbockningar.** Rättelsen i `0197ae3`
+   köade hela listan från telefonens kopia — fel. Nu skrivs en packlisteändring aldrig
+   som hel lista: den läggs först i en lokal kö (`PendingChecklistEdits`, ursprung +
+   formulärets lista) och sparas bara med transaktionen som slår ihop mot serverns
+   senaste version — direkt, när nätet kommer tillbaka, vid återkomst till appen eller
+   vid nästa start. Test: `pending_checklist_edits_test.dart` återskapar scenariot med
+   en avbockning från Android medan Flutter saknade nät.
+   *Begränsning:* finns redan en väntande packlisteändring för samma aktivitet och
+   telefonen fortfarande saknar nät, nekar formuläret en ny packlisteändring med en
+   förklaring i stället för att gissa. På webben ligger kön i webbläsarens lagring, som
+   inte är garanterad (privat läge, rensad data).
+2. **Inför i morgon kunde ge ett falskt lugnande besked.** Providern håller nu
+   laddning och fel per källa; översikten väntar på familjemedlemmar, sysslor,
+   återkommande och morgondagens aktiviteter (utöver uppgifter, anteckningar och
+   arbetspass) och visar felraden om någon felar. "Försök igen" startar om familjens
+   prenumerationer och arbetspassens fråga. Test: `tomorrow_overview_section_test.dart`.
+3. **Anteckningens text försvann vid nekad sparning.** Formuläret öppnas nu igen med
+   utkastet och felet överst tills sparningen lyckas eller användaren stänger — för
+   snabbanteckningen, ny anteckning i Inkorgen och ändring. Test:
+   `compose_note_retry_test.dart`.
+4. **Sena sparfel återställde inte påminnelserna.** Återställningen (påminnelser och
+   ev. mall) körs nu både vid omedelbart och sent nekande. Test:
+   `aktivitet_sparning_test.dart`.
 
 ### Oberoende kodgranskning
 

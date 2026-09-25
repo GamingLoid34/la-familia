@@ -22,33 +22,30 @@ Future<void> openQuickNote(BuildContext context) async {
   final me = p.currentUser;
   final fid = me?.familyId ?? '';
   if (me == null || !me.isParent || fid.isEmpty) return;
-  final note = await showComposeNoteSheet(
+  final saved = await composeUntilSaved(
     context,
     people: p.familyMembers,
     autoFocus: true,
     hint: 'Hamnar i Inkorgen. Där kan du göra om den till en aktivitet eller syssla.',
+    describeError: (e) => 'Kunde inte spara: ${_errorText(e)}.',
+    save: (note) async {
+      await NoteService.add(
+        familyId: fid,
+        ownerUid: me.uid,
+        text: note.text,
+        isPrivate: note.isPrivate,
+        aboutUids: note.aboutUids,
+      );
+      return true;
+    },
   );
-  if (note == null || !context.mounted) return;
-  try {
-    await NoteService.add(
-      familyId: fid,
-      ownerUid: me.uid,
-      text: note.text,
-      isPrivate: note.isPrivate,
-      aboutUids: note.aboutUids,
-    );
-    if (!context.mounted) return;
-    showVardagSnack(
-      context,
-      'Sparad i Inkorgen.',
-      actionLabel: 'Öppna',
-      onAction: () => AppNavigation.openInMer(context, MerRoute.inbox),
-    );
-  } catch (e) {
-    if (context.mounted) {
-      showVardagSnack(context, 'Kunde inte spara: ${_errorText(e)}', isError: true);
-    }
-  }
+  if (saved == null || !context.mounted) return;
+  showVardagSnack(
+    context,
+    'Sparad i Inkorgen.',
+    actionLabel: 'Öppna',
+    onAction: () => AppNavigation.openInMer(context, MerRoute.inbox),
+  );
 }
 
 String _errorText(Object e) {
@@ -124,20 +121,27 @@ class _InboxPageState extends State<InboxPage> {
       _error('Ingen familj vald.');
       return;
     }
-    final note = await showComposeNoteSheet(context, people: _p.familyMembers);
-    if (note == null || !mounted) return;
-    if (note.text.trim().isEmpty) {
-      _error('Skriv eller klistra in något först.');
-      return;
-    }
+    final saved = await composeUntilSaved(
+      context,
+      people: _p.familyMembers,
+      describeError: (e) => 'Kunde inte spara: ${_errorText(e)}.',
+      save: (note) => _saveNew(note, fid: fid, uid: me.uid),
+    );
+    if (saved != null && mounted) _info('Sparad. Tolkningen startar.');
+  }
+
+  /// Dubblettkontroll och sparning. False om användaren avbröt vid
+  /// dubblettfrågan; kastar om sparningen nekades (formuläret öppnas då igen).
+  Future<bool> _saveNew(ComposedNote note,
+      {required String fid, required String uid}) async {
     // Ett fel i dubblettkontrollen stoppar inte sparningen (som i Android).
     NoteModel? existing;
     try {
       final dups = await NoteService.findDuplicates(
-          familyId: fid, uid: me.uid, text: note.text);
+          familyId: fid, uid: uid, text: note.text);
       existing = dups.isEmpty ? null : dups.first;
     } catch (_) {}
-    if (!mounted) return;
+    if (!mounted) return false;
     if (existing != null) {
       final when = existing.createdAt != null
           ? DateFormat('d MMMM', 'sv').format(existing.createdAt!)
@@ -159,20 +163,16 @@ class _InboxPageState extends State<InboxPage> {
           ],
         ),
       );
-      if (again != true || !mounted) return;
+      if (again != true || !mounted) return false;
     }
-    try {
-      await NoteService.add(
-        familyId: fid,
-        ownerUid: me.uid,
-        text: note.text,
-        isPrivate: note.isPrivate,
-        aboutUids: note.aboutUids,
-      );
-      if (mounted) _info('Sparad. Tolkningen startar.');
-    } catch (e) {
-      if (mounted) _error('Kunde inte spara: ${_errorText(e)}');
-    }
+    await NoteService.add(
+      familyId: fid,
+      ownerUid: uid,
+      text: note.text,
+      isPrivate: note.isPrivate,
+      aboutUids: note.aboutUids,
+    );
+    return true;
   }
 
   // ─── Åtgärder på en anteckning ─────────────────────────────────────────
@@ -305,32 +305,38 @@ class _InboxPageState extends State<InboxPage> {
   }
 
   Future<void> _edit(NoteModel n) async {
-    final result = await showComposeNoteSheet(
-      context,
-      people: _p.familyMembers,
-      title: 'Ändra anteckning',
-      initialText: n.text,
-      initialPrivate: n.isPrivate,
-      initialAboutUids: n.aboutUids,
-      hint: n.linkedIds.isNotEmpty
-          ? 'Det som redan skapats från anteckningen ligger kvar. Den ändrade texten tolkas på nytt.'
-          : 'Den ändrade texten tolkas på nytt.',
-    );
-    if (result == null || !mounted) return;
-    if (result.text.trim().isEmpty) {
-      _error('Anteckningen kan inte vara tom.');
-      return;
+    if (_busy.contains(n.id)) return;
+    final uid = _p.currentUser?.uid ?? '';
+    if (uid.isEmpty) return;
+    EditOutcome? outcome;
+    setState(() => _busy.add(n.id));
+    try {
+      await composeUntilSaved(
+        context,
+        people: _p.familyMembers,
+        title: 'Ändra anteckning',
+        initialText: n.text,
+        initialPrivate: n.isPrivate,
+        initialAboutUids: n.aboutUids,
+        hint: n.linkedIds.isNotEmpty
+            ? 'Det som redan skapats från anteckningen ligger kvar. Den ändrade texten tolkas på nytt.'
+            : 'Den ändrade texten tolkas på nytt.',
+        describeError: (e) => 'Kunde inte spara ändringen: ${_errorText(e)}.',
+        save: (result) async {
+          outcome = await NoteService.editNote(n,
+              myUid: uid,
+              text: result.text,
+              isPrivate: result.isPrivate,
+              aboutUids: result.aboutUids);
+          return true;
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _busy.remove(n.id));
     }
-    await _run(n.id, 'Kunde inte spara ändringen', () async {
-      final uid = _p.currentUser?.uid ?? '';
-      if (uid.isEmpty) throw StateError('Inte inloggad.');
-      final outcome = await NoteService.editNote(n,
-          myUid: uid,
-          text: result.text,
-          isPrivate: result.isPrivate,
-          aboutUids: result.aboutUids);
-      if (!mounted) return;
-      switch (outcome) {
+    {
+      if (!mounted || outcome == null) return;
+      switch (outcome!) {
         case EditOutcome.unchanged:
           break; // Ingenting ändrat — ingen kopia, inget besked.
         case EditOutcome.replaced:
@@ -339,7 +345,7 @@ class _InboxPageState extends State<InboxPage> {
           _error('Den ändrade anteckningen sparades, men den gamla kunde inte '
               'tas bort. Båda ligger nu i Inkorgen — ta bort den gamla för hand.');
       }
-    });
+    }
   }
 
   Future<void> _openDetail(NoteModel n) => showProtectedSheet<void>(

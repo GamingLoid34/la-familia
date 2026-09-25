@@ -26,6 +26,8 @@ import 'screens/splash_screen.dart';
 import 'app_theme.dart';
 import 'navigation/app_navigation.dart';
 import 'utils/aktivitet_payload.dart';
+import 'utils/pending_checklist_edits.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'theme/app_colors.dart';
 import 'providers/family_provider.dart';
 import 'services/notification_service.dart';
@@ -274,6 +276,13 @@ class _MainPageState extends State<MainPage> {
     AppNavigation.tab.value = _selectedIndex;
     AppNavigation.tab.addListener(_onNavigationTab);
     AktivitetSparning.instans.senaFel.addListener(_onLateSaveError);
+    // Packlisteändringar som väntar på nätet: vid start, när appen kommer
+    // tillbaka och när nätet återkommer.
+    _flushPendingChecklists();
+    _lifecycle = AppLifecycleListener(onResume: _flushPendingChecklists);
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((r) {
+      if (r.any((c) => c != ConnectivityResult.none)) _flushPendingChecklists();
+    });
     _pageController = PageController(initialPage: _selectedIndex);
     _pages = [
       const DashboardPage(),
@@ -337,12 +346,21 @@ class _MainPageState extends State<MainPage> {
   void dispose() {
     AppNavigation.tab.removeListener(_onNavigationTab);
     AktivitetSparning.instans.senaFel.removeListener(_onLateSaveError);
+    _lifecycle?.dispose();
+    _connectivitySub?.cancel();
     AppNavigation.tabsAvailable = false;
     _pageController.dispose();
     super.dispose();
   }
 
   bool _showingLateError = false;
+  AppLifecycleListener? _lifecycle;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  void _flushPendingChecklists() {
+    unawaited(PendingChecklistEdits.flush(
+        onFailed: AktivitetSparning.instans.rapporteraFel));
+  }
 
   /// Ett nekande som kom efter att formuläret slutat vänta — sägs alltid.
   Future<void> _onLateSaveError() async {

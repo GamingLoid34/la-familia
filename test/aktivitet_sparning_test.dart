@@ -187,4 +187,62 @@ void main() {
     expect(AktivitetSparning.felText(Exception('timeout')),
         'Kunde inte spara: timeout');
   });
+
+  group('Återställning vid nekande (granskning 2026-09-25, punkt 4)', () {
+    test('omedelbart nekande återställer', () async {
+      final s = sparning(online: true);
+      var aterstallt = 0;
+      final utfall = await s.spara(
+        titel: 'Tandläkare',
+        skriv: (_) async => throw StateError('PERMISSION_DENIED'),
+        aterstall: () async => aterstallt++,
+      );
+      expect(utfall, isA<SparNekat>());
+      expect(aterstallt, 1);
+    });
+
+    test('sent nekande efter väntetiden återställer också', () async {
+      final s = sparning(online: true);
+      var aterstallt = 0;
+      final server = Completer<String>();
+      final utfall = await s.spara(
+        titel: 'Tandläkare',
+        kandId: 'e1',
+        skriv: (_) => server.future,
+        aterstall: () async => aterstallt++,
+      );
+      expect(utfall, isA<SparLokalt>());
+      expect(aterstallt, 0, reason: 'inget nekande än');
+      server.completeError(StateError('PERMISSION_DENIED'));
+      await vantaLite();
+      expect(aterstallt, 1);
+      expect(s.senaFel.value.single, contains('kunde inte sparas'));
+    });
+
+    test('sent nekande utan nät återställer också', () async {
+      final s = sparning(online: false);
+      var aterstallt = 0;
+      final server = Completer<String>();
+      await s.spara(
+        titel: 'Tandläkare',
+        skriv: (_) => server.future,
+        aterstall: () async => aterstallt++,
+      );
+      server.completeError(StateError('PERMISSION_DENIED'));
+      await vantaLite();
+      expect(aterstallt, 1);
+    });
+
+    test('lyckad sparning återställer inte', () async {
+      final s = sparning(online: true);
+      var aterstallt = 0;
+      await s.spara(
+        titel: 'Tandläkare',
+        skriv: (_) async => 'e1',
+        aterstall: () async => aterstallt++,
+      );
+      await vantaLite();
+      expect(aterstallt, 0);
+    });
+  });
 }

@@ -15,6 +15,7 @@ import '../services/notification_service.dart';
 import '../utils/aktivitet_formular.dart';
 import '../utils/aktivitet_payload.dart';
 import '../utils/checklist_updates.dart';
+import '../utils/pending_checklist_edits.dart';
 import '../theme/app_colors.dart';
 import 'quick_add_bar.dart';
 import 'vardag_header.dart';
@@ -293,21 +294,48 @@ class _AddEventSheetState extends State<AddEventSheet> {
     final packlista = _f.packlista;
     final piktogram = _f.piktogram;
 
-    bool offline;
-    try {
-      final c = await Connectivity().checkConnectivity();
-      offline = c.every((r) => r == ConnectivityResult.none);
-    } catch (_) {
-      offline = false;
+    // En packlisteändring som redan väntar på nätet för samma aktivitet:
+    // formulärets lista bygger då på en äldre version, och en ny ändring
+    // skulle kunna tappa den förra. Säg det i stället för att gissa.
+    if (editDoc != null && payload.packlistanAndrad) {
+      var offline = false;
+      try {
+        final c = await Connectivity().checkConnectivity();
+        offline = c.every((r) => r == ConnectivityResult.none);
+      } catch (_) {}
+      if (offline && await PendingChecklistEdits.hasPending(editDoc.id)) {
+        if (!mounted) return;
+        setState(() {
+          _saving = false;
+          _error = 'En tidigare ändring av packlistan väntar på nätet. '
+              'Ändra packlistan igen när du har nät.';
+        });
+        return;
+      }
     }
+
     String? nyttId;
+    DocumentReference? mall;
+    Future<void> aterstall() async {
+      // Påminnelserna och mallen lades upp innan servern svarat.
+      final id = editDoc?.id ?? nyttId;
+      if (id != null) {
+        await NotificationService.cancelActivityReminders(
+            id, payload.forPaminnelser);
+        if (original != null) {
+          await NotificationService.scheduleActivityReminders(
+              docId: id, data: original);
+        }
+      }
+      await mall?.delete();
+    }
+
     final utfall = await AktivitetSparning.instans.spara(
       titel: titel,
       kandId: editDoc?.id,
       skriv: (mottagId) => editDoc != null
           ? skrivRedigering(coll.doc(editDoc.id), payload,
-              originalChecklist: checklistRowsOf(original?['checklist']),
-              offline: offline)
+              originalChecklist: checklistRowsOf(original?['checklist']))
           : skrivNyAktivitet(coll, payload, mottagId: (id) {
               nyttId = id;
               mottagId(id);
@@ -319,32 +347,23 @@ class _AddEventSheetState extends State<AddEventSheet> {
         await NotificationService.scheduleActivityReminders(
             docId: id, data: payload.forPaminnelser);
       },
+      aterstall: aterstall,
     );
     if (!mounted) return;
 
-    if (utfall is SparNekat) {
-      // Påminnelserna lades upp innan servern svarat — ställ tillbaka dem.
-      final id = editDoc?.id ?? nyttId;
-      if (id != null) {
-        await NotificationService.cancelActivityReminders(
-            id, payload.forPaminnelser);
-        if (original != null) {
-          await NotificationService.scheduleActivityReminders(
-              docId: id, data: original);
-        }
-      }
-    } else if (saveTemplate) {
-      // Mallen sparas först när aktiviteten är sparad (eller köad).
-      FirebaseFirestore.instance
-          .collection('activity_templates')
-          .add(aktivitetsmall(
+    if (utfall is! SparNekat && saveTemplate) {
+      // Mallen sparas först när aktiviteten är sparad eller köad; nekas den
+      // senare tar återställningen bort mallen.
+      final ref = FirebaseFirestore.instance.collection('activity_templates').doc();
+      mall = ref;
+      ref
+          .set(aktivitetsmall(
               titel: titel,
               piktogram: piktogram,
               packlista: packlista,
               familyId: fid))
           .catchError((Object e) {
         developer.log('Kunde inte spara mallen', error: e);
-        return FirebaseFirestore.instance.collection('activity_templates').doc();
       });
     }
     if (!mounted) return;

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' show TimeOfDay;
 import '../models/user_model.dart';
 import 'aktivitet_formular.dart';
 import 'checklist_updates.dart';
+import 'pending_checklist_edits.dart';
 import 'date_utils.dart';
 import 'lesson_prep.dart';
 
@@ -388,48 +389,33 @@ Future<String> skrivNyAktivitet(
 }
 
 /// Skriver en redigering: först dokumentets ändrade fält med `update()`,
-/// sedan packlistan i en transaktion om den ändrats.
+/// sedan packlistan om den ändrats.
 ///
 /// [originalChecklist] är `checklist` som den låg när formuläret öppnades.
-/// `update()` fungerar utan nät; transaktionen körs när uppdateringen nått
-/// servern och kräver nät.
-///
-/// Utan nät ([offline]) kan transaktionen inte köras. Då slås packlistan ihop
-/// mot den senaste versionen i telefonens cache och skickas i samma köade
-/// `update()`, så att ändringen inte försvinner om appen stängs innan nätet
-/// kommer tillbaka.
+/// `update()` köas och fungerar utan nät. Packlistan skrivs **aldrig** som en
+/// hel lista från telefonens kopia — en avbockning från Android under tiden
+/// skulle då skrivas över. Den går via [PendingChecklistEdits.save]: lagras
+/// först lokalt och slås sedan ihop mot serverns senaste version i en
+/// transaktion, direkt eller när nätet kommit tillbaka (även efter omstart).
 Future<String> skrivRedigering(
   DocumentReference<Map<String, dynamic>> ref,
   AktivitetPayload payload, {
   required List<dynamic> originalChecklist,
-  bool offline = false,
 }) async {
-  if (offline && payload.packlistanAndrad) {
-    List<dynamic> latest;
-    try {
-      final cached = await ref.get(const GetOptions(source: Source.cache));
-      latest = checklistRowsOf(cached.data()?['checklist']);
-    } catch (_) {
-      latest = originalChecklist;
-    }
-    final merged = mergeChecklist(
-      latestRows: latest,
-      originalRows: originalChecklist,
-      editedRows: payload.packlista,
-    );
-    await ref.update({...payload.tillFirestore(), 'checklist': merged});
-    return ref.id;
-  }
+  // Packlistan läggs i kön innan något annat, så att den finns kvar om
+  // appen stängs medan update() väntar på nätet.
+  // Felet fångas som värde, så att det inte blir ohanterat medan update()
+  // väntar.
+  final packlista = payload.packlistanAndrad
+      ? PendingChecklistEdits.save(ref,
+              originalRows: originalChecklist, editedRows: payload.packlista)
+          .then<Object?>((_) => null, onError: (Object e) => e)
+      : null;
   if (!payload.tomRedigering) {
     await ref.update(payload.tillFirestore());
   }
-  if (payload.packlistanAndrad) {
-    await saveChecklistEdit(
-      ref,
-      originalRows: originalChecklist,
-      editedRows: payload.packlista,
-    );
-  }
+  final fel = packlista == null ? null : await packlista;
+  if (fel != null) throw fel;
   return ref.id;
 }
 
@@ -526,11 +512,15 @@ class AktivitetSparning {
   ///   skapats lokalt, och returnerar dokumentets id efter serverns svar.
   /// - [narIdArKant]: påminnelser och mall. Körs en gång, så fort id:t är
   ///   känt. Ett fel här räknas inte som att aktiviteten inte sparades.
+  /// - [aterstall]: ångrar det [narIdArKant] gjort (påminnelser, mall) när
+  ///   skrivningen nekas — både direkt och när nekandet kommer först efter
+  ///   att formuläret slutat vänta.
   Future<SparUtfall> spara({
     required String titel,
     String? kandId,
     required Future<String> Function(void Function(String id) mottagId) skriv,
     Future<void> Function(String id)? narIdArKant,
+    Future<void> Function()? aterstall,
   }) async {
     final id = ValueNotifier<String?>(kandId);
     var efterarbeteStartat = false;
@@ -561,27 +551,43 @@ class AktivitetSparning {
       online = false;
     }
     if (!online) {
-      _bevaka(titel, svar);
+      _bevaka(titel, svar, aterstall);
       return SparLokalt(id);
     }
 
     try {
       final s = await svar.timeout(vantaPaServern);
-      if (s.fel != null) return SparNekat(felText(s.fel));
+      if (s.fel != null) {
+        await _aterstall(aterstall);
+        return SparNekat(felText(s.fel));
+      }
       return SparBekraftat(s.id!);
     } on TimeoutException {
-      _bevaka(titel, svar);
+      _bevaka(titel, svar, aterstall);
       return SparLokalt(id);
     }
   }
 
-  void _bevaka(String titel, Future<_Svar> svar) {
-    svar.then((s) {
+  static Future<void> _aterstall(Future<void> Function()? f) async {
+    if (f == null) return;
+    try {
+      await f();
+    } catch (_) {}
+  }
+
+  void _bevaka(
+      String titel, Future<_Svar> svar, Future<void> Function()? aterstall) {
+    svar.then((s) async {
       if (s.fel != null) {
+        await _aterstall(aterstall);
         _laggTillFel('"$titel" kunde inte sparas. ${felText(s.fel)}');
       }
     });
   }
+
+  /// Ett fel som uppstått utanför formuläret (t.ex. en väntande packlista
+  /// som inte gick att spara) och som användaren ska få se.
+  void rapporteraFel(String text) => _laggTillFel(text);
 
   void _efterarbete(
     String titel,

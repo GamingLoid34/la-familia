@@ -276,11 +276,16 @@ class _TomorrowOverviewSectionState extends State<TomorrowOverviewSection> {
       stream: fid.isEmpty ? null : _shiftStream(fid),
       builder: (context, shiftSnap) {
         Widget content;
-        final error = p.tasksError ?? p.notesError ?? shiftSnap.error;
+        // Alla källor måste ha svarat utan fel. Annars kan ett ofullständigt
+        // underlag ge ett falskt lugnande "Inget särskilt att förbereda".
+        final error = p.tasksError ??
+            p.notesError ??
+            p.streamsError(FamilyProvider.overviewStreams) ??
+            shiftSnap.error;
         final loading = !p.tasksLoaded ||
             !p.notesLoaded ||
-            (shiftSnap.connectionState == ConnectionState.waiting &&
-                !shiftSnap.hasData);
+            !p.streamsLoaded(FamilyProvider.overviewStreams) ||
+            (fid.isNotEmpty && !shiftSnap.hasData);
         if (error != null) {
           content = Row(children: [
             Expanded(
@@ -288,7 +293,11 @@ class _TomorrowOverviewSectionState extends State<TomorrowOverviewSection> {
                   style: TextStyle(color: c.onCardPrimary)),
             ),
             TextButton(
-              onPressed: p.retryAdultData,
+              onPressed: () {
+                // Arbetspassens fråga startas om tillsammans med resten.
+                setState(() => _shifts = null);
+                p.retryFamilyStreams();
+              },
               child: const Text('Försök igen'),
             ),
           ]);

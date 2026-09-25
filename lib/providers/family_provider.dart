@@ -23,14 +23,68 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get syncError => _syncError;
   DateTime? get lastSyncAt => _lastSyncAt;
 
-  void _handleStreamSuccess() {
+  /// Källor som svarat minst en gång för nuvarande familj (och dag), och
+  /// källor vars senaste svar var ett fel. Används där ett tomt resultat
+  /// annars skulle läsas som "inget att göra" (Inför i morgon).
+  final Set<String> _streamLoaded = {};
+  final Map<String, Object> _streamErrors = {};
+
+  void _handleStreamSuccess([String? streamName]) {
     _syncError = false;
     _lastSyncAt = DateTime.now();
+    if (streamName != null) {
+      _streamLoaded.add(streamName);
+      _streamErrors.remove(streamName);
+    }
   }
 
   void _handleStreamError(String streamName, Object e, StackTrace stack) {
     developer.log('FamilyProvider: fel i $streamName', error: e, stackTrace: stack);
     _syncError = true;
+    _streamErrors[streamName] = e;
+    notifyListeners();
+  }
+
+  /// Underlaget "Inför i morgon" bygger på (utöver uppgifter och anteckningar).
+  static const overviewStreams = [
+    'familyMembers',
+    'chores',
+    'recurringEvents',
+    'tomorrowDateEvents',
+  ];
+
+  /// Har alla källor i [names] svarat?
+  bool streamsLoaded(Iterable<String> names) => names.every(_streamLoaded.contains);
+
+  /// Första felet bland [names], eller null.
+  Object? streamsError(Iterable<String> names) {
+    for (final n in names) {
+      final e = _streamErrors[n];
+      if (e != null) return e;
+    }
+    return null;
+  }
+
+  /// Sätter en källas status direkt — bara för tester.
+  @visibleForTesting
+  void debugSetStream(String name, {bool loaded = true, Object? error}) {
+    loaded ? _streamLoaded.add(name) : _streamLoaded.remove(name);
+    if (error == null) {
+      _streamErrors.remove(name);
+    } else {
+      _streamErrors[name] = error;
+    }
+    notifyListeners();
+  }
+
+  /// Starta om familjens prenumerationer ("Försök igen").
+  void retryFamilyStreams() {
+    final fid = _activeFamilyId;
+    if (fid != null && fid.isNotEmpty) {
+      _streamErrors.clear();
+      _subscribeToFamilyData(fid);
+    }
+    retryAdultData();
     notifyListeners();
   }
   UserModel? _currentUser;
@@ -292,6 +346,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     _tasksLoaded = true;
     _notesLoaded = true;
     _isLoading = false;
+    _streamLoaded.addAll(overviewStreams);
   }
 
   FamilyProvider() {
@@ -361,6 +416,8 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _clearAll() {
+    _streamLoaded.clear();
+    _streamErrors.clear();
     _syncError = false;
     _lastSyncAt = null;
     _currentUser = null;
@@ -455,6 +512,10 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    if (_activeFamilyId != familyId) {
+      _streamLoaded.clear();
+      _streamErrors.clear();
+    }
     _activeFamilyId = familyId;
 
     // Familjedokument (hemposition m.m.)
@@ -504,7 +565,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     _familySub = FirebaseFirestore.instance.collection('users')
         .where('familyId', isEqualTo: familyId)
         .snapshots().listen((snap) {
-      _handleStreamSuccess();
+      _handleStreamSuccess('familyMembers');
       _familyMembers = snap.docs.map((doc) => UserModel.fromMap(doc.id, doc.data())).toList();
       // Sortera: föräldrar först, sedan alfabetiskt
       _familyMembers.sort((a, b) {
@@ -520,7 +581,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
     _choresSub = FirebaseFirestore.instance.collection('chores')
         .where('familyId', isEqualTo: familyId)
         .snapshots().listen((snap) {
-      _handleStreamSuccess();
+      _handleStreamSuccess('chores');
       _chores = snap.docs;
       notifyListeners();
     }, onError: (e, stack) => _handleStreamError('chores', e, stack));
@@ -531,7 +592,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
         .where('familyId', isEqualTo: familyId)
         .where('isRecurring', isEqualTo: true)
         .snapshots().listen((snap) {
-      _handleStreamSuccess();
+      _handleStreamSuccess('recurringEvents');
       _recurringEvents = snap.docs;
       _rebuildEventCaches();
       notifyListeners();
@@ -556,6 +617,12 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Dagens/morgondagens events, meals och notes — måste bytas vid midnatt.
   void _subscribeDateBound(String familyId) {
     final now = DisplayClock.now();
+    if (_subscribedDateKey != dateKey(now)) {
+      for (final n in const ['todayDateEvents', 'tomorrowDateEvents']) {
+        _streamLoaded.remove(n);
+        _streamErrors.remove(n);
+      }
+    }
     _subscribedDateKey = dateKey(now);
 
     _eventsSub?.cancel();
@@ -563,7 +630,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
         .where('familyId', isEqualTo: familyId)
         .where('date', isEqualTo: dateKey(now))
         .snapshots().listen((snap) {
-      _handleStreamSuccess();
+      _handleStreamSuccess('todayDateEvents');
       _todayDateEvents = snap.docs;
       _rebuildEventCaches();
       notifyListeners();
@@ -574,7 +641,7 @@ class FamilyProvider extends ChangeNotifier with WidgetsBindingObserver {
         .where('familyId', isEqualTo: familyId)
         .where('date', isEqualTo: dateKey(now.add(const Duration(days: 1))))
         .snapshots().listen((snap) {
-      _handleStreamSuccess();
+      _handleStreamSuccess('tomorrowDateEvents');
       _tomorrowDateEvents = snap.docs;
       _rebuildEventCaches();
       notifyListeners();

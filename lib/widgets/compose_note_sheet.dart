@@ -26,6 +26,7 @@ Future<ComposedNote?> showComposeNoteSheet(
   List<String> initialAboutUids = const [],
   String? hint,
   bool autoFocus = false,
+  String? errorText,
 }) =>
     showProtectedSheet<ComposedNote>(
       context,
@@ -37,8 +38,51 @@ Future<ComposedNote?> showComposeNoteSheet(
         initialAboutUids: initialAboutUids,
         hint: hint,
         autoFocus: autoFocus,
+        errorText: errorText,
       ),
     );
+
+/// Formuläret stängs innan sparningen, så ett nekande får inte kasta texten.
+/// Öppnar formuläret, kör [save] och — om den kastar — öppnar det igen med
+/// utkastet kvar och felet överst, tills sparningen lyckas eller användaren
+/// stänger. [save] returnerar false om användaren själv avbröt (t.ex. vid
+/// dubblettfrågan). Returnerar det som sparades, eller null.
+Future<ComposedNote?> composeUntilSaved(
+  BuildContext context, {
+  required List<UserModel> people,
+  required Future<bool> Function(ComposedNote note) save,
+  required String Function(Object error) describeError,
+  String title = 'Ny anteckning',
+  String initialText = '',
+  bool initialPrivate = false,
+  List<String> initialAboutUids = const [],
+  String? hint,
+  bool autoFocus = false,
+}) async {
+  var draft = ComposedNote(initialText, initialPrivate, initialAboutUids);
+  String? error;
+  while (context.mounted) {
+    final note = await showComposeNoteSheet(
+      context,
+      people: people,
+      title: title,
+      initialText: draft.text,
+      initialPrivate: draft.isPrivate,
+      initialAboutUids: draft.aboutUids,
+      hint: hint,
+      autoFocus: autoFocus,
+      errorText: error,
+    );
+    if (note == null) return null;
+    try {
+      return await save(note) ? note : null;
+    } catch (e) {
+      draft = note;
+      error = '${describeError(e)} Texten finns kvar — försök igen.';
+    }
+  }
+  return null;
+}
 
 /// Androids `ComposeNoteSheet`: originaltext, "Vem gäller det?" med hela
 /// familjen (även vuxna) och gemensam som standard, med möjlighet till privat.
@@ -51,6 +95,9 @@ class ComposeNoteSheet extends StatefulWidget {
   final String? hint;
   final bool autoFocus;
 
+  /// Varför förra sparningen misslyckades, visas överst.
+  final String? errorText;
+
   const ComposeNoteSheet({
     super.key,
     required this.people,
@@ -60,6 +107,7 @@ class ComposeNoteSheet extends StatefulWidget {
     this.initialAboutUids = const [],
     this.hint,
     this.autoFocus = false,
+    this.errorText,
   });
 
   @override
@@ -119,6 +167,13 @@ class _ComposeNoteSheetState extends State<ComposeNoteSheet> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (widget.errorText != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(widget.errorText!,
+                    style: const TextStyle(
+                        color: Color(0xFFB3261E), fontWeight: FontWeight.w700)),
+              ),
             if (widget.hint != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
