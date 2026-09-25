@@ -1,7 +1,6 @@
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -105,6 +104,10 @@ class _AddEventSheetState extends State<AddEventSheet> {
 
   bool get _editing => widget.eventToEdit != null;
 
+  /// Väntade en egen packlisteändring för aktiviteten när formuläret
+  /// öppnades? Då bygger formulärets packlista på en äldre version.
+  bool _pendingAtOpen = false;
+
   @override
   void initState() {
     super.initState();
@@ -130,6 +133,12 @@ class _AddEventSheetState extends State<AddEventSheet> {
     _prep = TextEditingController(text: _f.forberedelseText);
     _flerVal = _f.flerValOppetFranStart;
     _loadTemplates();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (edit != null && uid != null) {
+      PendingChecklistEdits.instance
+          .hasPending(edit.id, uid: uid)
+          .then((v) => _pendingAtOpen = v, onError: (Object _) {});
+    }
   }
 
   @override
@@ -294,23 +303,18 @@ class _AddEventSheetState extends State<AddEventSheet> {
     final packlista = _f.packlista;
     final piktogram = _f.piktogram;
 
-    // En packlisteändring som redan väntar på nätet för samma aktivitet:
-    // formulärets lista bygger då på en äldre version, och en ny ändring
-    // skulle kunna tappa den förra. Säg det i stället för att gissa.
+    // Formulärets packlista får inte utgå från en lista där en egen tidigare
+    // ändring saknas — oavsett nät. Väntade en ändring när formuläret
+    // öppnades, eller väntar en nu, stoppas packlisteändringen med en
+    // förklaring (resten av formuläret kan sparas utan packlisteändringen).
     if (editDoc != null && payload.packlistanAndrad) {
-      var offline = false;
-      try {
-        final c = await Connectivity().checkConnectivity();
-        offline = c.every((r) => r == ConnectivityResult.none);
-      } catch (_) {}
-      if (offline &&
-          await PendingChecklistEdits.instance
-              .hasPending(editDoc.id, uid: uid)) {
+      final waiting = _pendingAtOpen ||
+          await PendingChecklistEdits.instance.hasPending(editDoc.id, uid: uid);
+      if (waiting) {
         if (!mounted) return;
         setState(() {
           _saving = false;
-          _error = 'En tidigare ändring av packlistan väntar på nätet. '
-              'Ändra packlistan igen när du har nät.';
+          _error = const PacklistaVantar().message;
         });
         return;
       }
@@ -339,7 +343,8 @@ class _AddEventSheetState extends State<AddEventSheet> {
           ? skrivRedigering(coll.doc(editDoc.id), payload,
               originalChecklist: checklistRowsOf(original?['checklist']),
               uid: uid,
-              familyId: fid)
+              familyId: fid,
+              stillActive: () => FirebaseAuth.instance.currentUser?.uid == uid)
           : skrivNyAktivitet(coll, payload, mottagId: (id) {
               nyttId = id;
               mottagId(id);

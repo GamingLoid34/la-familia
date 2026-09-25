@@ -75,7 +75,7 @@ Körda på grenens sista commit (2026-09-25):
 | Kontroll | Resultat |
 |---|---|
 | `flutter analyze` | No issues found! |
-| `flutter test` | 933 test, alla gröna (baslinje före arbetet: 416) |
+| `flutter test` | 940 test, alla gröna (baslinje före arbetet: 416) |
 | `node --test` (functions, oförändrade) | 83 test, alla gröna |
 | `flutter build web --release` | Lyckas |
 | `flutter build apk --debug` | Lyckas — bara kompileringskontroll av ikon-/startskärmsresurserna; ska **inte** publiceras |
@@ -142,6 +142,29 @@ Testerna kör `save` och `flush` på riktigt med ersättningar för lagring och 
 kontobyte, annan familj, lagringsfel (med och utan serverkontakt), permanenta fel,
 samtidiga köläggningar, en pågående flush som inte får radera en nyare operation, och
 ordningen. Samtidighetstestet faller om låset tas bort (kontrollerat).
+
+### Fjärde granskningen (Oscar, 2026-09-25): session och samma aktivitet
+
+1. **Kontobyte mitt i uppspelningen.** `flush` kontrollerar sessionen (Firebase-uid,
+   providerns användare och familj) före varje serveranrop och avbryter vid byte; ett
+   behörighetsfel som kommer efter bytet raderar ingenting. Samma skydd gäller i `send`.
+2. **Två ändringar av samma aktivitet.** En aktivitet kan bara ha en packlisteändring i
+   taget från samma användare: reservation och köläggning sker atomärt under låset
+   (`enqueue`), och en ny ändring medan en väntar eller spelas upp nekas med
+   `PacklistaVantar` innan något skrivs. Formuläret stoppar dessutom en packlisteändring
+   som utgår från en lista där en egen ändring väntade när formuläret öppnades — oavsett
+   nät. Att bara serialisera räckte inte: två namnbyten av samma rad från samma gamla
+   lista ger två varianter även i tur och ordning.
+
+Tester med en server som håller en riktig lista och slår ihop som transaktionen:
+samtidiga namnbyten av samma rad (en nekas, en variant på servern), namnbyte utan nät
+följt av nekad andra ändring och uppspelning, samt kontobyte mitt i uppspelningen med
+behörighetsfel. Mutationskontroll: utan spärren faller tre test, utan sessionskontrollen
+två.
+
+*Kvarstående begränsning:* spärren gäller samma användare. En annan användares väntande
+ändring på samma enhet behandlas som en ändring från en annan enhet (sammanslagning mot
+serverns lista), eftersom den bara kan spelas upp när den användaren är inloggad.
 
 ### Oberoende kodgranskning
 

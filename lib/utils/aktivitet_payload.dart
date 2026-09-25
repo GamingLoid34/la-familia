@@ -408,20 +408,27 @@ Future<String> skrivRedigering(
   required String uid,
   required String familyId,
   PendingChecklistEdits? queue,
+  bool Function()? stillActive,
 }) async {
-  // Packlistan läggs i kön innan update() väntar på nätet. Resultatet (eller
-  // felet) fångas som värde, så att inget blir ohanterat under tiden.
-  final packlista = payload.packlistanAndrad
-      ? (queue ?? PendingChecklistEdits.instance)
-          .save(
-            eventId: ref.id,
-            uid: uid,
-            familyId: familyId,
-            originalRows: originalChecklist,
-            editedRows: payload.packlista,
-          )
-          .then<Object>((o) => o, onError: (Object e) => _Fel(e))
+  // Packlistan reserveras och köas först — innan något annat skrivs. Väntar
+  // en tidigare packlisteändring kastas PacklistaVantar här, och ingenting
+  // alls sparas. Därefter skickas den parallellt med update(); resultatet
+  // (eller felet) fångas som värde, så att inget blir ohanterat under tiden.
+  final q = queue ?? PendingChecklistEdits.instance;
+  final ticket = payload.packlistanAndrad
+      ? await q.enqueue(
+          eventId: ref.id,
+          uid: uid,
+          familyId: familyId,
+          originalRows: originalChecklist,
+          editedRows: payload.packlista,
+        )
       : null;
+  final packlista = ticket == null
+      ? null
+      : q
+          .send(ticket, stillActive: stillActive)
+          .then<Object>((o) => o, onError: (Object e) => _Fel(e));
   if (!payload.tomRedigering) {
     await ref.update(payload.tillFirestore());
   }
@@ -637,6 +644,8 @@ class AktivitetSparning {
   /// Ett fel från Firestore, i text som går att förstå.
   static String felText(Object? fel) {
     if (fel is ChecklistChangedException) return fel.message;
+    if (fel is PacklistaVantar) return fel.message;
+    if (fel is PacklistaEjSparad) return fel.message;
     final meddelande = fel is FirebaseException
         ? '${fel.code} ${fel.message ?? ''}'.trim()
         : (fel?.toString() ?? '');

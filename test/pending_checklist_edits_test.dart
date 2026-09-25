@@ -161,13 +161,13 @@ void main() {
       server.calls.clear();
       // Bo loggar in; servern skulle neka honom (permanent fel).
       server.respond = (_) async => throw _denied();
-      await queue.flush(uid: 'bo', familyId: 'fam');
+      await queue.flush(uid: 'bo', familyId: 'fam', stillActive: () => true);
       expect(server.calls, isEmpty, reason: 'Annas post rörs inte av Bo');
       expect(store.entries.single.uid, 'anna', reason: 'Annas ändring finns kvar');
 
       // Anna loggar in igen med nät: posten körs och tas bort.
       server.respond = (_) async {};
-      await queue.flush(uid: 'anna', familyId: 'fam');
+      await queue.flush(uid: 'anna', familyId: 'fam', stillActive: () => true);
       expect(server.calls, ['e1']);
       expect(store.entries, isEmpty);
     });
@@ -177,7 +177,7 @@ void main() {
       await save('e1', familyId: 'gammal');
       server.calls.clear();
       server.respond = (_) async {};
-      await queue.flush(uid: 'anna', familyId: 'ny');
+      await queue.flush(uid: 'anna', familyId: 'ny', stillActive: () => true);
       expect(server.calls, isEmpty);
       expect(store.entries, hasLength(1));
     });
@@ -196,18 +196,33 @@ void main() {
       await save('e1'); // op1 köad
       final gate = Completer<void>();
       server.respond = (_) => gate.future; // op1:s uppspelning hänger
-      final flushing = queue.flush(uid: 'anna', familyId: 'fam');
+      final flushing =
+          queue.flush(uid: 'anna', familyId: 'fam', stillActive: () => true);
       await Future<void>.delayed(const Duration(milliseconds: 5));
 
-      // Under tiden: en nyare ändring för samma aktivitet köas (op2).
+      // Under tiden köas en ändring för en annan aktivitet (op2).
       server.respond = (_) async => throw _unavailable();
-      expect(await save('e1'), ChecklistSaveOutcome.queued);
+      expect(await save('e2'), ChecklistSaveOutcome.queued);
 
       gate.complete(); // op1 lyckas
       await flushing;
-      final kvar = store.entries;
-      expect(kvar.map((e) => e.opId), ['op2'],
-          reason: 'den nyare ändringen får inte raderas');
+      expect(store.entries.map((e) => e.opId), ['op2'],
+          reason: 'bara den genomförda operationen tas bort');
+    });
+
+    test('ny ändring av samma aktivitet medan en spelas upp nekas', () async {
+      server.respond = (_) async => throw _unavailable();
+      await save('e1');
+      final gate = Completer<void>();
+      server.respond = (_) => gate.future;
+      final flushing =
+          queue.flush(uid: 'anna', familyId: 'fam', stillActive: () => true);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await expectLater(save('e1'), throwsA(isA<PacklistaVantar>()));
+      expect(await queue.hasPending('e1', uid: 'anna'), isTrue);
+      gate.complete();
+      await flushing;
+      expect(await queue.hasPending('e1', uid: 'anna'), isFalse);
     });
 
     test('flush körs äldst först och hoppar över operationer som pågår', () async {
@@ -216,7 +231,7 @@ void main() {
       await save('e1');
       server.calls.clear();
       server.respond = (_) async {};
-      await queue.flush(uid: 'anna', familyId: 'fam');
+      await queue.flush(uid: 'anna', familyId: 'fam', stillActive: () => true);
       expect(server.calls, ['e2', 'e1']);
     });
 
@@ -228,9 +243,135 @@ void main() {
         if (id == 'e1') throw const ChecklistChangedException('Aktiviteten finns inte längre.');
       };
       final meddelanden = <String>[];
-      await queue.flush(uid: 'anna', familyId: 'fam', onFailed: meddelanden.add);
+      await queue.flush(uid: 'anna', familyId: 'fam', stillActive: () => true, onFailed: meddelanden.add);
       expect(meddelanden.single, contains('Aktiviteten finns inte längre.'));
       expect(store.entries, isEmpty, reason: 'e2 lyckades, e1 släpptes');
+    });
+  });
+
+  group('Kontobyte mitt i uppspelningen', () {
+    test('uppspelningen avbryts och återstående poster behålls', () async {
+      server.respond = (_) async => throw _unavailable();
+      await save('e1');
+      await save('e2');
+      server.calls.clear();
+
+      var session = 'anna';
+      final gate = Completer<void>();
+      server.respond = (id) async {
+        if (id == 'e1') return gate.future;
+        throw _denied(); // skulle Bo få för Annas aktivitet
+      };
+      final flushing = queue.flush(
+          uid: 'anna', familyId: 'fam', stillActive: () => session == 'anna');
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      session = 'bo'; // kontobyte medan e1 väntar
+      gate.complete();
+      await flushing;
+
+      expect(server.calls, ['e1'], reason: 'e2 körs inte under Bos inloggning');
+      expect(store.entries.map((e) => (e.eventId, e.uid)), [('e2', 'anna')]);
+    });
+
+    test('behörighetsfel efter kontobyte raderar inte posten', () async {
+      server.respond = (_) async => throw _unavailable();
+      await save('e1');
+      var session = 'anna';
+      final gate = Completer<void>();
+      server.respond = (_) async {
+        await gate.future;
+        throw _denied();
+      };
+      final flushing = queue.flush(
+          uid: 'anna', familyId: 'fam', stillActive: () => session == 'anna');
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      session = 'bo';
+      gate.complete();
+      await flushing;
+      expect(store.entries.single.uid, 'anna');
+    });
+
+    test('save: behörighetsfel efter kontobyte behåller posten', () async {
+      var session = 'anna';
+      final gate = Completer<void>();
+      server.respond = (_) async {
+        await gate.future;
+        throw _denied();
+      };
+      final saving = queue.save(
+        eventId: 'e1', uid: 'anna', familyId: 'fam',
+        originalRows: _original, editedRows: _edited,
+        stillActive: () => session == 'anna',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      session = 'bo';
+      gate.complete();
+      expect(await saving, ChecklistSaveOutcome.queued);
+      expect(store.entries.single.uid, 'anna');
+    });
+  });
+
+  group('Två ändringar av samma rad (serverns slutliga lista)', () {
+    // Servern håller en riktig lista och slår ihop som transaktionen gör.
+    late Map<String, List<dynamic>> serverLists;
+    late bool online;
+    late PendingChecklistEdits q;
+
+    setUp(() {
+      serverLists = {
+        'e1': <dynamic>[
+          {'item': 'Benskydd', 'isDone': false},
+        ],
+      };
+      online = true;
+      var n = 0;
+      q = PendingChecklistEdits(
+        store: MemStore()..delay = const Duration(milliseconds: 2),
+        newId: () => 'x${++n}',
+        server: (id, original, edited) async {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+          if (!online) throw _unavailable();
+          serverLists[id] = mergeChecklist(
+              latestRows: serverLists[id]!, originalRows: original, editedRows: edited);
+        },
+      );
+    });
+
+    List<String> texter() =>
+        [for (final r in serverLists['e1']!) checklistTextOf(r) ?? ''];
+
+    Future<ChecklistSaveOutcome> rename(List<dynamic> original, String to) =>
+        q.save(
+          eventId: 'e1', uid: 'anna', familyId: 'fam',
+          originalRows: original, editedRows: [PacklistRad(to, ursprungIndex: 0)],
+        );
+
+    test('samtidigt: andra ändringen nekas, bara en variant på servern', () async {
+      final o = List<dynamic>.of(serverLists['e1']!);
+      final results = await Future.wait([
+        rename(o, 'Benskydd vänster').then((r) => r.name, onError: (Object e) => '$e'),
+        rename(o, 'Benskydd höger').then((r) => r.name, onError: (Object e) => '$e'),
+      ]);
+      expect(results.where((r) => r == 'confirmed'), hasLength(1));
+      expect(results.where((r) => r.contains('inte färdigsparad')), hasLength(1));
+      expect(texter(), hasLength(1));
+      expect(texter().single, anyOf('Benskydd vänster', 'Benskydd höger'));
+    });
+
+    test('utan nät: andra ändringen nekas; efter uppspelning en variant', () async {
+      online = false;
+      final o = List<dynamic>.of(serverLists['e1']!);
+      expect(await rename(o, 'Benskydd vänster'), ChecklistSaveOutcome.queued);
+      await expectLater(rename(o, 'Benskydd höger'), throwsA(isA<PacklistaVantar>()));
+      online = true;
+      await q.flush(uid: 'anna', familyId: 'fam', stillActive: () => true);
+      expect(texter(), ['Benskydd vänster']);
+    });
+
+    test('ny ändring utgående från serverns aktuella lista ger slutligt namn', () async {
+      await rename(List<dynamic>.of(serverLists['e1']!), 'Benskydd vänster');
+      await rename(List<dynamic>.of(serverLists['e1']!), 'Benskydd höger');
+      expect(texter(), ['Benskydd höger']);
     });
   });
 }

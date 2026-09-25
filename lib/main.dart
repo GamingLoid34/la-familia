@@ -363,9 +363,15 @@ class _MainPageState extends State<MainPage> {
     final me = context.read<FamilyProvider>().currentUser;
     final fid = me?.familyId ?? '';
     if (me == null || fid.isEmpty) return;
+    final provider = context.read<FamilyProvider>();
     unawaited(PendingChecklistEdits.instance.flush(
         uid: me.uid,
         familyId: fid,
+        // Byts kontot eller familjen mitt i uppspelningen avbryts den.
+        stillActive: () =>
+            FirebaseAuth.instance.currentUser?.uid == me.uid &&
+            provider.currentUser?.uid == me.uid &&
+            provider.currentUser?.familyId == fid,
         onFailed: AktivitetSparning.instans.rapporteraFel));
   }
 

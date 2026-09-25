@@ -68,9 +68,6 @@ class PendingChecklistEdits {
   Future<void> _writeAll(List<PendingChecklistEdit> all) =>
       _store.write(all.isEmpty ? null : PendingChecklistEdit.encodeAll(all));
 
-  Future<void> _add(PendingChecklistEdit e) =>
-      _locked(() async => _writeAll([...await _readAll(), e]));
-
   /// Tar bort just operationen [opId] — aldrig en nyare post för samma
   /// aktivitet.
   Future<void> _remove(String opId) => _locked(() async {
@@ -89,8 +86,14 @@ class PendingChecklistEdits {
         ]..sort((a, b) => a.createdAtMs.compareTo(b.createdAtMs));
       });
 
-  /// Finns en väntande packlisteändring för aktiviteten, från [uid]?
+  /// Aktiviteter som har en packlisteändring under arbete i den här
+  /// processen (köläggning, serveranrop eller uppspelning).
+  final Set<String> _activeEvents = {};
+
+  /// Finns en packlisteändring från [uid] för aktiviteten som inte är
+  /// färdigsparad — i kön eller under arbete just nu?
   Future<bool> hasPending(String eventId, {required String uid}) async {
+    if (_activeEvents.contains(eventId)) return true;
     try {
       final all = await _locked(_readAll);
       return all.any((e) => e.eventId == eventId && e.uid == uid);
@@ -99,58 +102,118 @@ class PendingChecklistEdits {
     }
   }
 
-  /// Sparar packlisteändringen.
+  /// Steg 1: reserverar aktiviteten och lägger ändringen i kön — atomärt,
+  /// under låset. En aktivitet kan bara ha **en** packlisteändring i taget
+  /// från samma användare: en ny ändring skulle annars utgå från en lista
+  /// där den förra saknas, och två namnbyten av samma rad blev då två rader.
+  /// Kastar [PacklistaVantar] i så fall, innan något skrivits.
+  Future<ChecklistTicket> enqueue({
+    required String eventId,
+    required String uid,
+    required String familyId,
+    required List<dynamic> originalRows,
+    required List<PacklistRad> editedRows,
+  }) =>
+      _locked(() async {
+        List<PendingChecklistEdit> all;
+        Object? storeError;
+        try {
+          all = await _readAll();
+        } catch (e) {
+          all = const [];
+          storeError = e;
+        }
+        if (_activeEvents.contains(eventId) ||
+            all.any((e) => e.eventId == eventId && e.uid == uid)) {
+          throw const PacklistaVantar();
+        }
+        _activeEvents.add(eventId);
+        final entry = PendingChecklistEdit(
+          opId: _newId(),
+          eventId: eventId,
+          uid: uid,
+          familyId: familyId,
+          createdAtMs: _now().millisecondsSinceEpoch,
+          original: originalRows,
+          edited: editedRows,
+        );
+        if (storeError == null) {
+          try {
+            await _writeAll([...all, entry]);
+          } catch (e) {
+            storeError = e;
+          }
+        }
+        if (storeError != null) {
+          developer.log('Kunde inte lägga packlistan i kö', error: storeError);
+        }
+        return ChecklistTicket._(entry, storeError);
+      });
+
+  /// Steg 2: skickar den köade ändringen till servern.
   ///
   /// - [ChecklistSaveOutcome.confirmed]: servern har tagit emot den.
-  /// - [ChecklistSaveOutcome.queued]: servern kunde inte nås just nu, men
-  ///   ändringen ligger säkert i kön och sparas senare.
+  /// - [ChecklistSaveOutcome.queued]: servern nåddes inte, men ändringen
+  ///   ligger säkert i kön och sparas senare.
   /// - Kastar om ändringen inte går att spara alls (aktiviteten borta,
   ///   nekad) — posten tas då bort — eller om servern inte nåddes **och**
-  ///   kön inte gick att skriva: då finns ändringen ingenstans, och det får
-  ///   inte döljas.
+  ///   kön inte gick att skriva: då finns ändringen ingenstans.
+  ///
+  /// [stillActive] säger om samma session fortfarande är inloggad. Har den
+  /// bytts räknas ett behörighetsfel inte som permanent, och posten behålls.
+  Future<ChecklistSaveOutcome> send(
+    ChecklistTicket ticket, {
+    bool Function()? stillActive,
+  }) async {
+    final entry = ticket.entry;
+    bool active() => stillActive?.call() ?? true;
+    ChecklistSaveOutcome keep() {
+      if (!ticket.queued) {
+        throw PacklistaEjSparad(
+            'Packlistan kunde varken sparas eller läggas i kö: ${ticket.storeError}');
+      }
+      return ChecklistSaveOutcome.queued;
+    }
+
+    _inFlight.add(entry.opId);
+    try {
+      if (!active()) return keep();
+      try {
+        await _server(entry.eventId, entry.original, entry.edited);
+      } catch (e) {
+        if (isPermanent(e) && active()) {
+          if (ticket.queued) await _removeQuietly(entry.opId);
+          rethrow;
+        }
+        return keep();
+      }
+      if (ticket.queued) await _removeQuietly(entry.opId);
+      return ChecklistSaveOutcome.confirmed;
+    } finally {
+      _inFlight.remove(entry.opId);
+      _activeEvents.remove(entry.eventId);
+    }
+  }
+
+  /// [enqueue] följt av [send].
   Future<ChecklistSaveOutcome> save({
     required String eventId,
     required String uid,
     required String familyId,
     required List<dynamic> originalRows,
     required List<PacklistRad> editedRows,
-  }) async {
-    final entry = PendingChecklistEdit(
-      opId: _newId(),
-      eventId: eventId,
-      uid: uid,
-      familyId: familyId,
-      createdAtMs: _now().millisecondsSinceEpoch,
-      original: originalRows,
-      edited: editedRows,
-    );
-    Object? storeError;
-    try {
-      await _add(entry);
-    } catch (e) {
-      storeError = e;
-      developer.log('Kunde inte lägga packlistan i kö', error: e);
-    }
-    final queued = storeError == null;
-    _inFlight.add(entry.opId);
-    try {
-      await _server(eventId, originalRows, editedRows);
-    } catch (e) {
-      if (isPermanent(e)) {
-        if (queued) await _removeQuietly(entry.opId);
-        rethrow;
-      }
-      if (!queued) {
-        throw PacklistaEjSparad(
-            'Packlistan kunde varken sparas eller läggas i kö: $storeError');
-      }
-      return ChecklistSaveOutcome.queued;
-    } finally {
-      _inFlight.remove(entry.opId);
-    }
-    if (queued) await _removeQuietly(entry.opId);
-    return ChecklistSaveOutcome.confirmed;
-  }
+    bool Function()? stillActive,
+  }) async =>
+      send(
+        await enqueue(
+          eventId: eventId,
+          uid: uid,
+          familyId: familyId,
+          originalRows: originalRows,
+          editedRows: editedRows,
+        ),
+        stillActive: stillActive,
+      );
 
   Future<void> _removeQuietly(String opId) async {
     try {
@@ -168,25 +231,35 @@ class PendingChecklistEdits {
       (e is FirebaseException &&
           (e.code == 'permission-denied' || e.code == 'not-found'));
 
-  /// Kör den aktiva användarens väntande ändringar, äldst först. Andra
-  /// användares och familjers poster rörs inte. [onFailed] får ett
-  /// begripligt fel för en ändring som inte går att spara och släpps.
+  /// Kör [uid]:s väntande ändringar i [familyId], äldst först. Andra
+  /// användares och familjers poster rörs inte.
+  ///
+  /// [stillActive] kontrolleras före varje serveranrop: byts sessionen mitt
+  /// i uppspelningen avbryts den, och ett behörighetsfel som kommer efter
+  /// bytet raderar ingenting. [onFailed] får ett begripligt fel för en
+  /// ändring som inte går att spara och därför släpps.
   Future<void> flush({
     required String uid,
     required String familyId,
+    required bool Function() stillActive,
     void Function(String message)? onFailed,
   }) async {
     if (uid.isEmpty || familyId.isEmpty || _flushing) return;
     _flushing = true;
     try {
       for (final e in await pendingFor(uid, familyId)) {
-        if (_inFlight.contains(e.opId)) continue;
+        if (!stillActive()) break;
+        if (_inFlight.contains(e.opId) || _activeEvents.contains(e.eventId)) {
+          continue;
+        }
         _inFlight.add(e.opId);
+        _activeEvents.add(e.eventId);
         try {
           await _server(e.eventId, e.original, e.edited);
           await _removeQuietly(e.opId);
         } catch (err) {
           if (isPermanent(err)) {
+            if (!stillActive()) break; // felet kan höra till den nya sessionen
             await _removeQuietly(e.opId);
             onFailed?.call(err is ChecklistChangedException
                 ? 'En packlisteändring kunde inte sparas: ${err.message}'
@@ -195,6 +268,7 @@ class PendingChecklistEdits {
           // Tillfälligt fel (t.ex. inget nät): ligger kvar till nästa försök.
         } finally {
           _inFlight.remove(e.opId);
+          _activeEvents.remove(e.eventId);
         }
       }
     } catch (e) {
@@ -203,6 +277,24 @@ class PendingChecklistEdits {
       _flushing = false;
     }
   }
+}
+
+/// En reserverad och (om möjligt) köad ändring, att skicka med [PendingChecklistEdits.send].
+class ChecklistTicket {
+  final PendingChecklistEdit entry;
+  final Object? storeError;
+  const ChecklistTicket._(this.entry, this.storeError);
+  bool get queued => storeError == null;
+}
+
+/// En tidigare packlisteändring för samma aktivitet är inte färdigsparad.
+class PacklistaVantar implements Exception {
+  const PacklistaVantar();
+  String get message =>
+      'En tidigare ändring av packlistan är inte färdigsparad. Vänta tills den '
+      'syns (det kräver nät), öppna sedan aktiviteten igen och gör om ändringen.';
+  @override
+  String toString() => message;
 }
 
 enum ChecklistSaveOutcome { confirmed, queued }
