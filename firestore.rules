@@ -36,6 +36,16 @@ service cloud.firestore {
       return hasFamily(data) && data.role == 'admin' && createdMyFamily(data.familyId);
     }
 
+    // U-09 (beslut B-06): en uppdatering får aldrig ändra, lägga till eller ta bort
+    // familyId. Förut prövade de flesta update-reglerna bara det GAMLA dokumentets familj,
+    // så en medlem kunde flytta en post till en annan familj eller ta bort fältet (då blev
+    // posten oläslig för alla). Används på varje update i samlingar på toppnivå där
+    // familyId avgör vem som får läsa. users har egen regel (bootstrap av den egna familjen
+    // är den enda tillåtna ändringen), och families/{familyId}/... styrs av sökvägen.
+    function familyIdUnchanged() {
+      return request.resource.data.get('familyId', null) == resource.data.get('familyId', null);
+    }
+
     // 1. ANVÄNDARE (users)
     match /users/{userId} {
       // Both clients query member colors after creating a family but BEFORE joining it.
@@ -275,7 +285,7 @@ service cloud.firestore {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
           && request.resource.data.createdByUid == request.auth.uid;
-      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
         iAmParent()
         || resource.data.createdByUid == request.auth.uid
         // Vem som helst i familjen får reagera, bocka packlista och bocka av en
@@ -292,7 +302,7 @@ service cloud.firestore {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
           && request.resource.data.createdByUid == request.auth.uid;
-      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
         iAmParent()
         || resource.data.createdByUid == request.auth.uid
         // Delsteg/återkommande datum (isDone går via completeChore-callable):
@@ -312,13 +322,15 @@ service cloud.firestore {
     match /work_shifts/{docId} {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
-      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent()
+        && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
     }
 
     match /routines/{docId} {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       // Alla får bocka av steg; bara föräldrar redigerar rutinen själv.
-      allow update: if isAuth() && resource.data.familyId == myFamilyId() && (
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
         iAmParent()
         || request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['doneDate', 'doneSteps'].toSet())
@@ -343,7 +355,8 @@ service cloud.firestore {
     }
 
     match /shopping_items/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
@@ -352,26 +365,30 @@ service cloud.firestore {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
           && (request.resource.data.personUid == request.auth.uid || iAmParent());
-      allow update: if isAuth() && resource.data.familyId == myFamilyId()
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged()
           && (resource.data.personUid == request.auth.uid || iAmParent());
       allow delete: if isAuth() && resource.data.familyId == myFamilyId()
           && (resource.data.personUid == request.auth.uid || iAmParent());
     }
 
     match /calendar_imports/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent()
+        && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
     }
 
     match /chore_templates/{docId} {
       allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
-      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
     match /activity_templates/{docId} {
       allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
-      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
@@ -380,12 +397,14 @@ service cloud.firestore {
       allow create: if isAuth()
         && request.resource.data.familyId == myFamilyId()
         && request.resource.data.userUid == request.auth.uid;
-      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
     }
 
     // Matplanering (ROADMAP Etapp 12): en middag per dag och familj.
     match /meals/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
@@ -394,12 +413,15 @@ service cloud.firestore {
       allow read: if isAuth() && resource.data.familyId == myFamilyId();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
           && (iAmParent() || request.resource.data.createdByUid == request.auth.uid);
-      allow update, delete: if isAuth() && resource.data.familyId == myFamilyId()
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
           && (iAmParent() || resource.data.createdByUid == request.auth.uid);
     }
 
     match /countdowns/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
@@ -434,17 +456,20 @@ service cloud.firestore {
 
     // MyMirai: familjeägda collections (familyId på varje dokument).
     match /homework/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
     match /decks/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
     match /flashcards/{docId} {
-      allow read, update, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
     }
 
