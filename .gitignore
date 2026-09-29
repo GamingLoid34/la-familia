@@ -63,3 +63,5 @@ android/*.keystore
 # OBS: rotens repomix-output.xml är redan spårad och påverkas inte förrän den tas ur indexet.
 repomix-output.xml
 functions/repomix-output.xml
+# Granskningsunderlag (tool/granskning/repomix.config.json) — genereras, checkas inte in.
+granskning-repomix.xml

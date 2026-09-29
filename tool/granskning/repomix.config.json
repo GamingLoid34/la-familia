@@ -1,0 +1,72 @@
+{
+  "output": {
+    "filePath": "granskning-repomix.xml",
+    "style": "xml",
+    "removeEmptyLines": true,
+    "removeComments": false,
+    "topFilesLength": 10,
+    "headerText": "Vardag (tidigare La Familia) - familjeapp i Flutter med Firebase-backend (Auth, Firestore, Storage, Cloud Functions, FCM). Samma Firestore-databas delas med en separat Android-app i Kotlin. Underlaget är ett urval för granskning av arkitektur, säkerhet och personuppgifter, med fokus på inloggning, familjer och vem som får läsa och skriva vad.\n\nMED: firestore.rules och storage.rules (auktoritativa regler), Firebase-konfiguration, beroenden (pubspec.yaml, functions/package.json, Gradle, AndroidManifest), Cloud Functions för konton, familjekoppling, inbjudningar, besöksbokning (publik webb), anteckningstolkning via AI, bekräftelse av förslag och webbpåminnelser, samt klientens modeller, FamilyProvider (alla Firestore-prenumerationer), tjänster, behörighetshjälpare, inloggning, onboarding och medlemshantering, och den publika besökssidans klientkod (web/besok/app.js).\n\nUTELÄMNAT (för att hålla storleken nere, ej säkerhetsbedömt här): övriga UI-skärmar, storskärmsläget (lib/screens/display), kalenderprenumerationer (functions/calendar_feeds.js), ICS- och schemaskanning (functions/ics_text_import.js, schedule_scan.js), skolmat/kollektivtrafik/menytolkning i functions, AI-tjänster för mat och planering i klienten, lokala notiser, widget, tester, testdata, låsfiler, bilder, genererade filer och byggmappar. Filer med Firebase-klientkonfiguration (lib/firebase_options.dart, android/app/google-services.json, web/firebase-messaging-sw.js) är utelämnade; de innehåller publika klientnycklar, inga hemligheter. Inga .env-filer, tjänstekontonycklar eller signeringsnycklar ingår.\n\nKommentarerna är på svenska och förklarar ofta varför en regel eller kontroll finns."
+  },
+  "include": [
+    "firestore.rules",
+    "storage.rules",
+    "firebase.json",
+    "firestore.indexes.json",
+    "cors.json",
+    ".firebaserc",
+    "pubspec.yaml",
+    "functions/package.json",
+    "android/app/build.gradle.kts",
+    "android/build.gradle.kts",
+    "android/settings.gradle.kts",
+    "android/app/src/main/AndroidManifest.xml",
+    "functions/index.js",
+    "functions/create_user.js",
+    "functions/visit_booking.js",
+    "functions/note_inbox.js",
+    "functions/note_confirm.js",
+    "functions/web_reminders.js",
+    "lib/main.dart",
+    "lib/models/*.dart",
+    "lib/providers/*.dart",
+    "lib/services/*.dart",
+    "lib/utils/permissions.dart",
+    "lib/utils/session_guard.dart",
+    "lib/screens/login_page.dart",
+    "lib/screens/onboarding_page.dart",
+    "lib/screens/manage_members_page.dart",
+    "web/besok/app.js"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/node_modules/**",
+      "**/build/**",
+      "**/test/**",
+      "**/*.lock",
+      "**/package-lock.json",
+      "**/*.png",
+      "**/*.jks",
+      "**/.env*",
+      "**/key.properties",
+      "**/google-services.json",
+      "lib/firebase_options.dart",
+      "web/firebase-messaging-sw.js",
+      "lib/services/weather_service.dart",
+      "lib/services/widget_service.dart",
+      "lib/services/notification_service.dart",
+      "lib/services/meal_ai_service.dart",
+      "lib/services/planner_ai_service.dart",
+      "lib/services/chore_service.dart",
+      "lib/services/calendar_feed_service.dart",
+      "lib/services/schedule_scan_service.dart",
+      "lib/services/migration_service.dart",
+      "lib/services/display_photo_service.dart",
+      "lib/models/display_photo_model.dart"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}
