@@ -36,14 +36,42 @@ service firebase.storage {
       allow update: if false;
     }
 
-    // ── Medlemsavatarer (NY — lagar latent unauthorized-bugg) ──
+    // ── Medlemsavatarer ──
+    // Sökvägen är user_avatars/{uid}.jpg i båda klienterna. Bilden hör till den familj som
+    // ägarens users-dokument pekar på.
+    //
+    // U-09 (beslut B-06): förut fick alla inloggade läsa alla avatarer, och en förälder i
+    // VILKEN familj som helst skriva över och ta bort dem. Nu läses de bara av ägaren och den
+    // egna familjen, och skrivs bara av ägaren eller en förälder i samma familj.
+    //
+    // Saknas ägarens users-dokument misslyckas firestore.get(), och allt utom ägarens egen
+    // åtkomst nekas. Ägarens gren står först, så den prövas utan uppslag.
+    function isAvatarFile(fileName) {
+      return fileName.matches('[A-Za-z0-9_-]+[.]jpg');
+    }
+    function isOwnAvatar(fileName) {
+      return fileName == request.auth.uid + '.jpg';
+    }
+    function avatarFamilyId(fileName) {
+      return firestore.get(/databases/(default)/documents/users/$(fileName.split('[.]')[0]))
+        .data.get('familyId', '');
+    }
+    function inAvatarFamily(fileName) {
+      return myFamilyId() is string && myFamilyId() != ''
+        && avatarFamilyId(fileName) == myFamilyId();
+    }
+    function mayWriteAvatar(fileName) {
+      return isOwnAvatar(fileName) || (iAmParent() && inAvatarFamily(fileName));
+    }
+
     match /user_avatars/{fileName} {
-      allow read: if isAuth();
-      allow create, update: if isAuth()
-        && (iAmParent() || fileName == (request.auth.uid + '.jpg'))
+      allow read: if isAuth() && isAvatarFile(fileName)
+        && (isOwnAvatar(fileName) || inAvatarFamily(fileName));
+      allow create, update: if isAuth() && isAvatarFile(fileName)
+        && mayWriteAvatar(fileName)
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
-      allow delete: if isAuth() && iAmParent();
+      allow delete: if isAuth() && isAvatarFile(fileName) && mayWriteAvatar(fileName);
     }
 
     // ── Matsedeluppladdningar (NY — Android-porten, Fas 12) ──
