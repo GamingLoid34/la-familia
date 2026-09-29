@@ -262,9 +262,17 @@ const MEMBER_COLOR_PALETTE = [
     "ff6B5B95", "ff3D5A6C", "ff8C5E58", "ff4F7942", "ff8B6F47",
 ];
 
+// U-09 (beslut B-06): den som går med väljer aldrig sin roll. Förut godtogs role: "parent"
+// från anropet, så vem som helst med inbjudningskoden kunde bli förälder och därmed läsa och
+// ändra allt familjens vuxna får. En ny medlem får den minst privilegierade rollen, och en
+// befintlig förälder ändrar den sedan (users-reglerna låter bara en förälder i samma familj
+// ändra role). Klientens role-fält läses inte längre.
+const NEW_MEMBER_ROLE = "child";
+const MEMBER_ROLES = ["admin", "parent", "youth", "child"];
+
 exports.joinFamilyWithCode = onCall(async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Inloggning krävs.");
-    const { code, name, role } = request.data;
+    const { code, name } = request.data || {};
     if (!code || !name) throw new HttpsError("invalid-argument", "Kod och namn krävs.");
 
     const famSnap = await admin.firestore().collection("families")
@@ -272,14 +280,21 @@ exports.joinFamilyWithCode = onCall(async (request) => {
     if (famSnap.empty) throw new HttpsError("not-found", "Ogiltig inbjudningskod.");
     const familyId = famSnap.docs[0].id;
 
-    const safeRole = ["parent", "child", "youth"].includes(role) ? role : "child";
+    // Den som redan är medlem i just den här familjen (t.ex. anger koden igen) behåller sin
+    // roll och färg: koden får varken höja eller sänka en befintlig medlem.
+    const userRef = admin.firestore().collection("users").doc(request.auth.uid);
+    const existing = (await userRef.get()).data() || {};
+    const alreadyMember = existing.familyId === familyId && MEMBER_ROLES.includes(existing.role);
+    const safeRole = alreadyMember ? existing.role : NEW_MEMBER_ROLE;
+
     const usersSnap = await admin.firestore().collection("users")
         .where("familyId", "==", familyId).get();
     const used = new Set(usersSnap.docs.map((d) => d.data().color).filter(Boolean));
-    const color = MEMBER_COLOR_PALETTE.find((c) => !used.has(c))
-        || MEMBER_COLOR_PALETTE[usersSnap.size % MEMBER_COLOR_PALETTE.length];
+    const color = (alreadyMember && existing.color) ||
+        MEMBER_COLOR_PALETTE.find((c) => !used.has(c)) ||
+        MEMBER_COLOR_PALETTE[usersSnap.size % MEMBER_COLOR_PALETTE.length];
 
-    await admin.firestore().collection("users").doc(request.auth.uid).set({
+    await userRef.set({
         uid: request.auth.uid,
         email: request.auth.token.email || "",
         name: String(name).trim(),
