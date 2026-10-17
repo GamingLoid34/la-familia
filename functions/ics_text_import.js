@@ -164,18 +164,47 @@ function truncate(text, max) {
 /** DESCRIPTION/LOCATION: ICS-avkodning, enkel HTML → radbrytningar, taggborttagning. */
 function sanitizeIcsBody(raw) {
   if (!raw) return "";
-  let t = decodeIcsText(raw);
+  return htmlToText(decodeIcsText(raw));
+}
+
+/**
+ * Enkel HTML → text: radbrytning för <br> och </p>, taggar bort, vanliga entiteter avkodade.
+ * Delas med skolnyheternas RSS-synk (news_feeds.js), så samma brödtext blir samma text.
+ * @param {string} raw
+ * @return {string}
+ */
+function htmlToText(raw) {
+  if (!raw) return "";
+  let t = String(raw);
   t = t.replace(/<br\s*\/?>/gi, "\n");
   t = t.replace(/<\/p>/gi, "\n\n");
+  // Block som slutar ger radbrytning, annars flyter ett veckobrevs rader ihop till en.
+  t = t.replace(/<\/(?:div|li|h[1-6]|tr)>/gi, "\n");
   t = t.replace(/<[^>]*>/g, "");
+  // SchoolSofts nyheter skriver å, ä och ö som entiteter (&aring; eller &#229;). `&amp;` avkodas
+  // sist, annars blir en text som bokstavligen innehåller "&amp;lt;" ett "<".
   t = t
       .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
       .replace(/&lt;/g, "<")
       .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, "\"");
+      .replace(/&quot;/g, "\"")
+      .replace(/&(?:apos|#39);/g, "'")
+      .replace(/&([aAoO])ring;|&([aAoOuUeE])uml;/g, (m, ring, uml) =>
+        ring ? NAMED_RING[ring] : NAMED_UML[uml])
+      .replace(/&eacute;/g, "é")
+      .replace(/&Eacute;/g, "É")
+      .replace(/&#(\d{1,7});/g, (m, n) => codePointOrSame(m, Number(n)))
+      .replace(/&#x([0-9a-f]{1,6});/gi, (m, n) => codePointOrSame(m, parseInt(n, 16)))
+      .replace(/&amp;/g, "&");
   t = t.replace(/\n{3,}/g, "\n\n").trim();
   return t;
+}
+
+const NAMED_RING = {a: "å", A: "Å", o: "ø", O: "Ø"};
+const NAMED_UML = {a: "ä", A: "Ä", o: "ö", O: "Ö", u: "ü", U: "Ü", e: "ë", E: "Ë"};
+
+function codePointOrSame(entity, n) {
+  return Number.isInteger(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : entity;
 }
 
 function icsExtendedProps(ev) {
@@ -372,6 +401,8 @@ exports.importIcsText = onCall({
   return {importId: importRef.id, count: ops.length - 1};
 });
 
+exports.htmlToText = htmlToText;
+
 exports._test = {
   unfoldLines,
   extractVevents,
@@ -379,6 +410,7 @@ exports._test = {
   parseIcsDuration,
   icsEndTimeHm,
   sanitizeIcsBody,
+  htmlToText,
   icsExtendedProps,
   parseIcsTextToEventDrafts,
 };

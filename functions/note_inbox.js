@@ -20,6 +20,12 @@ const ANTHROPIC_MODEL = "claude-sonnet-5";
 /** Egen kvot, skild från de tio anrop som planeraren och matsedeln delar. */
 const NOTE_QUOTA_PER_DAY = 20;
 
+/**
+ * Felet en anteckning får när kvoten är slut. Skolnyheternas synk (news_feeds.js) känner igen
+ * det och köar om sådana anteckningar nästa körning, så texten måste vara densamma på båda ställena.
+ */
+const QUOTA_EXHAUSTED_MESSAGE = "Dagens tolkningskvot är slut.";
+
 const INTERPRET_SYSTEM =
   "Du läser en anteckning från en familj: ett veckobrev, ett meddelande från skolan eller " +
   "en påminnelse någon skrivit till sig själv.\n" +
@@ -83,7 +89,7 @@ async function consumeNoteQuota(db, familyId, todayKey) {
     const data = snap.data() || {};
     const count = data.noteDate === todayKey ? (data.noteCount || 0) : 0;
     if (count >= NOTE_QUOTA_PER_DAY) {
-      throw new HttpsError("resource-exhausted", "Dagens tolkningskvot är slut.");
+      throw new HttpsError("resource-exhausted", QUOTA_EXHAUSTED_MESSAGE);
     }
     tx.set(ref, {noteDate: todayKey, noteCount: count + 1}, {merge: true});
   });
@@ -460,6 +466,10 @@ exports.onNoteWritten = onDocumentWritten({
     await finish({status: "failed", interpretationError: message});
   }
 });
+
+exports.NOTE_QUOTA_PER_DAY = NOTE_QUOTA_PER_DAY;
+exports.QUOTA_EXHAUSTED_MESSAGE = QUOTA_EXHAUSTED_MESSAGE;
+exports.stockholmDateKey = stockholmDateKey;
 
 exports._test = {
   shouldInterpret,

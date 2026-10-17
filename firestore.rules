@@ -215,7 +215,19 @@ service cloud.firestore {
           && request.resource.data.get('linkedIds', []) == resource.data.get('linkedIds', [])
           && request.resource.data.get('supersedes', null) == resource.data.get('supersedes', null)
           && request.resource.data.get('claimedRequestId', null) == resource.data.get('claimedRequestId', null)
-          && request.resource.data.get('confirmedAt', null) == resource.data.get('confirmedAt', null);
+          && request.resource.data.get('confirmedAt', null) == resource.data.get('confirmedAt', null)
+          && rssFieldsUnchanged();
+      }
+
+      // Skolnyheternas källfält skrivs bara av synken. Klienten får tolka, mjukradera och
+      // sätta giltighet på en importerad anteckning, men aldrig flytta den till en annan källa.
+      function rssFieldsUnchanged() {
+        return request.resource.data.get('source', null) == resource.data.get('source', null)
+          && request.resource.data.get('feedId', null) == resource.data.get('feedId', null)
+          && request.resource.data.get('sourceKey', null) == resource.data.get('sourceKey', null)
+          && request.resource.data.get('title', null) == resource.data.get('title', null)
+          && request.resource.data.get('link', null) == resource.data.get('link', null)
+          && request.resource.data.get('publishedAt', null) == resource.data.get('publishedAt', null);
       }
 
       function validNote(data) {
@@ -228,7 +240,8 @@ service cloud.firestore {
             'contentHash', 'status', 'requestId', 'interpretation', 'linkedIds',
             'validFrom', 'validTo', 'supersedes', 'deletedAt', 'createdByUid', 'createdAt',
             'aboutUids',
-            'claimedRequestId', 'interpretationError', 'interpretingSince', 'confirmedAt'])
+            'claimedRequestId', 'interpretationError', 'interpretingSince', 'confirmedAt',
+            'source', 'feedId', 'sourceKey', 'title', 'link', 'publishedAt'])
           && data.get('aboutUids', []) is list
           && data.get('aboutUids', []).size() <= 20
           && data.familyId is string && data.familyId.size() > 0
@@ -259,6 +272,13 @@ service cloud.firestore {
         && clientStatus(request.resource.data.status)
         && request.resource.data.get('interpretation', null) == null
         && request.resource.data.get('linkedIds', []) == []
+        // En inklistrad anteckning kan inte utge sig för att komma från en skolkälla.
+        && request.resource.data.get('source', 'manual') == 'manual'
+        && request.resource.data.get('feedId', null) == null
+        && request.resource.data.get('sourceKey', null) == null
+        && request.resource.data.get('title', null) == null
+        && request.resource.data.get('link', null) == null
+        && request.resource.data.get('publishedAt', null) == null
         && validNote(request.resource.data);
 
       // Klienten får begära en ny tolkning, mjukradera och sätta giltighet. Den får aldrig
@@ -376,6 +396,36 @@ service cloud.firestore {
       allow update: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent()
         && familyIdUnchanged();
       allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    // Skolnyheter: RSS-källor till inkorgen. Skapas bara av callablen subscribeNewsFeed, som
+    // validerar adressen. En privat källa syns bara för den som prenumererar.
+    match /news_feeds/{feedId} {
+      function newsFeedVisible() {
+        return isAuth() && iAmParent() && resource.data.familyId == myFamilyId()
+          && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid);
+      }
+
+      allow read, delete: if newsFeedVisible();
+      allow update: if newsFeedVisible()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'visibility', 'aboutUids', 'autoSync'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && (request.resource.data.visibility == 'family' || request.resource.data.visibility == 'private')
+        // Bara den som prenumererar byter synlighet; annars kunde den andra föräldern göra
+        // källan privat för någon annan.
+        && (request.resource.data.visibility == resource.data.visibility
+            || resource.data.ownerUid == request.auth.uid)
+        && request.resource.data.aboutUids is list
+        && request.resource.data.aboutUids.size() <= 20
+        && request.resource.data.autoSync is bool;
+      allow create: if false;
+    }
+
+    // Hela adressen fungerar som personlig åtkomstnyckel till SchoolSoft. Bara servern läser den.
+    match /news_feed_secrets/{feedId} {
+      allow read, write: if false;
     }
 
     match /chore_templates/{docId} {
