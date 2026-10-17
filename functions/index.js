@@ -48,6 +48,11 @@ exports.onNoteWritten = noteInbox.onNoteWritten;
 const noteConfirm = require("./note_confirm");
 exports.confirmNoteActions = noteConfirm.confirmNoteActions;
 
+// Skolnyheter: RSS-kallor till inkorgen. Synken skapar notes; tolkningen ovan tar resten.
+const newsFeeds = require("./news_feeds");
+exports.subscribeNewsFeed = newsFeeds.subscribeNewsFeed;
+exports.syncNewsFeeds = newsFeeds.syncNewsFeeds;
+
 // ─── PUSH-HJÄLPARE (ROADMAP Etapp 11) ────────────────────────────────────────
 // Skickar push till familjemedlemmar. Respekterar:
 //  - pushFamilyEvents === false (toggle i Inställningar)
