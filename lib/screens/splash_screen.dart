@@ -1,0 +1,82 @@
+import 'package:flutter/material.dart';
+import '../main.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeIn;
+  late Animation<double> _fadeOut;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _fadeIn = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.0, 0.18, curve: Curves.easeIn),
+      ),
+    );
+    _fadeOut = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.82, 1.0, curve: Curves.easeOut),
+      ),
+    );
+    _controller.forward().then((_) {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (_, _, _) => const AuthWrapper(),
+            transitionDuration: Duration.zero,
+          ),
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Samma startbild som Android-appen Vardag: v-symbolen i loggans
+    // djupgröna (#1E5155) mot vitt.
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: FadeTransition(
+        opacity: _fadeIn,
+        child: FadeTransition(
+          opacity: _fadeOut,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/images/vardag_symbol.png',
+                  width: 160,
+                  fit: BoxFit.contain,
+                  semanticLabel: 'Vardag',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

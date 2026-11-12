@@ -1,0 +1,352 @@
+[
+  {
+    "id": 94516,
+    "units_id": 318,
+    "date": "2026-09-07T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322439,
+        "days_id": 94516,
+        "name": "Ugnstekta potatisbullar serveras med Quorn & lingonsylt",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322443,
+        "days_id": 94516,
+        "name": "Ugnstekta potatisbullar serveras med blodpudding, bacon & lingonsylt",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322446,
+        "days_id": 94516,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 94519,
+    "units_id": 318,
+    "date": "2026-09-08T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322461,
+        "days_id": 94519,
+        "name": "Ugnsbakad, timjankryddad rotselleri serveras med  örtdressing & kokt potatis ",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322463,
+        "days_id": 94519,
+        "name": "Ugnsbakad, lättrimmad laxfilé serveras med örtdressing & kokt potatis ",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322467,
+        "days_id": 94519,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 94522,
+    "units_id": 318,
+    "date": "2026-09-09T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322477,
+        "days_id": 94522,
+        "name": "Pasta Fusilli serveras med en krämig ört & ostsås ",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322478,
+        "days_id": 94522,
+        "name": "Pasta Fusilli serveras med en krämig ost & skinksås",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322480,
+        "days_id": 94522,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 94525,
+    "units_id": 318,
+    "date": "2026-09-10T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322497,
+        "days_id": 94525,
+        "name": "Kökets mustiga  favoritsoppa serveras med mjukt bröd & ost samt krutonger ",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322499,
+        "days_id": 94525,
+        "name": "Kökets mustiga  favoritsoppa serveras med mjukt bröd & ost samt krutonger ",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322501,
+        "days_id": 94525,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 94527,
+    "units_id": 318,
+    "date": "2026-09-11T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322511,
+        "days_id": 94527,
+        "name": "Currydoftande lins- och grönsaksgryta med smak av kokos serveras med ris alt. matvete",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322515,
+        "days_id": 94527,
+        "name": "Currydoftande kycklinggryta med smak av kokos serveras med ris ",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322517,
+        "days_id": 94527,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 97663,
+    "units_id": 318,
+    "date": "2026-09-14T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322531,
+        "days_id": 97663,
+        "name": "Ostgratinerad Lasagnette Parigano med paprika, purjolök & Oumph",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322534,
+        "days_id": 97663,
+        "name": "Ostgratinerad Lasagnette Parigano med paprika, purjolök & kyckling",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322537,
+        "days_id": 97663,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 97667,
+    "units_id": 318,
+    "date": "2026-09-15T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322548,
+        "days_id": 97667,
+        "name": "Grönsaksgratäng á la Kärna med smak av dill, gräslök & citron serveras med kokt potatis",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322550,
+        "days_id": 97667,
+        "name": "Fiskgratäng á la Kärna med smak av dill, gräslök & citron serveras med kokt potatis",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322552,
+        "days_id": 97667,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 97669,
+    "units_id": 318,
+    "date": "2026-09-16T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322568,
+        "days_id": 97669,
+        "name": "Ostgratinerad ugnsbakad sojakorv serveras med kökets potatismos\t",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322569,
+        "days_id": 97669,
+        "name": "Ostgratinerad ugnsbakad falukorv serveras med kökets potatismos",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322572,
+        "days_id": 97669,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 97672,
+    "units_id": 318,
+    "date": "2026-09-17T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322581,
+        "days_id": 97672,
+        "name": "Krämig Tomatsoppa med smak av basilika & oregano samt crème fraiche serveras med mjukt bröd & ost samt krutonger",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322585,
+        "days_id": 97672,
+        "name": "Krämig Tomatsoppa med smak av basilika & oregano samt crème fraiche serveras med mjukt bröd & ost samt krutonger",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322587,
+        "days_id": 97672,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  },
+  {
+    "id": 97673,
+    "units_id": 318,
+    "date": "2026-09-18T00:00:00.000Z",
+    "deviation": null,
+    "meals": [
+      {
+        "id": 425322600,
+        "days_id": 97673,
+        "name": "Spiskummindoftande Kebabgryta med grönsaker serveras med ångat ris alt matvete  ",
+        "type": "Lunch 1",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322602,
+        "days_id": 97673,
+        "name": "Spiskummindoftande Kebabgryta med grönsaker serveras med ångat ris alt matvete  ",
+        "type": "Lunch 2",
+        "image": null,
+        "allergens": [],
+        "labels": []
+      },
+      {
+        "id": 425322605,
+        "days_id": 97673,
+        "name": "Alltid på buffén, sallad efter säsong",
+        "type": "Salladsbuffé efter säsong",
+        "image": "media/Salladsbuffé efter säsong (AI)_1754394104729.png",
+        "allergens": [],
+        "labels": []
+      }
+    ]
+  }
+]

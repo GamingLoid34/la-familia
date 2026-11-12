@@ -1,0 +1,1906 @@
+import 'dart:async';
+import 'dart:developer' as developer;
+import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../app_theme.dart';
+import '../data/hospital_menu.dart';
+import '../models/user_model.dart';
+import '../providers/family_provider.dart';
+import '../screens/min_dag_page.dart';
+import '../screens/settings_page.dart';
+import '../utils/chore_utils.dart';
+import '../utils/data_tillstand.dart';
+import '../utils/date_utils.dart';
+import '../utils/day_events.dart';
+import '../utils/layout.dart';
+import '../utils/person_match.dart';
+import '../utils/schedule_time_utils.dart';
+import '../utils/timeline_layout.dart';
+import '../utils/transport_labels.dart';
+import 'activity_detail_sheet.dart';
+import 'meal_choice_sheet.dart';
+import 'min_dag_skollunch.dart';
+import 'min_dag_tillstand.dart';
+import 'today_chores_sheet.dart';
+import 'weather_widgets.dart';
+
+/// Sjukhusmenyn och matvalet (lunch 12:00, middag 17:00, "tryck för att välja mat").
+///
+/// Dolda som i Android (`MinDagViewModel.VISA_SJUKHUSMAT = false`, 1.9.1, på beställarens
+/// begäran). Sätt till true för att visa dem igen — koden ligger kvar. Med flaggan av blir
+/// en händelse som heter "Lunch …" eller "Middag …" en vanlig händelse, inte ett matval,
+/// och måltidsvalet läses inte (dess läsfel ska inte ge en felrad om något som inte syns).
+const bool kVisaSjukhusmat = false;
+
+/// Delad vy för "Min dag" — proportionell tidsaxel med vandrande NU-linje
+/// för tidsorientering, minnesstöd och sjukhusmatsedel efter stroke.
+/// Kan köras inbäddad i Hem-fliken (`embedded: true`) eller som helskärm (`embedded: false`).
+class MinDagView extends StatefulWidget {
+  final bool embedded;
+
+  const MinDagView({
+    super.key,
+    this.embedded = false,
+  });
+
+  @override
+  State<MinDagView> createState() => _MinDagViewState();
+}
+
+class _MinDagViewState extends State<MinDagView> with WidgetsBindingObserver {
+  static const double hourHeight = 110.0;
+  static const double gutterWidth = 56.0;
+  static const Color nuMarkerColor = Color(0xFF2F3B45);
+
+  Timer? _tickerTimer;
+  DateTime _currentTime = DateTime.now();
+  late DateTime _viewedDay;
+  int _dayChangeDirection = 0; // -1 bakåt, +1 framåt, 0 initial/idag
+  int _lastRenderedMinute = -1;
+  int _lastRenderedHour = -1;
+
+  final ScrollController _scrollController = ScrollController();
+  bool _showReturnToNu = false;
+  double _nuScrollTarget = 0.0;
+  bool _hasInitialScrolled = false;
+
+  // UX 02: ett tillstånd per datakälla, nycklat så att sena svar för fel dag, person
+  // eller familj kasseras. Återkommande aktiviteter och sysslor läses här i stället för
+  // via FamilyProvider, som bara har ett globalt syncError.
+  /// Familjens strömmar (återkommande aktiviteter, sysslor), nycklade på familj.
+  final KallSamlare<MinDagKalla, String> _familjSamlare = KallSamlare();
+
+  /// Dagens strömmar (aktiviteter, måltidsval), nycklade på dag + person + familj.
+  final KallSamlare<MinDagKalla, String> _dagSamlare = KallSamlare();
+
+  /// Skollunch. Egen samlare: dess läsfel sväljs och räknas inte in i lägesraden.
+  final KallSamlare<String, String> _skolSamlare = KallSamlare();
+  static const String _skolmatKalla = 'skolmat';
+
+  late final Listenable _allaKallor =
+      Listenable.merge([_familjSamlare, _dagSamlare, _skolSamlare]);
+
+  /// Sant medan ett återförsök pågår, så knappen inte kan tryckas två gånger.
+  bool _forsokerIgen = false;
+
+  bool get _isViewingToday {
+    return _viewedDay.year == _currentTime.year &&
+        _viewedDay.month == _currentTime.month &&
+        _viewedDay.day == _currentTime.day;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _currentTime = DateTime.now();
+    _viewedDay = DateTime(_currentTime.year, _currentTime.month, _currentTime.day);
+    _lastRenderedMinute = _currentTime.minute;
+    _lastRenderedHour = _currentTime.hour;
+
+    // Ticker var 1 sekund — kör endast setState när minuten slår om
+    _tickerTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final now = DateTime.now();
+      if (now.minute != _lastRenderedMinute || now.hour != _lastRenderedHour) {
+        if (mounted) {
+          setState(() {
+            final wasViewingToday = _isViewingToday;
+            _currentTime = now;
+            _lastRenderedMinute = now.minute;
+            _lastRenderedHour = now.hour;
+            if (wasViewingToday) {
+              _viewedDay = DateTime(now.year, now.month, now.day);
+            }
+          });
+        }
+      }
+    });
+
+    _scrollController.addListener(_onScroll);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initialScroll();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _tickerTimer?.cancel();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _familjSamlare.dispose();
+    _dagSamlare.dispose();
+    _skolSamlare.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      if (mounted) {
+        setState(() {
+          final wasViewingToday = _isViewingToday;
+          _currentTime = now;
+          _lastRenderedMinute = now.minute;
+          _lastRenderedHour = now.hour;
+          if (wasViewingToday) {
+            _viewedDay = DateTime(now.year, now.month, now.day);
+          }
+        });
+      }
+    }
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || !_isViewingToday) return;
+    final diff = (_scrollController.offset - _nuScrollTarget).abs();
+    final shouldShow = diff > 200.0;
+    if (shouldShow != _showReturnToNu) {
+      setState(() {
+        _showReturnToNu = shouldShow;
+      });
+    }
+  }
+
+  void _initialScroll() {
+    if (!mounted || _hasInitialScrolled || !_scrollController.hasClients) return;
+    if (_isViewingToday) {
+      _scrollToNu(animated: false);
+    }
+    _hasInitialScrolled = true;
+  }
+
+  void _scrollToNu({bool animated = true}) {
+    if (!_scrollController.hasClients) return;
+    final target = _nuScrollTarget.clamp(0.0, _scrollController.position.maxScrollExtent);
+    if (animated) {
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOutCubic,
+      );
+    } else {
+      _scrollController.jumpTo(target);
+    }
+  }
+
+  void _changeDay(int delta) {
+    final target = _viewedDay.add(Duration(days: delta));
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = target.difference(today).inDays;
+    if (diff < -365 || diff > 365) return;
+
+    setState(() {
+      _dayChangeDirection = delta;
+      _viewedDay = DateTime(target.year, target.month, target.day);
+      _showReturnToNu = false;
+    });
+
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0.0);
+    }
+  }
+
+  void _goToToday() {
+    setState(() {
+      _dayChangeDirection = 0;
+      _viewedDay = DateTime(_currentTime.year, _currentTime.month, _currentTime.day);
+      _showReturnToNu = false;
+    });
+    if (_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToNu(animated: true);
+      });
+    }
+  }
+
+  String _relativeDayLabel(DateTime viewed, DateTime now) {
+    final v = DateTime(viewed.year, viewed.month, viewed.day);
+    final t = DateTime(now.year, now.month, now.day);
+    final diff = v.difference(t).inDays;
+    if (diff == 0) return 'IDAG';
+    if (diff == 1) return 'I MORGON';
+    if (diff == -1) return 'IGÅR';
+    if (diff > 1) return 'OM $diff DAGAR';
+    return 'FÖR ${-diff} DAGAR SEDAN';
+  }
+
+  String _timeGreeting() {
+    final hour = _currentTime.hour;
+    if (hour >= 5 && hour < 10) return 'God morgon';
+    if (hour >= 10 && hour < 12) return 'God förmiddag';
+    if (hour >= 12 && hour < 18) return 'God eftermiddag';
+    if (hour >= 18 && hour < 23) return 'God kväll';
+    return 'God natt';
+  }
+
+  int _uncompletedChoresCount(
+      List<QueryDocumentSnapshot> allChores, UserModel? user) {
+    final now = DateTime.now();
+    final chores = allChores.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (!choreOccursOnDay(d, now)) return false;
+      if (choreDoneOnDay(d, now)) return false;
+      if (user != null) {
+        return choreAssignedToOnDay(d, now, uid: user.uid, name: user.name);
+      }
+      return true;
+    }).toList();
+    return chores.length;
+  }
+
+  List<QueryDocumentSnapshot> _filterMyEvents(
+    List<QueryDocumentSnapshot> rawEvents,
+    UserModel? me,
+  ) {
+    if (me == null) return rawEvents;
+    return rawEvents.where((doc) {
+      final d = doc.data() as Map<String, dynamic>;
+      if (eventHasNoPersons(d)) return true;
+      return eventIncludesPerson(d, uid: me.uid, name: me.name);
+    }).toList();
+  }
+
+  DateTime _computeEndTime(DateTime start, Map<String, dynamic> d) {
+    final endTimeStr = (d['endTime'] as String? ?? '').trim();
+    if (endTimeStr.isNotEmpty) {
+      final parts = endTimeStr.split(':');
+      if (parts.length >= 2) {
+        final eh = int.tryParse(parts[0]);
+        final em = int.tryParse(parts[1]);
+        if (eh != null && em != null) {
+          return DateTime(start.year, start.month, start.day, eh, em);
+        }
+      }
+    }
+    return start.add(const Duration(minutes: 60));
+  }
+
+  List<({String text, bool isDone})> _extractChecklist(dynamic raw) {
+    if (raw is! List) return const [];
+    final items = <({String text, bool isDone})>[];
+    for (final entry in raw) {
+      if (entry is Map) {
+        final t = (entry['item'] ?? entry['text'] ?? '').toString().trim();
+        final done = entry['isDone'] == true;
+        if (t.isNotEmpty) items.add((text: t, isDone: done));
+      } else if (entry is String && entry.trim().isNotEmpty) {
+        items.add((text: entry.trim(), isDone: false));
+      }
+    }
+    return items;
+  }
+
+  bool _isTodayOrFuture(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    return !target.isBefore(today);
+  }
+
+  /// Den gemensamma detaljrutan (Redigera / Ta bort). Förekomsten är alltid den visade
+  /// dagen, så "Bara denna gång" och lektionsförberedelsen gäller rätt tillfälle.
+  void _openDetail(QueryDocumentSnapshot doc) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ActivityDetailSheet(
+        docSnapshot: doc,
+        occurrenceDate: _viewedDay,
+      ),
+    );
+  }
+
+  /// Startar (eller behåller) prenumerationerna för aktuell dag, person och familj.
+  ///
+  /// [KallSamlare.lyssna] gör ingenting när nyckeln är densamma, så anropet kan ligga i
+  /// build. Vid ny nyckel sätts alla källor till "laddar" innan de nya startar.
+  void _syncKallor({required String familyId, required String uid}) {
+    if (familyId.isEmpty) return;
+    final dag = _viewedDay;
+    final datum = dateKey(dag);
+    final db = FirebaseFirestore.instance;
+    _familjSamlare.lyssna(familyId, {
+      MinDagKalla.aterkommande: () => db
+          .collection('planner_events')
+          .where('familyId', isEqualTo: familyId)
+          .where('isRecurring', isEqualTo: true)
+          .snapshots(),
+      MinDagKalla.sysslor: () => db
+          .collection('chores')
+          .where('familyId', isEqualTo: familyId)
+          .snapshots(),
+    });
+    _dagSamlare.lyssna(
+      minDagDagNyckel(datum: datum, uid: uid, familyId: familyId),
+      {
+        MinDagKalla.aktiviteter: () =>
+            dayEventsStream(familyId: familyId, day: dag),
+        if (kVisaSjukhusmat && uid.isNotEmpty)
+          MinDagKalla.maltidsval: () => db
+              .collection('meal_choices')
+              .doc('${uid}_$datum')
+              .snapshots(),
+      },
+    );
+    _skolSamlare.lyssna('$datum|$familyId', {
+      _skolmatKalla: () => skolmatDagStream(familyId: familyId, dag: dag),
+    });
+  }
+
+  /// Startar om de källor som fallerat. Övriga rörs inte.
+  Future<void> _forsokIgen() async {
+    if (_forsokerIgen) return;
+    setState(() => _forsokerIgen = true);
+    _familjSamlare.forsokIgen();
+    _dagSamlare.forsokIgen();
+    _skolSamlare.forsokIgen();
+    // Kort fördröjning så knappen hinner visa att något händer.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) setState(() => _forsokerIgen = false);
+  }
+
+  void _showTransportSheet(
+    BuildContext context,
+    QueryDocumentSnapshot doc,
+    Map<String, dynamic> data,
+    Color dayColor,
+  ) {
+    final docRef = doc.reference;
+    final title = data['title'] as String? ?? 'Aktivitet';
+    final piktogram = data['piktogram'] as String? ?? '📅';
+    final currentTransport = data['transport'] as String?;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return wrapBottomSheet(
+          sheetContext,
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text(piktogram, style: const TextStyle(fontSize: 28)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Hur tar du dig dit?',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                // Knapp 1: Jag tar mig dit själv
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(56),
+                    backgroundColor: currentTransport == 'sjalv'
+                        ? nuMarkerColor.withValues(alpha: 0.15)
+                        : const Color(0xFFF1F5F9),
+                    foregroundColor: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(
+                        color: currentTransport == 'sjalv'
+                            ? nuMarkerColor
+                            : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  icon: const Text('🚶‍♀️', style: TextStyle(fontSize: 22)),
+                  label: const Text(
+                    'Jag tar mig dit själv',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () => _updateTransport(sheetContext, docRef, 'sjalv'),
+                ),
+                const SizedBox(height: 12),
+                // Knapp 2: De hämtar mig
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(56),
+                    backgroundColor: currentTransport == 'hamtas'
+                        ? nuMarkerColor.withValues(alpha: 0.15)
+                        : const Color(0xFFF1F5F9),
+                    foregroundColor: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(
+                        color: currentTransport == 'hamtas'
+                            ? nuMarkerColor
+                            : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  icon: const Text('🤝', style: TextStyle(fontSize: 22)),
+                  label: const Text(
+                    'De hämtar mig',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () => _updateTransport(sheetContext, docRef, 'hamtas'),
+                ),
+                if (currentTransport != null && currentTransport.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  // Knapp 3: Ta bort markering
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(56),
+                      foregroundColor: Colors.red.shade700,
+                      side: BorderSide(color: Colors.red.shade200),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: const Icon(Icons.clear_rounded, size: 20),
+                    label: const Text(
+                      'Ta bort markering',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () => _updateTransport(sheetContext, docRef, null),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                // Ändra eller ta bort: öppnar den gemensamma detaljrutan för den visade
+                // dagen, där Redigera och Ta bort finns (som Androids TransportSheet).
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52),
+                    foregroundColor: const Color(0xFF1E293B),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  icon: const Icon(Icons.edit_rounded, size: 20),
+                  label: const Text(
+                    'Ändra eller ta bort',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _openDetail(doc);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _updateTransport(
+    BuildContext sheetContext,
+    DocumentReference docRef,
+    String? transportValue,
+  ) async {
+    Navigator.pop(sheetContext);
+    try {
+      if (transportValue == null) {
+        await docRef.update({'transport': FieldValue.delete()});
+      } else {
+        await docRef.update({'transport': transportValue});
+      }
+    } catch (e, st) {
+      developer.log('Fel vid uppdatering av transport: $e', error: e, stackTrace: st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Kunde inte spara transportval.')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = context.watch<FamilyProvider>();
+    final user = provider.currentUser;
+    final familyId = user?.familyId ?? '';
+    _syncKallor(familyId: familyId, uid: user?.uid ?? '');
+
+    return ListenableBuilder(
+      listenable: _allaKallor,
+      builder: (context, _) => _buildDag(context, provider, user),
+    );
+  }
+
+  Widget _buildDag(
+    BuildContext context,
+    FamilyProvider provider,
+    UserModel? user,
+  ) {
+    final weekday = _viewedDay.weekday;
+    final dayColor = AppTheme.getDayAccentColor(weekday);
+    final isLowStimuli = AppTheme.lowStimuli;
+
+    final maxW = WindowSize.of(context).isExpanded
+        ? WindowSize.settingsMaxWidth
+        : 480.0;
+
+    // Källornas data. Tillhör en källa en annan dag, person eller familj rapporterar
+    // samlaren "laddar", så inget gammalt ritas som om det hörde till den nya vyn.
+    final mealData = kVisaSjukhusmat
+        ? _dagSamlare
+            .visat<DocumentSnapshot<Map<String, dynamic>>>(
+                MinDagKalla.maltidsval)
+            ?.data()
+        : null;
+    final lunchChoice = mealData?['lunch'] as Map<String, dynamic>?;
+    final middagChoice = mealData?['middag'] as Map<String, dynamic>?;
+
+    final dateEvents = _dagSamlare
+            .visat<QuerySnapshot>(MinDagKalla.aktiviteter)
+            ?.docs ??
+        const <QueryDocumentSnapshot>[];
+    final recurringEvents = _familjSamlare
+            .visat<QuerySnapshot>(MinDagKalla.aterkommande)
+            ?.docs ??
+        const <QueryDocumentSnapshot>[];
+    final allChores =
+        _familjSamlare.visat<QuerySnapshot>(MinDagKalla.sysslor)?.docs ??
+            const <QueryDocumentSnapshot>[];
+
+    final mergedEvents = mergeAndDedupDayEvents(
+      dateEvents: dateEvents,
+      recurringEvents: recurringEvents,
+      day: _viewedDay,
+    );
+
+    final myEvents = _filterMyEvents(mergedEvents, user);
+
+    final timedItems = <_MinDagTimelineItem>[];
+    final untimedEvents =
+        <({QueryDocumentSnapshot doc, Map<String, dynamic> data})>[];
+
+    bool hasLunchEvent = false;
+    bool hasMiddagEvent = false;
+
+    for (final doc in myEvents) {
+      final d = doc.data() as Map<String, dynamic>;
+      final parsed = parseDateTime(d, _viewedDay);
+      final timeStr = (d['time'] as String? ?? '').trim();
+      if (parsed != null && timeStr.isNotEmpty) {
+        final end = _computeEndTime(parsed, d);
+        final titleLower =
+            (d['title'] as String? ?? '').toLowerCase().trim();
+        // Med sjukhusmaten dold är "Lunch …" en vanlig händelse.
+        final isLunch =
+            kVisaSjukhusmat && titleLower.startsWith('lunch');
+        final isMiddag =
+            kVisaSjukhusmat && titleLower.startsWith('middag');
+
+        if (isLunch) hasLunchEvent = true;
+        if (isMiddag) hasMiddagEvent = true;
+
+        timedItems.add(_MinDagTimelineItem(
+          doc: doc,
+          data: d,
+          start: parsed,
+          end: end,
+          mealType: isLunch ? 'lunch' : (isMiddag ? 'middag' : null),
+          mealChoice:
+              isLunch ? lunchChoice : (isMiddag ? middagChoice : null),
+          isSyntheticMeal: false,
+        ));
+      } else {
+        untimedEvents.add((doc: doc, data: d));
+      }
+    }
+
+    final isTodayOrFutureDay = _isTodayOrFuture(_viewedDay);
+
+    if (kVisaSjukhusmat &&
+        !hasLunchEvent &&
+        (lunchChoice != null || isTodayOrFutureDay)) {
+      final lunchStart = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 0);
+      final lunchEnd = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 12, 45);
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: {
+          'title': 'Lunch',
+          'piktogram': '🍽️',
+          'time': '12:00',
+          'endTime': '12:45',
+        },
+        start: lunchStart,
+        end: lunchEnd,
+        mealType: 'lunch',
+        mealChoice: lunchChoice,
+        isSyntheticMeal: true,
+      ));
+    }
+
+    if (kVisaSjukhusmat &&
+        !hasMiddagEvent &&
+        (middagChoice != null || isTodayOrFutureDay)) {
+      final middagStart = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 0);
+      final middagEnd = DateTime(
+          _viewedDay.year, _viewedDay.month, _viewedDay.day, 17, 45);
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: {
+          'title': 'Middag',
+          'piktogram': '🍽️',
+          'time': '17:00',
+          'endTime': '17:45',
+        },
+        start: middagStart,
+        end: middagEnd,
+        mealType: 'middag',
+        mealChoice: middagChoice,
+        isSyntheticMeal: true,
+      ));
+    }
+
+    // Skollunch per barn (11:00–11:45, "Namn: rätt", 🍎). Läsning ur skolans
+    // matsedel — inget matval, går inte att trycka på.
+    final skolLuncher = byggSkolLunchBlock(
+      skolmat: _skolSamlare.visat<SkolmatDag>(_skolmatKalla),
+      medlemmar: provider.familyMembers,
+      dag: _viewedDay,
+    );
+    for (final block in skolLuncher) {
+      timedItems.add(_MinDagTimelineItem(
+        doc: null,
+        data: block.data,
+        start: block.start,
+        end: block.slut,
+      ));
+    }
+
+    // UX 02: skilj laddar, tom dag, delvis fel och allt fallerat åt.
+    final harInnehall =
+        timedItems.isNotEmpty || untimedEvents.isNotEmpty;
+    final lage = user == null
+        ? const LageLaddar()
+        : bedomMinDag(
+            {
+              ..._familjSamlare.aktuellt,
+              ..._dagSamlare.aktuellt,
+            },
+            harInnehall: harInnehall,
+          );
+    final rad = minDagRad(lage);
+
+    // Sortera tidsatta poster kronologiskt
+    timedItems.sort((a, b) => a.start.compareTo(b.start));
+
+    // Axelns tidsspann
+    int startHour = _isViewingToday ? min(7, _currentTime.hour) : 7;
+    if (timedItems.isNotEmpty) {
+      final firstH = timedItems.first.start.hour;
+      if (firstH < startHour) startHour = firstH;
+    }
+
+    int endHour = _isViewingToday ? max(20, _currentTime.hour + 1) : 20;
+    for (final ev in timedItems) {
+      final h = ev.end.hour + (ev.end.minute > 0 ? 1 : 0) + 1;
+      if (h > endHour) endHour = h;
+    }
+    if (endHour > 24) endHour = 24;
+
+    final totalHours = max(1, endHour - startHour);
+    final timelineHeight = totalHours * hourHeight;
+
+    // Hitta index för nästa kommande (endast relevant idag)
+    int? nextUpcomingIndex;
+    if (_isViewingToday) {
+      for (var i = 0; i < timedItems.length; i++) {
+        final ev = timedItems[i];
+        if (ev.start.isAfter(_currentTime)) {
+          nextUpcomingIndex = i;
+          break;
+        }
+      }
+    }
+
+    // Beräkna layoutplacering
+    final layoutList = _computeLayout(
+      timedItems,
+      startHour,
+      _currentTime,
+      nextUpcomingIndex,
+      isViewingToday: _isViewingToday,
+    );
+
+    // Beräkna position för NU-linjen (endast idag)
+    final nuMinutes = (_currentTime.hour - startHour) * 60 +
+        _currentTime.minute +
+        (_currentTime.second / 60.0);
+    final nuTop = (nuMinutes / 60.0) * hourHeight;
+
+    final bottomPadding = widget.embedded
+        ? (navSafeBottom(context).bottom + 24)
+        : 60.0;
+
+    return Scaffold(
+      backgroundColor: isLowStimuli
+          ? const Color(0xFFF0F2F5)
+          : const Color(0xFFF5F7FA),
+      floatingActionButton: (_showReturnToNu && _isViewingToday)
+          ? FloatingActionButton.extended(
+              backgroundColor: nuMarkerColor,
+              foregroundColor: Colors.white,
+              elevation: isLowStimuli ? 0 : 4,
+              icon: const Icon(Icons.my_location_rounded, size: 18),
+              label: const Text(
+                'NU',
+                style: TextStyle(
+                    fontWeight: FontWeight.w900, letterSpacing: 0.5),
+              ),
+              onPressed: () => _scrollToNu(animated: true),
+            )
+          : null,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxW),
+          child: Column(
+            children: [
+              _buildHeader(
+                  context, provider, user, allChores, weekday),
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragEnd: (details) {
+                    final vel = details.primaryVelocity;
+                    if (vel != null && vel.abs() > 200) {
+                      if (vel < 0) {
+                        _changeDay(1);
+                      } else {
+                        _changeDay(-1);
+                      }
+                    }
+                  },
+                  child: AnimatedSwitcher(
+                    duration: Duration(
+                        milliseconds: isLowStimuli ? 150 : 200),
+                    transitionBuilder: (child, animation) {
+                      if (isLowStimuli) {
+                        return FadeTransition(
+                            opacity: animation, child: child);
+                      }
+                      final beginOffset = _dayChangeDirection > 0
+                          ? const Offset(0.12, 0.0)
+                          : (_dayChangeDirection < 0
+                              ? const Offset(-0.12, 0.0)
+                              : Offset.zero);
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                                  begin: beginOffset, end: Offset.zero)
+                              .animate(animation),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: KeyedSubtree(
+                      key: ValueKey(dateKey(_viewedDay)),
+                      child: Column(
+                        children: [
+                          if (untimedEvents.isNotEmpty)
+                            _buildUntimedSection(
+                                untimedEvents, dayColor, user),
+                          if (rad.typ == MinDagRadTyp.laddar)
+                            _buildLaddarRad(rad.text!)
+                          else if (rad.typ == MinDagRadTyp.tomDag)
+                            _buildEmptyDayBanner()
+                          else if (rad.typ == MinDagRadTyp.fel)
+                            _buildFelRad(rad.text ?? ''),
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final viewportHeight =
+                                    constraints.maxHeight;
+                                if (_isViewingToday) {
+                                  _nuScrollTarget = max(0.0,
+                                      nuTop - (viewportHeight * 0.35));
+                                }
+
+                                return SingleChildScrollView(
+                                  controller: _scrollController,
+                                  physics:
+                                      const BouncingScrollPhysics(),
+                                  padding:
+                                      EdgeInsets.only(bottom: bottomPadding),
+                                  child: SizedBox(
+                                    height: timelineHeight,
+                                    width: constraints.maxWidth,
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        // 1. Grid- och timlinjer med timetiketter
+                                        _buildGridBackground(
+                                          startHour: startHour,
+                                          totalHours: totalHours,
+                                          isLowStimuli: isLowStimuli,
+                                          width: constraints.maxWidth,
+                                        ),
+
+                                        // 2. Händelseblock & Måltidsblock
+                                        for (final layout in layoutList)
+                                          _buildPositionedEventCard(
+                                            layout: layout,
+                                            totalWidth:
+                                                constraints.maxWidth,
+                                            dayColor: dayColor,
+                                            isLowStimuli: isLowStimuli,
+                                            user: user,
+                                          ),
+
+                                        // 3. Proportionell NU-linje (endast idag)
+                                        if (_isViewingToday)
+                                          _buildPositionedNuLine(
+                                            nuTop: nuTop,
+                                            width: constraints.maxWidth,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(
+    BuildContext context,
+    FamilyProvider provider,
+    UserModel? user,
+    List<QueryDocumentSnapshot> allChores,
+    int weekday,
+  ) {
+    final palette = AppTheme.dayPalette(weekday);
+    final dateFormatted = DateFormat('EEEE d MMMM', 'sv').format(_viewedDay);
+    final capitalizedDate = dateFormatted.isNotEmpty
+        ? '${dateFormatted[0].toUpperCase()}${dateFormatted.substring(1)}'
+        : dateFormatted;
+    final relativeLabel = _relativeDayLabel(_viewedDay, _currentTime);
+    final timeStr = DateFormat('HH:mm').format(_currentTime);
+    final textColor = AppTheme.getNpfTextColor(weekday);
+    final isLowStimuli = AppTheme.lowStimuli;
+    final firstName = user?.name.split(' ').first ?? '';
+    final hasWeather = provider.hasHomeLocation;
+    final uncompletedChores = _uncompletedChoresCount(allChores, user);
+
+    return Container(
+      decoration: isLowStimuli
+          ? BoxDecoration(color: palette.base)
+          : AppTheme.headerDecoration(weekday),
+      padding: AppTheme.paddingBelowStatusBar(
+        context,
+        horizontal: 16,
+        bottom: 14,
+        extraBelowStatus: 4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Top action bar
+          Row(
+            children: [
+              if (!widget.embedded) ...[
+                IconButton(
+                  icon: Icon(Icons.close_rounded, color: textColor, size: 28),
+                  padding: const EdgeInsets.all(12),
+                  constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                  tooltip: 'Stäng Min dag',
+                  onPressed: () => Navigator.pop(context),
+                ),
+                const Spacer(),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🧭', style: TextStyle(fontSize: 13)),
+                      const SizedBox(width: 5),
+                      Text(
+                        'MIN DAG',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                if (hasWeather) ...[
+                  WeatherHeaderBadge(
+                    lat: provider.homeLat!,
+                    lon: provider.homeLon!,
+                    placeName: provider.homeName,
+                    textColor: textColor,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                // Fokus-/barnläget: vägen till Mer (verktyg, inställningar,
+                // VIS-LÄGE för att lämna fokusläget, och Logga ut).
+                IconButton(
+                  icon: const Text('🧰', style: TextStyle(fontSize: 18)),
+                  tooltip: 'Mer',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (ctx) =>
+                          SettingsPage(onClose: () => Navigator.pop(ctx)),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.fullscreen_rounded, color: textColor, size: 26),
+                  tooltip: 'Helskärm',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      fullscreenDialog: true,
+                      builder: (_) => const MinDagPage(),
+                    ),
+                  ),
+                ),
+              ],
+              if (!widget.embedded)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🧭', style: TextStyle(fontSize: 14)),
+                      const SizedBox(width: 6),
+                      Text(
+                        'MIN DAG',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Dagsnavigator med ‹ och ›
+                Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.chevron_left_rounded,
+                          color: textColor, size: 32),
+                      padding: const EdgeInsets.all(8),
+                      constraints:
+                          const BoxConstraints(minWidth: 48, minHeight: 48),
+                      tooltip: 'Föregående dag',
+                      onPressed: () => _changeDay(-1),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            capitalizedDate,
+                            style: TextStyle(
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                              color: textColor,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            relativeLabel,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.8,
+                              color: textColor.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!_isViewingToday) ...[
+                      GestureDetector(
+                        onTap: _goToToday,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: textColor.withValues(alpha: 0.4),
+                              width: 1.5,
+                            ),
+                          ),
+                          child: Text(
+                            'Idag',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: textColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    IconButton(
+                      icon: Icon(Icons.chevron_right_rounded,
+                          color: textColor, size: 32),
+                      padding: const EdgeInsets.all(8),
+                      constraints:
+                          const BoxConstraints(minWidth: 48, minHeight: 48),
+                      tooltip: 'Nästa dag',
+                      onPressed: () => _changeDay(1),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                // Klockan ljuger aldrig: alltid verklig nutid
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Semantics(
+                    label: 'Klockan är $timeStr',
+                    child: Text(
+                      timeStr,
+                      style: TextStyle(
+                        fontSize: 44,
+                        fontWeight: FontWeight.w900,
+                        color: textColor,
+                        letterSpacing: -1.0,
+                      ),
+                    ),
+                  ),
+                ),
+                if (widget.embedded) ...[
+                  if (firstName.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        '${_timeGreeting()}, $firstName 👋',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w700,
+                          color: textColor.withValues(alpha: 0.95),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (uncompletedChores > 0) ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (_) => TodayChoresSheet(
+                              onlyAssignedTo: user?.name,
+                              onlyAssignedToUid: user?.uid,
+                            ),
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: textColor.withValues(alpha: 0.35),
+                                width: 1.2,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('✅', style: TextStyle(fontSize: 13)),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$uncompletedChores ${uncompletedChores == 1 ? 'syssla' : 'sysslor'} idag',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: textColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyDayBanner() {
+    final texter = tomDagTexter(visadDag: _viewedDay, idag: DateTime.now());
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
+        children: [
+          Text(texter.emoji, style: const TextStyle(fontSize: 26)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  texter.rubrik,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  texter.underrubrik,
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Hämtar dagen…" medan dagen hämtas. Avsiktligt låg: den ersätter inte tidsaxeln,
+  /// den lägger sig ovanför den — och ingen tom dag-text visas under tiden.
+  Widget _buildLaddarRad(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Säger vad som inte gick att hämta, med återförsök. Det som gick att hämta ligger
+  /// kvar under raden.
+  Widget _buildFelRad(String text) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Row(
+        children: [
+          const Text('⚠️', style: TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_forsokerIgen)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            TextButton(
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                foregroundColor: const Color(0xFF1E293B),
+              ),
+              onPressed: _forsokIgen,
+              child: const Text(
+                MinDagTillforlitlighet.forsokIgenText,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUntimedSection(
+    List<({QueryDocumentSnapshot doc, Map<String, dynamic> data})> items,
+    Color dayColor,
+    UserModel? user,
+  ) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.event_note_rounded, size: 16, color: Colors.grey.shade600),
+              const SizedBox(width: 6),
+              Text(
+                'Utan tid',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: items.map((item) {
+              final d = item.data;
+              final title = d['title'] as String? ?? 'Aktivitet';
+              final piktogram = d['piktogram'] as String? ?? '📅';
+              final transport = d['transport'] as String?;
+              final transportPrefix = transport == 'sjalv'
+                  ? '🚶‍♀️ '
+                  : (transport == 'hamtas' ? '🤝 ' : '');
+
+              final canEdit = user != null &&
+                  (user.isParent ||
+                      eventIncludesPerson(d, uid: user.uid, name: user.name) ||
+                      eventHasNoPersons(d));
+
+              return ActionChip(
+                avatar: Text(piktogram, style: const TextStyle(fontSize: 16)),
+                label: Text(
+                  '$transportPrefix$title',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                backgroundColor: Colors.grey.shade50,
+                side: BorderSide(color: Colors.grey.shade300),
+                onPressed: () {
+                  if (_isViewingToday && canEdit) {
+                    _showTransportSheet(context, item.doc, d, dayColor);
+                  } else {
+                    _openDetail(item.doc);
+                  }
+                },
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGridBackground({
+    required int startHour,
+    required int totalHours,
+    required bool isLowStimuli,
+    required double width,
+  }) {
+    final lineAlpha = isLowStimuli ? 0.10 : 0.18;
+    return Stack(
+      children: [
+        for (var i = 0; i <= totalHours; i++) ...[
+          // Timetikett i vänster gutter
+          Positioned(
+            top: i * hourHeight - 8,
+            left: 8,
+            width: gutterWidth - 12,
+            child: Text(
+              '${(startHour + i).toString().padLeft(2, '0')}:00',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          // Horisontell gridlinje över hela bredden
+          Positioned(
+            top: i * hourHeight,
+            left: gutterWidth,
+            right: 0,
+            child: Container(
+              height: 1,
+              color: Colors.grey.withValues(alpha: lineAlpha),
+            ),
+          ),
+        ],
+        // Vertikal avgränsningslinje efter gutter
+        Positioned(
+          top: 0,
+          bottom: 0,
+          left: gutterWidth,
+          child: Container(
+            width: 1,
+            color: Colors.grey.withValues(alpha: lineAlpha),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPositionedEventCard({
+    required _EventLayoutInfo layout,
+    required double totalWidth,
+    required Color dayColor,
+    required bool isLowStimuli,
+    required UserModel? user,
+  }) {
+    final item = layout.item;
+    final d = item.data;
+    final isMeal = item.mealType != null;
+    final mealType = item.mealType;
+    final mealChoice = item.mealChoice;
+
+    final rawTitle = d['title'] as String? ?? 'Aktivitet';
+    final piktogram = isMeal ? '🍽️' : (d['piktogram'] as String? ?? '📅');
+    final timeStr = DateFormat('HH:mm').format(item.start);
+    final endTimeStr = (d['endTime'] as String? ?? '').trim();
+    final String timeRange;
+    if (endTimeStr.isNotEmpty) {
+      final dur = durationLabelHm(timeStr, endTimeStr);
+      timeRange = dur.isEmpty
+          ? '$timeStr–$endTimeStr'
+          : '$timeStr–$endTimeStr · $dur';
+    } else {
+      timeRange = timeStr;
+    }
+    final checklist = _extractChecklist(d['checklist']);
+    final transport = d['transport'] as String?;
+
+    // Måltidsformatering
+    String displayTitle = rawTitle;
+    String? mealExtras;
+    bool hasMealChoice = false;
+
+    if (isMeal) {
+      final mealLabel = mealType == 'lunch' ? 'Lunch' : 'Middag';
+      if (mealChoice != null && mealChoice['dishId'] != null) {
+        hasMealChoice = true;
+        final formatted = formatHospitalMealChoice(mealChoice, mealLabel: mealLabel);
+        displayTitle = formatted.mainTitle;
+        mealExtras = formatted.extras;
+      } else {
+        if (item.isSyntheticMeal) {
+          displayTitle = _isTodayOrFuture(_viewedDay)
+              ? '$mealLabel — tryck för att välja'
+              : mealLabel;
+        } else {
+          displayTitle = rawTitle;
+          if (_isTodayOrFuture(_viewedDay)) {
+            mealExtras = 'Tryck för att välja mat 🍽️';
+          }
+        }
+      }
+    }
+
+    // Kolumnplacering (max 3 kolumner)
+    final availableWidth = totalWidth - gutterWidth - 16;
+    const colSpacing = 6.0;
+    final colWidth = (availableWidth - (layout.totalCols - 1) * colSpacing) / layout.totalCols;
+    final left = gutterWidth + 8 + layout.colIndex * (colWidth + colSpacing);
+
+    final isOngoing = layout.isOngoing;
+    final isPassed = layout.isPassed;
+    final isNext = layout.isNext;
+
+    final canEdit = user != null &&
+        (user.isParent ||
+            eventIncludesPerson(d, uid: user.uid, name: user.name) ||
+            eventHasNoPersons(d));
+
+    VoidCallback? onTap;
+    if (isMeal) {
+      if (_isTodayOrFuture(_viewedDay)) {
+        onTap = () {
+          showMealChoiceSheet(
+            context,
+            date: _viewedDay,
+            meal: mealType!,
+            familyId: user?.familyId ?? '',
+            personUid: user?.uid ?? '',
+            initialChoice: mealChoice,
+          );
+        };
+      }
+    } else if (_isViewingToday && !isPassed && canEdit && item.doc != null) {
+      onTap = () => _showTransportSheet(
+            context,
+            item.doc!,
+            d,
+            dayColor,
+          );
+    } else if (item.doc != null) {
+      onTap = () => _openDetail(item.doc!);
+    }
+
+    // Transportchip-text
+    final transportText = transportChipText(transport, isNext);
+
+    return Positioned(
+      top: layout.top,
+      left: left,
+      width: max(80.0, colWidth),
+      height: layout.height,
+      child: Opacity(
+        opacity: isPassed ? 0.45 : 1.0,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: isOngoing
+                    ? Colors.white
+                    : (isPassed
+                        ? Colors.grey.shade100
+                        : (isMeal && !hasMealChoice
+                            ? const Color(0xFFFBFBFC)
+                            : Colors.white)),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: isOngoing
+                      ? nuMarkerColor
+                      : (isNext
+                          ? dayColor.withValues(alpha: 0.6)
+                          : (isPassed
+                              ? Colors.grey.shade300
+                              : (isMeal && !hasMealChoice
+                                  ? Colors.grey.shade300
+                                  : Colors.grey.shade200))),
+                  width: isOngoing ? 2.5 : (isNext ? 1.5 : 1.0),
+                ),
+                boxShadow: isLowStimuli || isPassed
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: isOngoing
+                              ? nuMarkerColor.withValues(alpha: 0.15)
+                              : Colors.black.withValues(alpha: 0.04),
+                          blurRadius: isOngoing ? 8 : 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Rad 1: Piktogram + Tid + NU/NÄSTA-brickor
+                  Row(
+                    children: [
+                      Text(piktogram, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          timeRange,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: isOngoing
+                                ? nuMarkerColor
+                                : (isPassed
+                                    ? Colors.grey.shade600
+                                    : Colors.grey.shade800),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isOngoing)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: nuMarkerColor,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            'NU',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        )
+                      else if (isNext)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: dayColor.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'NÄSTA',
+                            style: TextStyle(
+                              color: dayColor,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Rad 2: Titel
+                  Text(
+                    displayTitle,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight:
+                          isOngoing ? FontWeight.w800 : FontWeight.w600,
+                      color: isPassed
+                          ? Colors.grey.shade700
+                          : AppTheme.getTextColor(),
+                    ),
+                    maxLines: layout.height > 85 ? 3 : 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  // Måltidsextras (tillbehör/dessert/dryck)
+                  if (mealExtras != null && layout.height > 65) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      mealExtras,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: hasMealChoice
+                            ? Colors.grey.shade700
+                            : dayColor,
+                        fontWeight: hasMealChoice
+                            ? FontWeight.normal
+                            : FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  // Transportchip
+                  if (transportText != null && layout.height > 75) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE2E8F0),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        transportText,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF334155),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                  // Checklista (om ryms)
+                  if (checklist.isNotEmpty && layout.height > 95) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.checklist_rounded,
+                            size: 13, color: Colors.grey.shade600),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${checklist.where((c) => c.isDone).length}/${checklist.length}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPositionedNuLine({
+    required double nuTop,
+    required double width,
+  }) {
+    return Positioned(
+      top: nuTop - 10,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: SizedBox(
+          height: 20,
+          child: Stack(
+            alignment: Alignment.centerLeft,
+            children: [
+              // Horisontell NU-linje
+              Positioned(
+                left: gutterWidth,
+                right: 0,
+                child: Container(
+                  height: 2.5,
+                  color: nuMarkerColor,
+                ),
+              ),
+              // Vänster NU-bricka (ligger i gutter)
+              Positioned(
+                left: 6,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                  decoration: BoxDecoration(
+                    color: nuMarkerColor,
+                    borderRadius: BorderRadius.circular(6),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: const Text(
+                    'NU',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ),
+              // Höger röd/mörk cirkel-indikator vid tidsaxeln
+              Positioned(
+                left: gutterWidth - 5,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: nuMarkerColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Beräknar geometri (top/height) och klustring (colIndex/totalCols) för
+  /// varje post via den delade, testbara [computeTimelineLayout] — se
+  /// lib/utils/timeline_layout.dart. Denna metod översätter bara till/från
+  /// widgetens egna [_MinDagTimelineItem]/[_EventLayoutInfo]-typer.
+  List<_EventLayoutInfo> _computeLayout(
+    List<_MinDagTimelineItem> items,
+    int startHour,
+    DateTime now,
+    int? nextUpcomingIndex, {
+    required bool isViewingToday,
+  }) {
+    final slots = items
+        .map((item) => TimelineSlotInput(start: item.start, end: item.end))
+        .toList();
+
+    final layouts = computeTimelineLayout(
+      slots,
+      startHour: startHour,
+      now: now,
+      nextUpcomingIndex: nextUpcomingIndex,
+      isViewingToday: isViewingToday,
+      hourHeight: hourHeight,
+    );
+
+    return List.generate(items.length, (i) {
+      final l = layouts[i];
+      return _EventLayoutInfo(
+        item: items[i],
+        top: l.top,
+        height: l.height,
+        isPassed: l.isPassed,
+        isOngoing: l.isOngoing,
+        isNext: l.isNext,
+      )
+        ..colIndex = l.colIndex
+        ..totalCols = l.totalCols;
+    });
+  }
+}
+
+class _MinDagTimelineItem {
+  final QueryDocumentSnapshot? doc;
+  final Map<String, dynamic> data;
+  final DateTime start;
+  final DateTime end;
+  final String? mealType; // 'lunch' | 'middag'
+  final Map<String, dynamic>? mealChoice;
+  final bool isSyntheticMeal;
+
+  _MinDagTimelineItem({
+    this.doc,
+    required this.data,
+    required this.start,
+    required this.end,
+    this.mealType,
+    this.mealChoice,
+    this.isSyntheticMeal = false,
+  });
+}
+
+class _EventLayoutInfo {
+  final _MinDagTimelineItem item;
+  final double top;
+  final double height;
+  final bool isPassed;
+  final bool isOngoing;
+  final bool isNext;
+  int colIndex = 0;
+  int totalCols = 1;
+
+  _EventLayoutInfo({
+    required this.item,
+    required this.top,
+    required this.height,
+    required this.isPassed,
+    required this.isOngoing,
+    required this.isNext,
+  });
+}
