@@ -1,0 +1,35 @@
+{
+  "name": "Vardag",
+  "short_name": "Vardag",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1E5155",
+  "theme_color": "#1E5155",
+  "description": "Familjens kalender, veckobrev och uppgifter.",
+  "orientation": "any",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/vardag-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/vardag-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/vardag-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/vardag-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
