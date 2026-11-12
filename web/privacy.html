@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integritetspolicy — La Familia</title>
+  <style>
+    :root {
+      --text: #1a1a2e;
+      --muted: #5c6877;
+      --bg: #f4f6f8;
+      --card: #fff;
+      --accent: #2a6f97;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+    }
+    main {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 {
+      font-size: 1.75rem;
+      margin: 0 0 0.35rem;
+      color: var(--accent);
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.75rem;
+    }
+    h2 {
+      font-size: 1.15rem;
+      margin: 1.75rem 0 0.5rem;
+    }
+    p, li { margin: 0.4rem 0; }
+    ul { padding-left: 1.25rem; }
+    a { color: var(--accent); }
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid #dde3ea;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Integritetspolicy</h1>
+    <p class="meta">La Familia · Senast uppdaterad: 21 augusti 2026</p>
+
+    <p>
+      La Familia är en familjeapp för kalender, sysslor och vardagsplanering.
+      Den här sidan beskriver vilken information vi behandlar och varför.
+    </p>
+
+    <h2>Vilken data lagras</h2>
+    <ul>
+      <li><strong>Kontouppgifter:</strong> namn och e-postadress (via Firebase Authentication).</li>
+      <li><strong>Familjedata:</strong> aktiviteter, sysslor, scheman, anteckningar, rutiner, matplanering och liknande innehåll som ni själva lägger in.</li>
+      <li><strong>Teknisk drift:</strong> enhets-/push-token för aviseringar, samt kraschrapporter via Firebase Crashlytics (för att hitta och åtgärda buggar).</li>
+    </ul>
+
+    <h2>Var lagras data</h2>
+    <p>
+      Data lagras i <strong>Google Firebase</strong> (Authentication, Cloud Firestore, Storage, Cloud Messaging och Crashlytics).
+      Projektet är konfigurerat för användning inom EU/EEA i den mån tjänsterna tillåter det;
+      viss teknisk bearbetning kan ske enligt Googles villkor för Firebase.
+    </p>
+
+    <h2>Vad vi inte gör</h2>
+    <ul>
+      <li>Inga annonser.</li>
+      <li>Ingen försäljning av personuppgifter till tredje part.</li>
+      <li>Ingen spårning för marknadsföringsprofiler.</li>
+    </ul>
+
+    <h2>Ändamål</h2>
+    <p>
+      Uppgifterna används enbart för att driva appen: inloggning, delning inom er familj,
+      påminnelser och felsökning. Familjemedlemmar som ni bjuder in kan se den data
+      som hör till er familj i appen.
+    </p>
+
+    <h2>Lagringstid och radering</h2>
+    <p>
+      Data sparas så länge kontot/familjen används. När ni radererar innehåll i appen
+      tas det bort enligt appens funktioner. För att ta bort ett konto helt, kontakta oss
+      (se nedan) så hjälper vi till.
+    </p>
+
+    <h2>Barn</h2>
+    <p>
+      Appen är avsedd för familjer. Barnkonton skapas och administreras av vårdnadshavare
+      i familjen. Använd appen ansvarsfullt och dela bara nödvändig information.
+    </p>
+
+    <h2>Kontakt</h2>
+    <p>
+      Frågor om integritet eller radering:
+      <a href="mailto:BYT_UT_KONTAKT@exempel.se">BYT_UT_KONTAKT@exempel.se</a>
+      (uppdatera adressen innan publicering — samma kontakt som i Google Play Console).
+    </p>
+
+    <footer>
+      La Familia · Integritetspolicy för Google Play och appens webbhosting.
+    </footer>
+  </main>
+</body>
+</html>
