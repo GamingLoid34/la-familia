@@ -1,0 +1,540 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function myDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myFamilyId() {
+      return myDoc().familyId;
+    }
+
+    function iAmParent() {
+      return myDoc().role == 'parent' || myDoc().role == 'admin';
+    }
+
+    function hasFamily(data) {
+      return ('familyId' in data) && data.familyId is string && data.familyId.size() > 0;
+    }
+
+    function validRole(data) {
+      return data.role in ['admin', 'parent', 'child', 'youth'];
+    }
+
+    function createdMyFamily(familyId) {
+      return familyId is string && familyId.size() > 0
+        && exists(/databases/$(database)/documents/families/$(familyId))
+        && get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid;
+    }
+
+    function startsOwnFamily(data) {
+      return hasFamily(data) && data.role == 'admin' && createdMyFamily(data.familyId);
+    }
+
+    // U-09 (beslut B-06): en uppdatering får aldrig ändra, lägga till eller ta bort
+    // familyId. Förut prövade de flesta update-reglerna bara det GAMLA dokumentets familj,
+    // så en medlem kunde flytta en post till en annan familj eller ta bort fältet (då blev
+    // posten oläslig för alla). Används på varje update i samlingar på toppnivå där
+    // familyId avgör vem som får läsa. users har egen regel (bootstrap av den egna familjen
+    // är den enda tillåtna ändringen), och families/{familyId}/... styrs av sökvägen.
+    function familyIdUnchanged() {
+      return request.resource.data.get('familyId', null) == resource.data.get('familyId', null);
+    }
+
+    // 1. ANVÄNDARE (users)
+    match /users/{userId} {
+      // Both clients query member colors after creating a family but BEFORE joining it.
+      // The immutable creator may read that family's members during this bootstrap.
+      allow read: if isAuth() && (request.auth.uid == userId
+          || (hasFamily(resource.data)
+            && (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) || !hasFamily(myDoc()))
+            && createdMyFamily(resource.data.familyId))
+          || resource.data.familyId == myFamilyId());
+      allow create: if isAuth() && (
+        (request.auth.uid == userId && (
+          ((!('familyId' in request.resource.data) || request.resource.data.familyId == null
+              || request.resource.data.familyId == '') && request.resource.data.role == 'parent')
+          || startsOwnFamily(request.resource.data)
+        ))
+        // Flutter authenticates the child in SecondaryApp, but the parent writes
+        // the profile through the DEFAULT Firestore instance.
+        || (request.auth.uid != userId && iAmParent()
+          && hasFamily(request.resource.data) && request.resource.data.familyId == myFamilyId()
+          && validRole(request.resource.data))
+      );
+      allow update: if isAuth() && (
+        (request.auth.uid == userId && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'familyId'])
+          || (!hasFamily(resource.data) && startsOwnFamily(request.resource.data))
+        ))
+        || (request.auth.uid != userId && iAmParent()
+          && resource.data.familyId == myFamilyId()
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['familyId'])
+          && validRole(request.resource.data))
+      );
+      allow delete: if isAuth() && iAmParent() && resource.data.familyId == myFamilyId();
+    }
+
+    // 2. FAMILJER (families)
+    match /families/{familyId} {
+      allow read: if isAuth() && familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAuth() && familyId == myFamilyId() && iAmParent()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['createdBy']);
+
+      // Display-konfiguration (scener, schema, moduler)
+      match /display_config/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update: if isAuth() && familyId == myFamilyId();
+        allow delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+      }
+
+      // Display-foton metadata (FAS 4.5)
+      match /display_photos/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+        allow update: if false;
+      }
+
+      // Manuella skolmatsedlar (FAS 5.1b)
+      match /school_menus/{schoolId}/weeks/{weekId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update, delete: if isAuth() && familyId == myFamilyId() && iAmParent();
+      }
+
+      // Storskärmens driftstatus och kommandon (FAS 6b & FAS 6.5)
+      match /display_state/{docId} {
+        allow read: if isAuth() && familyId == myFamilyId();
+        allow create, update: if isAuth() && familyId == myFamilyId() && iAmParent();
+        allow delete: if false;
+      }
+    }
+
+    // Assistent steg 2: fria uppgifter är gemensamma för familjens vuxna.
+    match /tasks/{taskId} {
+      function adultInFamily(familyId) {
+        return isAuth() && iAmParent() && familyId == myFamilyId();
+      }
+
+      function dateOrNull(value) {
+        return value == null || (value is string
+          && value.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'));
+      }
+
+      function stringOrNull(value) {
+        return value == null || (value is string && value.size() > 0 && value.size() <= 200);
+      }
+
+      function validAssignee(data) {
+        return data.assigneeUid == null || (data.assigneeUid is string
+          && get(/databases/$(database)/documents/users/$(data.assigneeUid)).data.familyId == data.familyId
+          && get(/databases/$(database)/documents/users/$(data.assigneeUid)).data.role in ['parent', 'admin']);
+      }
+
+      function validTask(data) {
+        return data.keys().hasAll(['familyId', 'title', 'dueDate', 'dueTime', 'hasTime',
+            'showFromDate', 'assigneeUid', 'aboutUids', 'status', 'sourceNoteId',
+            'createdByUid', 'doneAt'])
+          && data.keys().hasOnly(['familyId', 'title', 'dueDate', 'dueTime', 'hasTime',
+            'showFromDate', 'assigneeUid', 'aboutUids', 'status', 'sourceNoteId',
+            'eventId', 'occurrenceDate', 'createdByUid', 'doneAt'])
+          && data.familyId is string && data.familyId.size() > 0
+          && data.createdByUid is string
+          && data.title is string && data.title.size() > 0 && data.title.size() <= 500
+          && data.title.matches('.*[^\\s].*')
+          && dateOrNull(data.dueDate) && dateOrNull(data.showFromDate)
+          && data.hasTime is bool
+          && ((data.hasTime == false && data.dueTime == null)
+            || (data.hasTime == true && data.dueDate != null && data.dueTime is string
+              && data.dueTime.matches('([01][0-9]|2[0-3]):[0-5][0-9]')))
+          && validAssignee(data)
+          && data.aboutUids is list && data.aboutUids.size() <= 20
+          && stringOrNull(data.sourceNoteId)
+          && stringOrNull(data.get('eventId', null))
+          && dateOrNull(data.get('occurrenceDate', null))
+          && ((data.get('eventId', null) == null && data.get('occurrenceDate', null) == null)
+            || (data.get('eventId', null) != null && data.get('occurrenceDate', null) != null))
+          && ((data.status == 'open' && data.doneAt == null)
+            || (data.status == 'done' && data.doneAt is timestamp));
+      }
+
+      allow read: if adultInFamily(resource.data.familyId);
+      allow create: if adultInFamily(request.resource.data.familyId)
+        && request.resource.data.createdByUid == request.auth.uid
+        && validTask(request.resource.data);
+      allow update: if adultInFamily(resource.data.familyId)
+        && request.resource.data.familyId == resource.data.familyId
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && validTask(request.resource.data);
+      allow delete: if adultInFamily(resource.data.familyId);
+    }
+
+
+    // Assistent steg 3: inkorgens anteckningar. Privata läses bara av sin ägare.
+    match /notes/{noteId} {
+      // Eget namn: `adultInFamily` finns redan i tasks-blocket, och Firestore tillåter inte
+      // att samma funktionsnamn definieras i två match-satser i samma fil.
+      function noteAdultInFamily(familyId) {
+        return isAuth() && iAmParent() && familyId == myFamilyId();
+      }
+
+      function noteDateOrNull(value) {
+        return value == null || (value is string
+          && value.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'));
+      }
+
+      function noteStringOrNull(value) {
+        return value == null || (value is string && value.size() > 0 && value.size() <= 200);
+      }
+
+      // Klienten äger bara 'saved'. Servern äger tolkningens status och resultat, annars
+      // skulle en klient kunna påstå att en tolkning lyckats utan att någon skett.
+      function clientStatus(value) {
+        return value == 'saved';
+      }
+
+      /**
+       * Vid en uppdatering får status antingen bli 'saved' (klienten begär en ny tolkning)
+       * eller stå kvar orörd. Att kräva 'saved' på varje skrivning gjorde det omöjligt att
+       * mjukradera eller sätta giltighet på en anteckning som servern hade satt till
+       * 'failed' eller 'needs_review'.
+       */
+      function statusUnchangedOrSaved() {
+        return request.resource.data.status == resource.data.status
+          || clientStatus(request.resource.data.status);
+      }
+
+      // Fält som bara servern (admin-SDK, går förbi reglerna) får skriva.
+      function serverOnlyUnchanged() {
+        return request.resource.data.get('interpretation', null) == resource.data.get('interpretation', null)
+          && request.resource.data.get('linkedIds', []) == resource.data.get('linkedIds', [])
+          && request.resource.data.get('supersedes', null) == resource.data.get('supersedes', null)
+          && request.resource.data.get('claimedRequestId', null) == resource.data.get('claimedRequestId', null)
+          && request.resource.data.get('confirmedAt', null) == resource.data.get('confirmedAt', null)
+          && rssFieldsUnchanged();
+      }
+
+      // Skolnyheternas källfält skrivs bara av synken. Klienten får tolka, mjukradera och
+      // sätta giltighet på en importerad anteckning, men aldrig flytta den till en annan källa.
+      function rssFieldsUnchanged() {
+        return request.resource.data.get('source', null) == resource.data.get('source', null)
+          && request.resource.data.get('feedId', null) == resource.data.get('feedId', null)
+          && request.resource.data.get('sourceKey', null) == resource.data.get('sourceKey', null)
+          && request.resource.data.get('title', null) == resource.data.get('title', null)
+          && request.resource.data.get('link', null) == resource.data.get('link', null)
+          && request.resource.data.get('publishedAt', null) == resource.data.get('publishedAt', null);
+      }
+
+      function validNote(data) {
+        return data.keys().hasAll(['familyId', 'ownerUid', 'visibility', 'text',
+            'contentHash', 'status', 'requestId', 'createdByUid', 'createdAt'])
+          // Serverns egna fält måste stå med. Vid en update är request.resource.data hela det
+          // sammanslagna dokumentet, så ett fält utanför listan skulle låsa ute klienten från
+          // sina egna anteckningar så fort servern rört dem en gång.
+          && data.keys().hasOnly(['familyId', 'ownerUid', 'visibility', 'text',
+            'contentHash', 'status', 'requestId', 'interpretation', 'linkedIds',
+            'validFrom', 'validTo', 'supersedes', 'deletedAt', 'createdByUid', 'createdAt',
+            'aboutUids',
+            'claimedRequestId', 'interpretationError', 'interpretingSince', 'confirmedAt',
+            'source', 'feedId', 'sourceKey', 'title', 'link', 'publishedAt'])
+          && data.get('aboutUids', []) is list
+          && data.get('aboutUids', []).size() <= 20
+          && data.familyId is string && data.familyId.size() > 0
+          && data.ownerUid is string && data.ownerUid.size() > 0
+          && data.createdByUid is string
+          && (data.visibility == 'private' || data.visibility == 'family')
+          // Originaltexten. Taket skyddar mot en inklistrad bok; ett veckobrev är en bråkdel.
+          && data.text is string && data.text.size() > 0 && data.text.size() <= 10000
+          // `.` matchar inte radbrytning i Firestores reguljära uttryck, så `.*[^\\s].*`
+          // avvisade varje text med mer än en rad. Ett veckobrev har alltid radbrytningar,
+          // vilket gjorde inkorgen oanvändbar för sitt enda syfte. `[\\s\\S]` matchar allt.
+          && data.text.matches('[\\s\\S]*[^\\s][\\s\\S]*')
+          && noteStringOrNull(data.contentHash)
+          && noteStringOrNull(data.requestId)
+          && noteDateOrNull(data.get('validFrom', null))
+          && noteDateOrNull(data.get('validTo', null))
+          && data.get('linkedIds', []) is list;
+      }
+
+      // En privat anteckning läses bara av sin ägare. Att en gemensam kalenderpost kommer ur
+      // den ger ingen rätt att läsa originalet.
+      allow read: if noteAdultInFamily(resource.data.familyId)
+        && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid);
+
+      allow create: if noteAdultInFamily(request.resource.data.familyId)
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && clientStatus(request.resource.data.status)
+        && request.resource.data.get('interpretation', null) == null
+        && request.resource.data.get('linkedIds', []) == []
+        // En inklistrad anteckning kan inte utge sig för att komma från en skolkälla.
+        && request.resource.data.get('source', 'manual') == 'manual'
+        && request.resource.data.get('feedId', null) == null
+        && request.resource.data.get('sourceKey', null) == null
+        && request.resource.data.get('title', null) == null
+        && request.resource.data.get('link', null) == null
+        && request.resource.data.get('publishedAt', null) == null
+        && validNote(request.resource.data);
+
+      // Klienten får begära en ny tolkning, mjukradera och sätta giltighet. Den får aldrig
+      // ändra originaltexten, ägaren, familjen eller serverns egna fält.
+      allow update: if noteAdultInFamily(resource.data.familyId)
+        && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid)
+        && request.resource.data.familyId == resource.data.familyId
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.createdByUid == resource.data.createdByUid
+        && request.resource.data.text == resource.data.text
+        && request.resource.data.contentHash == resource.data.contentHash
+        && statusUnchangedOrSaved()
+        && serverOnlyUnchanged()
+        && validNote(request.resource.data);
+
+      // Ingen hård radering. Mjukradering via deletedAt bevarar historiken och tar
+      // anteckningen ur allt aktivt underlag.
+      allow delete: if false;
+    }
+
+    // 3. KÄRNDATA
+
+    match /planner_events/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
+        iAmParent()
+        || resource.data.createdByUid == request.auth.uid
+        // Vem som helst i familjen får reagera, bocka packlista och bocka av en
+        // lektionsförberedelse. lessonPrep bär bara text och avbockade datum, så det
+        // är samma slags kvittens som checklist.
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['reactions', 'checklist', 'lessonPrep'].toSet())
+      );
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
+    }
+
+    match /chores/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
+        iAmParent()
+        || resource.data.createdByUid == request.auth.uid
+        // Delsteg/återkommande datum (isDone går via completeChore-callable):
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['doneSteps', 'doneDates'].toSet())
+      );
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
+    }
+
+    // Rättviselogg — endast server (admin-SDK) skriver.
+    match /chore_log/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow write: if false;
+    }
+
+    match /work_shifts/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent()
+        && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    match /routines/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      // Alla får bocka av steg; bara föräldrar redigerar rutinen själv.
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged() && (
+        iAmParent()
+        || request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['doneDate', 'doneSteps'].toSet())
+      );
+      allow create: if isAuth()
+          && request.resource.data.familyId == myFamilyId() && iAmParent();
+      allow delete: if isAuth()
+          && resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    match /family_notes/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth()
+        && request.resource.data.familyId == myFamilyId()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.text.size() <= 140;
+      allow delete: if isAuth()
+        && resource.data.familyId == myFamilyId()
+        && resource.data.fromUid == request.auth.uid;
+      // Notiser är inte editerbara — radera och skapa ny.
+      allow update: if false;
+    }
+
+    match /shopping_items/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // Matval på sjukhus (meal_choices) — ett dokument per person och dag
+    match /meal_choices/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && (request.resource.data.personUid == request.auth.uid || iAmParent());
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged()
+          && (resource.data.personUid == request.auth.uid || iAmParent());
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (resource.data.personUid == request.auth.uid || iAmParent());
+    }
+
+    match /calendar_imports/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && iAmParent()
+        && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId() && iAmParent();
+    }
+
+    // Skolnyheter: RSS-källor till inkorgen. Skapas bara av callablen subscribeNewsFeed, som
+    // validerar adressen. En privat källa syns bara för den som prenumererar.
+    match /news_feeds/{feedId} {
+      function newsFeedVisible() {
+        return isAuth() && iAmParent() && resource.data.familyId == myFamilyId()
+          && (resource.data.visibility == 'family' || resource.data.ownerUid == request.auth.uid);
+      }
+
+      allow read, delete: if newsFeedVisible();
+      allow update: if newsFeedVisible()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'visibility', 'aboutUids', 'autoSync'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 80
+        && (request.resource.data.visibility == 'family' || request.resource.data.visibility == 'private')
+        // Bara den som prenumererar byter synlighet; annars kunde den andra föräldern göra
+        // källan privat för någon annan.
+        && (request.resource.data.visibility == resource.data.visibility
+            || resource.data.ownerUid == request.auth.uid)
+        && request.resource.data.aboutUids is list
+        && request.resource.data.aboutUids.size() <= 20
+        && request.resource.data.autoSync is bool;
+      allow create: if false;
+    }
+
+    // Hela adressen fungerar som personlig åtkomstnyckel till SchoolSoft. Bara servern läser den.
+    match /news_feed_secrets/{feedId} {
+      allow read, write: if false;
+    }
+
+    match /chore_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /activity_templates/{docId} {
+      allow read: if isAuth() && (resource.data.familyId == myFamilyId() || resource.data.familyId == "");
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /busy_sessions/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth()
+        && request.resource.data.familyId == myFamilyId()
+        && request.resource.data.userUid == request.auth.uid;
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId();
+    }
+
+    // Matplanering (ROADMAP Etapp 12): en middag per dag och familj.
+    match /meals/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // Familjens rättbibliotek (AI-veckomeny).
+    match /dishes/{docId} {
+      allow read: if isAuth() && resource.data.familyId == myFamilyId();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId()
+          && (iAmParent() || request.resource.data.createdByUid == request.auth.uid);
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
+      allow delete: if isAuth() && resource.data.familyId == myFamilyId()
+          && (iAmParent() || resource.data.createdByUid == request.auth.uid);
+    }
+
+    match /countdowns/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // Delad, familjeoberoende konfigurationsdata (t.ex. config/hospital_menu,
+    // seedad av functions/scripts/seed_hospital_menu.js). Skrivs bara via
+    // admin-SDK/konsol — aldrig från klienten.
+    match /config/{docId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // ─── MyMirai (delar Firebase-projekt med La Familia) ─────────────────
+    // OBS: DENNA FIL är enda källan för Firestore-regler i projektet
+    // la-familia-5d9f5. Deploya ALDRIG regler från MyMirais repo — det
+    // skriver över allt nedan och öppnar La Familias data.
+    match /documents/{docId} {
+      allow read, delete: if isAuth()
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isAuth()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuth()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+
+      // Subcollections ärver INTE förälderns regler — chat_turns ägs av
+      // dokumentägaren (verifieras via get() på förälderdokumentet).
+      match /chat_turns/{turnId} {
+        allow read, write: if isAuth()
+          && get(/databases/$(database)/documents/documents/$(docId)).data.ownerUid == request.auth.uid;
+      }
+    }
+
+    // MyMirai: familjeägda collections (familyId på varje dokument).
+    match /homework/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /decks/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    match /flashcards/{docId} {
+      allow read, delete: if isAuth() && resource.data.familyId == myFamilyId();
+      allow update: if isAuth() && resource.data.familyId == myFamilyId() && familyIdUnchanged();
+      allow create: if isAuth() && request.resource.data.familyId == myFamilyId();
+    }
+
+    // MyMirai: personlig statistik — dokument-ID är användarens uid.
+    match /user_stats/{uid} {
+      allow read, write: if isAuth() && request.auth.uid == uid;
+
+      match /daily/{dateId} {
+        allow read, write: if isAuth() && request.auth.uid == uid;
+      }
+    }
+
+    // Stäng ute allt annat
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
