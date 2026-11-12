@@ -1,0 +1,573 @@
+import 'dart:developer' as developer;
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import '../app_theme.dart';
+import '../firebase_options.dart';
+import '../services/family_service.dart';
+import '../widgets/member_avatar.dart';
+
+class ManageMembersPage extends StatefulWidget {
+  const ManageMembersPage({super.key});
+
+  @override
+  State<ManageMembersPage> createState() => _ManageMembersPageState();
+}
+
+class _ManageMembersPageState extends State<ManageMembersPage> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
+  String _selectedColor = AppTheme.memberColorPalette.first;
+  String _selectedRole = 'Barn';
+  String? _editingId;
+  String? _familyId;
+  bool _isLoading = false;
+  String? _avatarUrl;
+  Uint8List? _previewBytes;
+  bool _uploadingAvatar = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFamilyId();
+  }
+
+  Future<void> _loadFamilyId() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (mounted) {
+        setState(() {
+          _familyId = doc.data()?['familyId'] as String?;
+        });
+        // När vi är i create-läge: föreslå nästa lediga färg så syskon inte
+        // hamnar på samma som föräldern.
+        if (_editingId == null) {
+          await _preselectNextAvailableColor();
+        }
+      }
+    }
+  }
+
+  Future<void> _preselectNextAvailableColor() async {
+    final fid = _familyId;
+    if (fid == null || fid.isEmpty) return;
+    final next = await FamilyService.assignNextAvailableColor(fid);
+    if (mounted) setState(() => _selectedColor = next);
+  }
+
+  void _resetForm() {
+    _nameController.clear();
+    _emailController.clear();
+    _passwordController.clear();
+    setState(() {
+      _selectedColor = AppTheme.memberColorPalette.first;
+      _selectedRole = 'Barn';
+      _editingId = null;
+      _avatarUrl = null;
+      _previewBytes = null;
+    });
+    FocusScope.of(context).unfocus();
+    // Föreslå nästa lediga färg igen efter sparat barn.
+    _preselectNextAvailableColor();
+  }
+
+  void _editMember(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    _nameController.text = data['name'] ?? '';
+    _emailController.text = data['email'] ?? '';
+    
+    setState(() {
+      _editingId = doc.id;
+      _selectedColor = data['color'] ?? AppTheme.memberColorPalette.first;
+      _avatarUrl = data['avatarUrl'] as String?;
+      _previewBytes = null;
+      
+      // Översätt databas-roll till rullgardin
+      final r = data['role'] ?? 'child';
+      if (r == 'parent') {
+        _selectedRole = 'Förälder';
+      } else if (r == 'admin') {
+        _selectedRole = 'Admin';
+      } else if (r == 'youth') {
+        _selectedRole = 'Ungdom';
+      } else {
+        _selectedRole = 'Barn';
+      }
+    });
+  }
+
+  Future<void> _deleteMember(String uid, String name) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ta bort medlem?'),
+        content: Text('Är du säker på att du vill ta bort $name från familjen?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Avbryt')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true), 
+            child: const Text('Ta bort')
+          ),
+        ],
+      )
+    );
+
+    if (confirm == true) {
+      // Tar bort användarens koppling till familjen genom att radera dokumentet.
+      // (Observera att auth-inloggningen tekniskt sett ligger kvar i Firebase Auth, men de är borta från appen).
+      await FirebaseFirestore.instance.collection('users').doc(uid).delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Medlem borttagen.')));
+      }
+    }
+  }
+
+  Future<void> _saveMember() async {
+    if (_nameController.text.isEmpty || _emailController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fyll i namn och e-post!")));
+      return;
+    }
+
+    if (_editingId == null && _passwordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Lösenordet måste vara minst 6 tecken.")));
+      return;
+    }
+
+    if (_familyId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laddar familjedata, försök igen om en sekund...")));
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    // Översätt rullgardin till databas-roll
+    String dbRole = 'child';
+    if (_selectedRole == 'Förälder') dbRole = 'parent';
+    if (_selectedRole == 'Admin') dbRole = 'admin';
+    if (_selectedRole == 'Ungdom') dbRole = 'youth';
+
+    Map<String, dynamic> userData = {
+      'name': _nameController.text.trim(),
+      'email': _emailController.text.trim(),
+      'color': _selectedColor,
+      'role': dbRole,
+    };
+
+    try {
+      if (_editingId == null) {
+        FirebaseApp secondaryApp;
+        try {
+          secondaryApp = Firebase.app('SecondaryApp');
+        } catch (e) {
+          secondaryApp = await Firebase.initializeApp(
+            name: 'SecondaryApp',
+            options: DefaultFirebaseOptions.currentPlatform,
+          );
+        }
+
+        UserCredential userCredential = await FirebaseAuth.instanceFor(app: secondaryApp)
+            .createUserWithEmailAndPassword(
+              email: _emailController.text.trim(),
+              password: _passwordController.text.trim(),
+            );
+
+        final uid = userCredential.user?.uid;
+        if (uid == null) {
+          throw Exception("Kunde inte hämta UID från Firebase Auth.");
+        }
+
+        // --- VIKTIGT: Spara familyId och standardvärden på NYA konton ---
+        userData['uid'] = uid;
+        userData['familyId'] = _familyId; // Det var denna som saknades förut!
+        userData['createdAt'] = FieldValue.serverTimestamp();
+        userData['energy'] = 3;
+        userData['viewMode'] = (dbRole == 'parent' || dbRole == 'admin')
+            ? 'parent'
+            : (dbRole == 'youth' ? 'youth' : 'child');
+
+        await FirebaseFirestore.instance.collection('users').doc(uid).set(userData);
+        
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medlem skapad! ✅")));
+      } else {
+        // Uppdatera befintlig medlem
+        await FirebaseFirestore.instance.collection('users').doc(_editingId).update(userData);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Medlem uppdaterad! ✅")));
+      }
+      _resetForm();
+    } on FirebaseAuthException catch (e) {
+      String msg = "Ett fel uppstod.";
+      if (e.code == 'email-already-in-use') msg = "Denna e-postadress används redan.";
+      if (e.code == 'invalid-email') msg = "E-postadressen är felaktigt formaterad.";
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(msg), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("Något gick fel: $e"), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    final uid = _editingId;
+    if (uid == null) return;
+
+    final picker = ImagePicker();
+    final x = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+    if (x == null) return;
+
+    final bytes = await x.readAsBytes();
+    setState(() {
+      _uploadingAvatar = true;
+      _previewBytes = bytes;
+    });
+
+    try {
+      final ref = FirebaseStorage.instance.ref().child('user_avatars/$uid.jpg');
+      await ref.putData(
+        bytes,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+      final url = await ref.getDownloadURL();
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'avatarUrl': url,
+      });
+      if (mounted) {
+        setState(() {
+          _avatarUrl = url;
+          _previewBytes = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profilbild uppdaterad')),
+        );
+      }
+    } catch (e, stack) {
+      developer.log(
+        'Kunde inte ladda upp avatarbild',
+        name: 'ManageMembersPage',
+        error: e,
+        stackTrace: stack,
+      );
+      if (mounted) {
+        setState(() {
+          _previewBytes = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Kunde inte ladda upp bilden'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Color textColor = AppTheme.getTextColor();
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: Text(
+          "Hantera Medlemmar",
+          style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: IconThemeData(color: textColor),
+      ),
+      body: Center(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: Container(
+        height: double.infinity,
+        decoration: AppTheme.getBackground(),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // --- FORMULÄRET ---
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 15, offset: const Offset(0, 5)),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _editingId == null ? "Lägg till medlem" : "Redigera medlem",
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                          ),
+                          if (_editingId != null)
+                            TextButton(onPressed: _resetForm, child: const Text('Avbryt'))
+                        ],
+                      ),
+                      const SizedBox(height: 15),
+                      const Text("Profilfärg", style: TextStyle(color: Colors.black54, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: AppTheme.memberColorPalette
+                            .map((colorHex) => GestureDetector(
+                                  onTap: () => setState(
+                                      () => _selectedColor = colorHex),
+                                  child: CircleAvatar(
+                                    backgroundColor:
+                                        AppTheme.colorFromHex(colorHex),
+                                    radius: 18,
+                                    child: _selectedColor.toLowerCase() ==
+                                            colorHex.toLowerCase()
+                                        ? const Icon(Icons.check,
+                                            color: Colors.white, size: 18)
+                                        : null,
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                      const SizedBox(height: 20),
+                      if (_editingId != null) ...[
+                        const Text(
+                          'Profilbild',
+                          style: TextStyle(
+                            color: Colors.black54,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: _uploadingAvatar ? null : _pickAndUploadAvatar,
+                              child: FamilyMemberAvatar.raw(
+                                name: _nameController.text,
+                                avatarUrl: _avatarUrl,
+                                previewBytes: _previewBytes,
+                                color: Color(int.parse(
+                                  _selectedColor.startsWith('0x')
+                                      ? _selectedColor
+                                      : '0xFF$_selectedColor',
+                                )),
+                                size: 72,
+                                borderWidth: 2,
+                                overlay: _uploadingAvatar
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2.5,
+                                        ),
+                                      )
+                                    : (_avatarUrl == null || _avatarUrl!.isEmpty) && _previewBytes == null
+                                        ? const Icon(Icons.add_a_photo_rounded,
+                                            color: Colors.white, size: 24)
+                                        : null,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _uploadingAvatar
+                                        ? null
+                                        : _pickAndUploadAvatar,
+                                    icon: const Icon(Icons.photo_library_rounded),
+                                    label: const Text('Välj foto'),
+                                  ),
+                                  Text(
+                                    'Visas på hem-skärmen och i familjevyn.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      _input("Namn", _nameController, Icons.person),
+                      const SizedBox(height: 10),
+
+                      _input("E-post", _emailController, Icons.email),
+                      const SizedBox(height: 10),
+
+                      if (_editingId == null) ...[
+                        _input("Lösenord (minst 6 tecken)", _passwordController, Icons.lock, isObscure: true),
+                        const SizedBox(height: 10),
+                      ],
+
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedRole,
+                            isExpanded: true,
+                            items: ['Barn', 'Ungdom', 'Förälder', 'Admin'].map((String value) {
+                              return DropdownMenuItem<String>(value: value, child: Text(value));
+                            }).toList(),
+                            onChanged: (newValue) => setState(() => _selectedRole = newValue!),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: _isLoading ? null : _saveMember,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.getDayAccentColor(),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: _isLoading
+                              ? const CircularProgressIndicator(color: Colors.white)
+                              : Text(
+                                  _editingId == null ? "Spara ny medlem" : "Uppdatera",
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 32),
+                
+                // --- LISTA PÅ AKTUELLA MEDLEMMAR ---
+                Text("Familjemedlemmar", style: AppTheme.sectionTitleStyle),
+                const SizedBox(height: 12),
+                
+                if (_familyId == null)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('users')
+                        .where('familyId', isEqualTo: _familyId)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                      
+                      var docs = snapshot.data!.docs;
+                      if (docs.isEmpty) return const Text("Inga medlemmar hittades.");
+
+                      return ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: docs.length,
+                        itemBuilder: (context, index) {
+                          var data = docs[index].data() as Map<String, dynamic>;
+                          var name = data['name'] ?? 'Okänd';
+                          var email = data['email'] ?? '';
+                          var colorStr = data['color'] ?? 'ff2196f3';
+                          final avatarUrl = data['avatarUrl'] as String?;
+                          Color avatarColor;
+                          try {
+                            avatarColor = Color(int.parse(colorStr.startsWith('0x') ? colorStr : '0xFF$colorStr'));
+                          } catch (_) {
+                            avatarColor = Colors.blue;
+                          }
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10)],
+                            ),
+                            child: ListTile(
+                              leading: FamilyMemberAvatar.raw(
+                                name: name.toString(),
+                                avatarUrl: avatarUrl,
+                                color: avatarColor,
+                                size: 40,
+                                borderWidth: 1.5,
+                              ),
+                              title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text(email, style: const TextStyle(fontSize: 12)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, color: Colors.blue),
+                                    onPressed: () => _editMember(docs[index]),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, color: Colors.red),
+                                    onPressed: () => _deleteMember(docs[index].id, name),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 50),
+              ],
+            ),
+          ),
+        ),
+      ))),
+    );
+  }
+
+  Widget _input(String label, TextEditingController controller, IconData icon, {bool isObscure = false}) {
+    return TextField(
+      controller: controller,
+      obscureText: isObscure,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: Colors.grey.shade600),
+        filled: true,
+        fillColor: Colors.grey[100],
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+}
